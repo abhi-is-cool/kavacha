@@ -88,6 +88,19 @@ pref("app.releaseNotesURL.aboutDialog", "https://kavacha.app/releases/%VERSION%/
 pref("app.releaseNotesURL.prompt", "https://kavacha.app/releases/");
 EOF
 
+# Ship the Kavacha privacy defaults inside the app. firefox-branding.js is the
+# one branding file packaged as browser default prefs (JS_PREFERENCE_FILES in
+# branding-common.mozbuild), so the hardened pref set rides along with it.
+# Source of truth: privacy/tracker-controls/kavacha.js — edit there, never here.
+{
+    echo ""
+    echo "// ============================================================================"
+    echo "// Kavacha privacy defaults — generated from privacy/tracker-controls/kavacha.js"
+    echo "// ============================================================================"
+    cat "$REPO_ROOT/privacy/tracker-controls/kavacha.js"
+} >> "$DST/pref/firefox-branding.js"
+log "Privacy defaults appended to branding prefs ($(grep -c '^pref(' "$REPO_ROOT/privacy/tracker-controls/kavacha.js") prefs)."
+
 # ---------------------------------------------------------------------------
 # Icons from the Kavacha logo
 # ---------------------------------------------------------------------------

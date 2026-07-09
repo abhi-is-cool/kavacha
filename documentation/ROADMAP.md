@@ -12,9 +12,11 @@ project start (2026-07-09).
 - [x] Privacy default prefs (`privacy/tracker-controls/kavacha.js`)
 - [x] Branding source of truth (`browser/branding/kavacha/branding.json`)
 - [x] First local build of unmodified Zen via bootstrap (verified 2026-07-09, ~99 min on Apple Silicon)
-- [ ] Patch `0001-branding-kavacha.patch` — register the Kavacha brand
+- [x] Patch `0001-branding-kavacha.patch` — Kavacha brand registered; verified: build
+      produces Kavacha.app with Kavacha strings + icon (2026-07-09)
 - [ ] Patch `0002-strip-telemetry-endpoints.patch` — defense in depth
-- [ ] Brand assets: icons (16–256 px, .icns, .ico), wordmark, installer imagery
+- [x] Brand assets: lotus-shield logo → all icon sizes + .icns via
+      build/generate-branding.sh (Windows .ico/.bmp installer imagery still placeholder)
 - [ ] **Deliverable: first Kavacha Nightly artifact from CI**
 
 > **Note (2026-07-09):** the Zen source audit ([DIFFERENTIATION.md](DIFFERENTIATION.md))

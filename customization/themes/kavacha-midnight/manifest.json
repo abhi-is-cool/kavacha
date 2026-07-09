@@ -1,0 +1,12 @@
+{
+  "$schema": "../theme-manifest.schema.json",
+  "id": "kavacha-midnight",
+  "name": "Kavacha Midnight",
+  "version": "0.1.0",
+  "author": "Kavacha",
+  "description": "The default Kavacha dark theme: deep indigo surfaces with a warm amber accent.",
+  "license": "MPL-2.0",
+  "colors": "colors.json",
+  "style": "style.css",
+  "supports": ["dark"]
+}

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kavacha.app/schemas/theme-manifest.schema.json",
+  "title": "Kavacha Theme Manifest",
+  "description": "manifest.json at the root of a theme package. Package layout: manifest.json, colors.json, style.css, icons/, fonts/.",
+  "type": "object",
+  "required": ["name", "id", "version", "colors"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "description": "Unique kebab-case theme id, e.g. 'kavacha-midnight'."
+    },
+    "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semver; the marketplace uses this for updates."
+    },
+    "author": { "type": "string" },
+    "description": { "type": "string", "maxLength": 500 },
+    "license": { "type": "string", "default": "MPL-2.0" },
+    "kavachaMinVersion": {
+      "type": "string",
+      "description": "Minimum Kavacha version this theme supports."
+    },
+    "colors": {
+      "type": "string",
+      "const": "colors.json",
+      "description": "Relative path to the color token file (fixed name)."
+    },
+    "style": {
+      "type": "string",
+      "description": "Optional custom chrome CSS, relative path (typically 'style.css'). Loaded sandboxed into browser chrome, not into web content."
+    },
+    "icons": {
+      "type": "string",
+      "description": "Optional directory of icon overrides (typically 'icons/')."
+    },
+    "fonts": {
+      "type": "array",
+      "description": "Bundled font files (woff2) referenced from style.css.",
+      "items": { "type": "string", "pattern": "\\.woff2$" }
+    },
+    "supports": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["light", "dark"] },
+      "minItems": 1,
+      "default": ["dark"]
+    }
+  }
+}

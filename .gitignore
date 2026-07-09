@@ -1,0 +1,29 @@
+# Upstream sources fetched by build/bootstrap.sh — never committed
+browser/firefox-source/
+browser/zen-upstream/
+
+# Build outputs
+build/output/
+dist/
+obj-*/
+*.dmg
+*.exe
+*.AppImage
+*.tar.*
+
+# Toolchain / dependency caches
+node_modules/
+.sccache/
+target/
+__pycache__/
+*.pyc
+
+# Environment & editor
+.env
+.env.*
+.DS_Store
+.vscode/
+.idea/
+
+# Logs
+*.log

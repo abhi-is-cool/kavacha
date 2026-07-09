@@ -1,0 +1,9 @@
+{
+  "$schema": "./layout.schema.json",
+  "sidebar": "left",
+  "sidebarWidth": 250,
+  "tabStyle": "vertical",
+  "density": "compact",
+  "toolbar": { "position": "top", "visible": true },
+  "hiddenElements": []
+}

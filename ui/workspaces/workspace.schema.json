@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kavacha.app/schemas/workspace.schema.json",
+  "title": "Kavacha Workspace",
+  "description": "A workspace is an isolated environment (e.g. Personal, Work, School, Research) owning its own tabs, cookies, extensions, theme, search provider, and settings. Cookie/storage isolation is backed by a Firefox container.",
+  "type": "object",
+  "required": ["id", "name", "containerId", "createdAt"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Stable workspace identity; used as the sync key."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "User-visible name shown in the sidebar."
+    },
+    "icon": {
+      "type": "string",
+      "description": "Emoji or icon identifier shown next to the name.",
+      "default": "🌐"
+    },
+    "theme": {
+      "type": "string",
+      "description": "Theme id applied while this workspace is active; falls back to the global theme when absent."
+    },
+    "containerId": {
+      "type": "string",
+      "description": "Firefox container (contextual identity) providing cookie/storage isolation for this workspace."
+    },
+    "searchProvider": {
+      "type": "string",
+      "enum": ["brave", "duckduckgo", "kagi", "startpage", "google"],
+      "default": "brave",
+      "description": "Per-workspace default search engine."
+    },
+    "extensions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Extension ids enabled in this workspace; absent means all globally enabled extensions.",
+      "uniqueItems": true
+    },
+    "settings": {
+      "type": "object",
+      "description": "Per-workspace setting overrides (subset of global settings keys).",
+      "additionalProperties": true
+    },
+    "isolation": {
+      "type": "object",
+      "description": "Which stores are isolated per-workspace (true) vs shared globally (false). Cookies/site storage are always isolated via the container. Full isolation makes a workspace a complete digital identity.",
+      "additionalProperties": false,
+      "properties": {
+        "bookmarks": { "type": "boolean", "default": false },
+        "history": { "type": "boolean", "default": false },
+        "passwords": { "type": "boolean", "default": false }
+      }
+    },
+    "aiSettings": {
+      "type": "object",
+      "description": "Per-workspace AI configuration (Phase 6). Model choice and whether AI features are enabled at all in this workspace.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "model": { "type": "string", "description": "Local model identifier (e.g. an Ollama model name)." }
+      }
+    },
+    "template": {
+      "type": "string",
+      "description": "Id of the workspace template this was created from (e.g. 'student', 'developer', 'privacy'), if any."
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "lastActiveAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Used for ordering and for tab memory-management heuristics."
+    }
+  }
+}

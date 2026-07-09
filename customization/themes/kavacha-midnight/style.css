@@ -1,0 +1,37 @@
+/* Kavacha Midnight — default dark theme.
+ * Loaded into browser chrome only (never web content). Tokens from colors.json
+ * are injected by the theme engine as --kavacha-* custom properties; this file
+ * may only consume tokens, not hardcode colors, so user palette edits apply. */
+
+:root {
+  --toolbar-bgcolor: var(--kavacha-surface);
+  --toolbar-color: var(--kavacha-text-primary);
+  --urlbar-box-bgcolor: var(--kavacha-urlbar-background);
+  --tab-selected-bgcolor: var(--kavacha-tab-active-background);
+  --sidebar-background-color: var(--kavacha-sidebar-background);
+  --sidebar-text-color: var(--kavacha-text-secondary);
+  --focus-outline-color: var(--kavacha-accent);
+}
+
+/* Vertical tab rail */
+#kavacha-sidebar .tab {
+  border-radius: 8px;
+  transition: background-color 120ms ease;
+}
+#kavacha-sidebar .tab:hover {
+  background-color: var(--kavacha-tab-hover-background);
+}
+#kavacha-sidebar .tab[selected] {
+  background-color: var(--kavacha-tab-active-background);
+  color: var(--kavacha-text-primary);
+}
+
+/* Workspace switcher */
+#kavacha-workspaces .workspace[active] {
+  border-inline-start: 2px solid var(--kavacha-accent);
+}
+
+/* Privacy shield indicator */
+#kavacha-shield[protections-active] {
+  fill: var(--kavacha-privacy-shield);
+}

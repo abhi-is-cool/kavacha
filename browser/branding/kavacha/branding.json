@@ -1,0 +1,45 @@
+{
+  "$comment": "Kavacha brand identity — single source of truth consumed by branding patches and build config.",
+  "appName": "Kavacha",
+  "appNameNightly": "Kavacha Nightly",
+  "vendor": "Kavacha",
+  "appId": "app.kavacha.browser",
+  "binaryName": "kavacha",
+  "urls": {
+    "homepage": "https://kavacha.app",
+    "newTab": "about:newtab",
+    "support": "https://kavacha.app/support",
+    "privacyPolicy": "https://kavacha.app/privacy",
+    "releaseNotes": "https://kavacha.app/releases",
+    "sourceCode": "https://github.com/kavacha/kavacha"
+  },
+  "removedUpstreamUrls": {
+    "$comment": "Upstream default URLs that branding patches must strip or replace.",
+    "telemetry": null,
+    "crashReports": null,
+    "sponsoredContent": null,
+    "pocket": null
+  },
+  "identity": {
+    "tagline": "Your browser. Your rules.",
+    "colors": {
+      "brandPrimary": "#3B2F63",
+      "brandAccent": "#E8A33D",
+      "brandSurface": "#14111F"
+    }
+  },
+  "assets": {
+    "$comment": "Replace placeholders before first Nightly. Sizes follow Firefox branding requirements.",
+    "icons": [
+      "icons/default16.png",
+      "icons/default32.png",
+      "icons/default48.png",
+      "icons/default64.png",
+      "icons/default128.png",
+      "icons/default256.png",
+      "icons/firefox.icns",
+      "icons/firefox.ico"
+    ],
+    "wordmark": "icons/wordmark.svg"
+  }
+}

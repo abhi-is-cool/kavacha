@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kavacha.app/schemas/layout.schema.json",
+  "title": "Kavacha Layout",
+  "description": "Persisted UI layout: where panels live, their sizes, and which elements are hidden. Edited visually in the Customization Studio; stored per profile and syncable.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "sidebar": {
+      "type": "string",
+      "enum": ["left", "right", "hidden"],
+      "default": "left"
+    },
+    "sidebarWidth": {
+      "type": "integer",
+      "minimum": 48,
+      "maximum": 600,
+      "default": 250,
+      "description": "Pixels. 48 is icon-only rail."
+    },
+    "tabStyle": {
+      "type": "string",
+      "enum": ["vertical", "horizontal"],
+      "default": "vertical",
+      "description": "Vertical tabs are the Kavacha default."
+    },
+    "density": {
+      "type": "string",
+      "enum": ["compact", "normal", "comfortable"],
+      "default": "compact"
+    },
+    "toolbar": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "position": { "type": "string", "enum": ["top", "bottom"], "default": "top" },
+        "visible": { "type": "boolean", "default": true }
+      }
+    },
+    "hiddenElements": {
+      "type": "array",
+      "description": "Ids of chrome elements the user has hidden via the Studio.",
+      "items": { "type": "string" },
+      "uniqueItems": true,
+      "default": []
+    },
+    "componentSizes": {
+      "type": "object",
+      "description": "Per-component size overrides in pixels, keyed by component id.",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    }
+  }
+}

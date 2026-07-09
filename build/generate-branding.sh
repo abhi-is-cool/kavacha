@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+#
+# Generates engine/browser/branding/kavacha inside the upstream tree from the
+# surfer-generated release branding, replacing brand strings and URLs with
+# Kavacha's (source of truth: browser/branding/kavacha/branding.json).
+#
+# Logos are rendered from browser/branding/kavacha/assets/logo.png (2000x2000
+# with alpha). Windows-installer imagery (.ico, .bmp, VisualElementsManifest)
+# remains a Zen placeholder until dedicated assets exist — macOS/Linux builds
+# don't use it.
+#
+# Runs as part of `bootstrap.sh setup|update`; safe to re-run any time.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SRC="$REPO_ROOT/browser/zen-upstream/engine/browser/branding/release"
+DST="$REPO_ROOT/browser/zen-upstream/engine/browser/branding/kavacha"
+
+log() { printf '\033[1;36m[kavacha]\033[0m %s\n' "$*"; }
+
+[ -d "$SRC" ] || { echo "ERROR: $SRC missing — run bootstrap setup first (surfer import generates it)." >&2; exit 1; }
+
+log "Generating Kavacha branding at engine/browser/branding/kavacha..."
+rm -rf "$DST"
+cp -R "$SRC" "$DST"
+
+cat > "$DST/configure.sh" <<'EOF'
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+MOZ_APP_DISPLAYNAME="Kavacha"
+MOZ_MACBUNDLE_ID="kavacha"
+EOF
+
+cat > "$DST/locales/en-US/brand.ftl" <<'EOF'
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+-brand-shorter-name = Kavacha
+-brand-short-name = Kavacha
+-brand-full-name = Kavacha
+# This brand name can be used in messages where the product name needs to
+# remain unchanged across different versions (Nightly, Beta, etc.).
+-brand-product-name = Kavacha
+-vendor-short-name = Kavacha
+trademarkInfo = { " " }
+EOF
+
+cat > "$DST/locales/en-US/brand.dtd" <<'EOF'
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+
+<!ENTITY  brandShorterName      "Kavacha">
+<!ENTITY  brandShortName        "Kavacha">
+<!ENTITY  brandFullName         "Kavacha">
+EOF
+
+cat > "$DST/locales/en-US/brand.properties" <<'EOF'
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+brandShorterName=Kavacha
+brandShortName=Kavacha
+brandFullName=Kavacha
+vendorShortName=Kavacha
+EOF
+
+# Kavacha URLs (branding.json → urls). Update checks stay pointed at a
+# non-resolving host until Kavacha runs its own update infrastructure.
+cat > "$DST/pref/firefox-branding.js" <<'EOF'
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+pref("startup.homepage_override_url", "https://kavacha.app/whatsnew?v=%VERSION%");
+pref("startup.homepage_welcome_url", "https://kavacha.app/welcome/");
+pref("startup.homepage_welcome_url.additional", "https://kavacha.app/privacy/");
+
+pref("app.update.promptWaitTime", 691200);
+pref("app.update.url.manual", "https://kavacha.app/download/");
+pref("app.update.url.details", "https://kavacha.app/releases/");
+pref("app.releaseNotesURL", "https://kavacha.app/whatsnew/");
+pref("app.releaseNotesURL.aboutDialog", "https://kavacha.app/releases/%VERSION%/");
+pref("app.releaseNotesURL.prompt", "https://kavacha.app/releases/");
+EOF
+
+# ---------------------------------------------------------------------------
+# Icons from the Kavacha logo
+# ---------------------------------------------------------------------------
+LOGO="$REPO_ROOT/browser/branding/kavacha/assets/logo.png"
+[ -f "$LOGO" ] || { echo "ERROR: $LOGO missing." >&2; exit 1; }
+
+log "Rendering logo sizes from assets/logo.png..."
+for size in 16 22 24 32 48 64 128 256 512 1024; do
+    sips -z "$size" "$size" "$LOGO" --out "$DST/logo${size}.png" >/dev/null
+done
+for size in 16 22 24 32 48 64 128 256 512; do
+    cp "$DST/logo${size}.png" "$DST/default${size}.png"
+done
+cp "$LOGO" "$DST/logo.png"
+cp "$LOGO" "$DST/logo-mac.png"
+sips -z 192 192 "$LOGO" --out "$DST/content/about-logo.png" >/dev/null
+sips -z 384 384 "$LOGO" --out "$DST/content/about-logo@2x.png" >/dev/null
+sips -z 150 150 "$LOGO" --out "$DST/VisualElements_150.png" >/dev/null
+sips -z 70 70  "$LOGO" --out "$DST/VisualElements_70.png"  >/dev/null
+
+if [ "$(uname)" = "Darwin" ]; then
+    log "Building firefox.icns via iconutil..."
+    ICONSET="$(mktemp -d)/kavacha.iconset"
+    mkdir -p "$ICONSET"
+    for size in 16 32 128 256 512; do
+        sips -z "$size" "$size" "$LOGO" --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
+        double=$((size * 2))
+        sips -z "$double" "$double" "$LOGO" --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
+    done
+    iconutil -c icns "$ICONSET" -o "$DST/firefox.icns"
+    rm -rf "$(dirname "$ICONSET")"
+fi
+
+log "Branding generated. NOTE: Windows .ico/.bmp remain Zen placeholders until dedicated assets land."

@@ -1,0 +1,39 @@
+# Patch 0001 — Register the "kavacha" brand in Zen's surfer config.
+#
+# What: adds a `kavacha` entry to surfer.json `brands` (display names,
+# background color, display version). Surfer derives MOZ_MACBUNDLE_NAME and
+# update-channel/MAR ids from this key; build/generate-branding.sh creates the
+# matching engine/browser/branding/kavacha directory.
+# Why a patch: surfer.json is upstream's build manifest — there is no pref or
+# overlay mechanism for it.
+# Touches: surfer.json only.
+diff --git a/surfer.json b/surfer.json
+index 02a4938..7aef181 100644
+--- a/surfer.json
++++ b/surfer.json
+@@ -45,6 +45,18 @@
+           "repo": "zen-browser/desktop"
+         }
+       }
++    },
++    "kavacha": {
++      "backgroundColor": "#14111F",
++      "brandShorterName": "Kavacha",
++      "brandShortName": "Kavacha",
++      "brandFullName": "Kavacha",
++      "release": {
++        "displayVersion": "0.1.0",
++        "github": {
++          "repo": "kavacha/kavacha"
++        }
++      }
+     }
+   },
+   "license": {
+@@ -54,4 +66,4 @@
+     "licenseType": "MPL-2.0"
+   },
+   "updateHostname": "updates.zen-browser.app"
+-}
+\ No newline at end of file
++}

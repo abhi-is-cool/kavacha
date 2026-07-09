@@ -74,6 +74,12 @@ apply_patches() {
     done
 }
 
+apply_branding() {
+    "$REPO_ROOT/build/generate-branding.sh"
+    log "Selecting the kavacha brand..."
+    (cd "$UPSTREAM_DIR" && npm run surfer -- set brand kavacha)
+}
+
 setup() {
     check_prereqs
     fetch_upstream
@@ -84,6 +90,7 @@ setup() {
     (cd "$UPSTREAM_DIR" && npm run init)
     log "Updating en-US language packs..."
     (cd "$UPSTREAM_DIR" && python3 ./scripts/update_en_US_packs.py)
+    apply_branding
     log "Setup complete. Next: ./build/bootstrap.sh build"
 }
 
@@ -92,9 +99,11 @@ case "${1:-setup}" in
     build)  (cd "$UPSTREAM_DIR" && npm run build) ;;
     ui)     (cd "$UPSTREAM_DIR" && npm run build:ui) ;;
     start)  (cd "$UPSTREAM_DIR" && npm start) ;;
+    brand)  apply_branding ;;
     update)
         git -C "$UPSTREAM_DIR" checkout -- . && git -C "$UPSTREAM_DIR" pull
         apply_patches
+        apply_branding
         log "Upstream updated and patches re-applied. Re-run: ./build/bootstrap.sh build"
         ;;
     *) fail "Unknown command: $1 (expected: setup | build | ui | start | update)" ;;

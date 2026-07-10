@@ -11,7 +11,7 @@
     "support": "https://kavacha.app/support",
     "privacyPolicy": "https://kavacha.app/privacy",
     "releaseNotes": "https://kavacha.app/releases",
-    "sourceCode": "https://github.com/kavacha/kavacha"
+    "sourceCode": "https://github.com/abhi-is-cool/kavacha"
   },
   "removedUpstreamUrls": {
     "$comment": "Upstream default URLs that branding patches must strip or replace.",

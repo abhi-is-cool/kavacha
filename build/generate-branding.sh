@@ -102,6 +102,21 @@ EOF
 log "Privacy defaults appended to branding prefs ($(grep -c '^pref(' "$REPO_ROOT/privacy/tracker-controls/kavacha.js") prefs)."
 
 # ---------------------------------------------------------------------------
+# Update host. Patch 0002 sets updateHostname in surfer.json, but the
+# mozconfig export it produces never reaches CONFIG (MOZ_APPUPDATE_HOST is
+# not declared in moz.configure), so Zen's hardcoded fallback in
+# build/moz.build wins. Rewrite it here — this script reruns after every
+# import/update, so the fix survives engine re-imports.
+# ---------------------------------------------------------------------------
+MOZBUILD="$REPO_ROOT/browser/zen-upstream/engine/build/moz.build"
+if grep -q "updates.zen-browser.app" "$MOZBUILD"; then
+    sed -i '' 's|updates\.zen-browser\.app|updates.kavacha.app|' "$MOZBUILD"
+fi
+grep -q 'MOZ_APPUPDATE_HOST"\] = "updates.kavacha.app"' "$MOZBUILD" \
+    || { echo "ERROR: update-host rewrite failed in build/moz.build" >&2; exit 1; }
+log "Update host set to updates.kavacha.app in build/moz.build."
+
+# ---------------------------------------------------------------------------
 # Icons from the Kavacha logo
 # ---------------------------------------------------------------------------
 LOGO="$REPO_ROOT/browser/branding/kavacha/assets/logo.png"

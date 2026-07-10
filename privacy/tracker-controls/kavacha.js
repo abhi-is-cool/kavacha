@@ -104,6 +104,24 @@ pref("browser.urlbar.suggest.searches", false);
 pref("browser.newtabpage.activity-stream.default.sites", "");
 
 // ---------------------------------------------------------------------------
+// Residual phone-homes — endpoints still contacted automatically even with
+// telemetry compiled out. (App-update pings are handled at the source by
+// patch 0002.) Deliberately kept: Safe Browsing, Remote Settings (blocklists,
+// cert revocation), extension version checks — those protect the user.
+// ---------------------------------------------------------------------------
+// Startup region-detection ping to Mozilla's location service.
+pref("browser.region.network.url", "");
+pref("browser.region.update.enabled", false);
+// Contile: fetches sponsored top-site tiles from Mozilla on new-tab open.
+pref("browser.topsites.contile.enabled", false);
+// System add-on updates pushed from Mozilla's server; Kavacha ships these
+// changes through its own releases instead.
+pref("extensions.systemAddon.update.enabled", false);
+pref("extensions.systemAddon.update.url", "");
+// Windows-only scheduled task that reports default-browser status to Mozilla.
+pref("default-browser-agent.enabled", false);
+
+// ---------------------------------------------------------------------------
 // Cookie intelligence — handle consent banners for the user (reject tracking
 // where the site supports it, instead of asking "Accept cookies?").
 // Uses Firefox's built-in Cookie Banner Blocker; mode 1 = reject-all when

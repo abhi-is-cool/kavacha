@@ -10,11 +10,15 @@ project start (2026-07-09).
 - [x] Bootstrap tooling (`build/bootstrap.sh`: setup/build/ui/start/update)
 - [x] CI skeleton (validate on push; nightly build matrix for win/mac/linux)
 - [x] Privacy default prefs (`privacy/tracker-controls/kavacha.js`)
+- [x] Privacy prefs shipped inside the app (appended to branding prefs by
+      generate-branding.sh; verified in Kavacha.app defaults/preferences, 2026-07-09)
 - [x] Branding source of truth (`browser/branding/kavacha/branding.json`)
 - [x] First local build of unmodified Zen via bootstrap (verified 2026-07-09, ~99 min on Apple Silicon)
 - [x] Patch `0001-branding-kavacha.patch` — Kavacha brand registered; verified: build
       produces Kavacha.app with Kavacha strings + icon (2026-07-09)
-- [ ] Patch `0002-strip-telemetry-endpoints.patch` — defense in depth
+- [x] Patch `0002-strip-phone-home-endpoints.patch` — update pings no longer go to
+      Zen's server; residual Mozilla endpoints (region/contile/system-addons/WDBA)
+      disabled via prefs (2026-07-09)
 - [x] Brand assets: lotus-shield logo → all icon sizes + .icns via
       build/generate-branding.sh (Windows .ico/.bmp installer imagery still placeholder)
 - [ ] **Deliverable: first Kavacha Nightly artifact from CI**

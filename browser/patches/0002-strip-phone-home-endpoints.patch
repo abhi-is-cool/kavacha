@@ -1,0 +1,20 @@
+# Patch 0002 — Strip third-party phone-home endpoints from build config.
+#
+# What: points updateHostname at updates.kavacha.app instead of
+# updates.zen-browser.app. MOZ_APPUPDATE_HOST is baked into the build from
+# this value; without this patch every Kavacha install pings Zen's update
+# server periodically. updates.kavacha.app does not resolve yet, so update
+# checks fail closed (no data leaves the machine) until Kavacha runs its
+# own update infrastructure.
+# Why a patch: updateHostname lives in surfer.json, upstream's build
+# manifest — no pref or overlay can change MOZ_APPUPDATE_HOST.
+# Touches: surfer.json only. Applies on top of 0001.
+--- a/surfer.json
++++ b/surfer.json
+@@ -65,5 +65,5 @@
+     ],
+     "licenseType": "MPL-2.0"
+   },
+-  "updateHostname": "updates.zen-browser.app"
++  "updateHostname": "updates.kavacha.app"
+ }

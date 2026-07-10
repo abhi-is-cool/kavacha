@@ -14,9 +14,17 @@ Naming: `NNNN-short-kebab-name.patch`, applied in numeric order.
 Every patch must begin with a header comment stating what it does, why an
 overlay/pref could not do it, and which upstream files it touches.
 
-## Planned Phase 1 patches
+## Current patches
 
 | Patch | Purpose |
 |---|---|
-| `0001-branding-kavacha.patch` | Register the `kavacha` brand in Zen's build config |
-| `0002-strip-telemetry-endpoints.patch` | Remove telemetry/crash-report submission URLs at the source (defense in depth on top of prefs) |
+| `0001-branding-kavacha.patch` | Register the `kavacha` brand in Zen's build config (surfer.json) |
+| `0002-strip-phone-home-endpoints.patch` | Point `updateHostname` at updates.kavacha.app so installs stop pinging Zen's update server; fails closed until Kavacha update infra exists |
+
+Audit note (2026-07-09): Zen's tracked sources contain no analytics/crash SDKs.
+Mozilla telemetry is already compiled out by Zen's build config; remaining automatic
+Mozilla endpoints (region ping, contile, system add-on updates, Windows default-browser
+agent) are disabled via prefs in `privacy/tracker-controls/kavacha.js`. Deliberately
+kept: Safe Browsing, Remote Settings, extension version checks (they protect users).
+Zen mods auto-update stays enabled — it only fires for user-installed mods and stale
+mods are a security risk.

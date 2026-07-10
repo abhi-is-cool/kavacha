@@ -60,8 +60,11 @@ jobs:
           patches=(browser/patches/*.patch)
           if [ ${#patches[@]} -eq 0 ]; then echo "no patches yet"; exit 0; fi
           git clone --depth 10 https://github.com/zen-browser/desktop.git /tmp/zen
+          # Patches are ordered and may build on each other (e.g. 0001 and 0002
+          # both touch surfer.json), so apply each one for real, in sequence.
           for p in "${patches[@]}"; do
-            git -C /tmp/zen apply --check "$GITHUB_WORKSPACE/$p"
+            echo "applying $p"
+            git -C /tmp/zen apply "$GITHUB_WORKSPACE/$p"
           done
 
   nightly-build:

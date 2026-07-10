@@ -83,7 +83,8 @@ jobs:
           - os: windows-latest
             platform: windows
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 300
+    # Cold builds on 3-4 core hosted runners take ~4h; 360 is GitHub's job max.
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
 
@@ -108,13 +109,19 @@ jobs:
         run: ./build/bootstrap.sh build
         shell: bash
 
+      # Compilation lands in the obj dir; `surfer package` is what produces the
+      # distributables (DMG / tar / installer + update MAR) in zen-upstream/dist/.
+      - name: Package
+        run: ./build/bootstrap.sh package
+        shell: bash
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: kavacha-nightly-${{ matrix.platform }}
           path: |
             browser/zen-upstream/dist/*
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
   # TODO (before Developer Preview): code signing + notarization, reproducible-build

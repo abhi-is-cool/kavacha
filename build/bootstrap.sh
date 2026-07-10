@@ -8,6 +8,7 @@
 #   ./build/bootstrap.sh build    # full browser build (first run: 1-3 hours)
 #   ./build/bootstrap.sh ui       # fast rebuild after UI-only changes
 #   ./build/bootstrap.sh start    # launch the built browser
+#   ./build/bootstrap.sh package  # produce installers (DMG/tar/exe) in browser/zen-upstream/dist/
 #   ./build/bootstrap.sh update   # pull latest upstream and re-apply Kavacha patches
 #
 set -euo pipefail
@@ -99,6 +100,7 @@ case "${1:-setup}" in
     build)  (cd "$UPSTREAM_DIR" && npm run build) ;;
     ui)     (cd "$UPSTREAM_DIR" && npm run build:ui) ;;
     start)  (cd "$UPSTREAM_DIR" && npm start) ;;
+    package) (cd "$UPSTREAM_DIR" && npm run package) ;;
     brand)  apply_branding ;;
     update)
         git -C "$UPSTREAM_DIR" checkout -- . && git -C "$UPSTREAM_DIR" pull
@@ -106,5 +108,5 @@ case "${1:-setup}" in
         apply_branding
         log "Upstream updated and patches re-applied. Re-run: ./build/bootstrap.sh build"
         ;;
-    *) fail "Unknown command: $1 (expected: setup | build | ui | start | update)" ;;
+    *) fail "Unknown command: $1 (expected: setup | build | ui | start | package | update)" ;;
 esac

@@ -1,0 +1,11 @@
+# Patches must apply byte-exact to upstream's LF files — never convert EOLs.
+*.patch -text
+
+# Keep all text LF everywhere so builds behave identically across platforms.
+* text=auto eol=lf
+
+# Binary assets
+*.png binary
+*.ico binary
+*.icns binary
+*.woff2 binary

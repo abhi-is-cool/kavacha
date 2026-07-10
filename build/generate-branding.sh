@@ -110,7 +110,9 @@ log "Privacy defaults appended to branding prefs ($(grep -c '^pref(' "$REPO_ROOT
 # ---------------------------------------------------------------------------
 MOZBUILD="$REPO_ROOT/browser/zen-upstream/engine/build/moz.build"
 if grep -q "updates.zen-browser.app" "$MOZBUILD"; then
-    sed -i '' 's|updates\.zen-browser\.app|updates.kavacha.app|' "$MOZBUILD"
+    # -i.bak form works on both BSD (macOS) and GNU (Linux) sed
+    sed -i.kavacha-bak 's|updates\.zen-browser\.app|updates.kavacha.app|' "$MOZBUILD"
+    rm -f "$MOZBUILD.kavacha-bak"
 fi
 grep -q 'MOZ_APPUPDATE_HOST"\] = "updates.kavacha.app"' "$MOZBUILD" \
     || { echo "ERROR: update-host rewrite failed in build/moz.build" >&2; exit 1; }

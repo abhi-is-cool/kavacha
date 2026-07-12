@@ -105,6 +105,15 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Stock ubuntu runners don't have the ~40GB a Firefox build needs; the
+      # runner gets killed mid-compile ("shutdown signal") when disk fills.
+      # Same mitigation as Zen's linux-release-build workflow.
+      - name: Free disk space (Linux)
+        if: matrix.platform == 'linux'
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+
       - name: Install Rust
         run: rustup update stable
 
@@ -144,6 +153,15 @@ jobs:
 
       - name: Bootstrap (fetch upstream + Firefox source)
         run: ./build/bootstrap.sh
+        shell: bash
+
+      # 16GB Windows runners OOM in rustc at Firefox's default parallelism
+      # ("rustc-LLVM ERROR: out of memory" ~84 min in). Halve the job count via
+      # surfer's uncommitted root-mozconfig hook — slower, but Windows is
+      # experimental and correctness comes first.
+      - name: Cap build parallelism (Windows)
+        if: matrix.platform == 'windows'
+        run: echo 'mk_add_options MOZ_MAKE_FLAGS="-j2"' >> browser/zen-upstream/mozconfig
         shell: bash
 
       - name: Build

@@ -21,8 +21,7 @@
     },
     "icon": {
       "type": "string",
-      "description": "Emoji or icon identifier shown next to the name.",
-      "default": "🌐"
+      "description": "Icon shown next to the name: a chrome:// SVG URL from Zen's selectable icon set (preferred) or an emoji."
     },
     "theme": {
       "type": "string",

@@ -6,8 +6,9 @@
 # Firefox container (created on demand, reused by name if it already
 # exists), a template gradient theme, a search-engine override (Private →
 # DuckDuckGo) and settings overrides (autoplay/notifications/passwords/
-# suggestions per template). The space records template=<id> per the
-# workspace schema. Extension recommendations are deferred until the
+# suggestions per template). Space icons use Zen's selectable SVG set
+# (school/code/lock-closed), no emoji. The space records template=<id> per
+# the workspace schema. Extension recommendations are deferred until the
 # marketplace can install them.
 # Why a patch: composes the identity features from patches 0003–0005 with
 # Zen's createAndSaveWorkspace() and ContextualIdentityService; everything
@@ -17,7 +18,7 @@
 #          locales/en-US/browser/browser/zen-workspaces.ftl.
 # Applies on top of 0005 (same files).
 diff --git a/locales/en-US/browser/browser/zen-workspaces.ftl b/locales/en-US/browser/browser/zen-workspaces.ftl
-index 90df764..b573600 100644
+index 90df764..0093d47 100644
 --- a/locales/en-US/browser/browser/zen-workspaces.ftl
 +++ b/locales/en-US/browser/browser/zen-workspaces.ftl
 @@ -71,6 +71,18 @@ zen-workspaces-settings-search-suggestions =
@@ -28,13 +29,13 @@ index 90df764..b573600 100644
 +    .label = New Space from Template
 +
 +zen-workspaces-template-student =
-+    .label = 📚 Student
++    .label = Student
 +
 +zen-workspaces-template-developer =
-+    .label = 🛠️ Developer
++    .label = Developer
 +
 +zen-workspaces-template-privacy =
-+    .label = 🛡️ Private
++    .label = Private
 +
  zen-workspaces-panel-unload =
      .label = Unload Space
@@ -58,7 +59,7 @@ index 7a60939..a8cdb34 100644
    <menuseparator/>
    <menuitem data-l10n-id="zen-panel-ui-new-empty-split" command="cmd_zenNewEmptySplit" image="chrome://browser/skin/zen-icons/split.svg" />
 diff --git a/src/zen/spaces/ZenSpaceManager.mjs b/src/zen/spaces/ZenSpaceManager.mjs
-index 0c544aa..e183fc2 100644
+index 0c544aa..7624c38 100644
 --- a/src/zen/spaces/ZenSpaceManager.mjs
 +++ b/src/zen/spaces/ZenSpaceManager.mjs
 @@ -75,6 +75,43 @@ const KAVACHA_SPACE_SETTINGS = [
@@ -74,7 +75,7 @@ index 0c544aa..e183fc2 100644
 +  {
 +    id: "student",
 +    name: "Student",
-+    icon: "📚",
++    svgIcon: "school.svg",
 +    container: { name: "Student", icon: "briefcase", color: "blue" },
 +    themeColor: [59, 130, 246],
 +    settings: { blockAutoplay: true, blockNotificationPrompts: true },
@@ -82,7 +83,7 @@ index 0c544aa..e183fc2 100644
 +  {
 +    id: "developer",
 +    name: "Developer",
-+    icon: "🛠️",
++    svgIcon: "code.svg",
 +    container: { name: "Developer", icon: "circle", color: "green" },
 +    themeColor: [34, 197, 94],
 +    settings: { searchSuggestions: false },
@@ -90,7 +91,7 @@ index 0c544aa..e183fc2 100644
 +  {
 +    id: "privacy",
 +    name: "Private",
-+    icon: "🛡️",
++    svgIcon: "lock-closed.svg",
 +    container: { name: "Private", icon: "fingerprint", color: "purple" },
 +    themeColor: [139, 92, 246],
 +    searchProvider: "DuckDuckGo",
@@ -159,7 +160,7 @@ index 0c544aa..e183fc2 100644
 +    }
 +    return this.createAndSaveWorkspace(
 +      template.name,
-+      template.icon,
++      gZenEmojiPicker.getSVGURL(template.svgIcon),
 +      false,
 +      containerTabId,
 +      {

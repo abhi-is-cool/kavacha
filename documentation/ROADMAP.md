@@ -63,6 +63,10 @@ split view, command palette, session store.
       dedicated container + themed gradient + search engine + settings overrides.
       Extension recommendations deferred until the marketplace can install them
 - [ ] Tab memory management (30 min inactive → save → unload → restore)
+- [ ] Workspace lifecycle: **archive/restore** + `description` metadata
+      (see [PLATFORM_PLAN.md](PLATFORM_PLAN.md) — workspaces as persistent projects)
+- [ ] **Workspace notes**: local markdown notes attached to a space (MVP item)
+- [ ] Verify session-restore depth (scroll positions, page state) across restarts
 
 ## Phase 3 — Customization Studio & Marketplace (Months 4–6) — Y1
 
@@ -76,6 +80,11 @@ split view, command palette, session store.
 - [ ] Live CSS editor with history + safe mode (Advanced tier)
 - [ ] **Component marketplace** (supersedes theme-only marketplace): themes, layouts,
       sidebar widgets, tool panels; bundles like "Research Mode"
+- [ ] **Command registry** on Zen's palette (Cmd+K): every Kavacha feature exposes
+      commands — navigation / organization / productivity / automation
+      (see [PLATFORM_PLAN.md](PLATFORM_PLAN.md))
+- [ ] Kavacha SDK + plugin permission model (workspaces/tabs/notes/commands behind
+      explicit per-plugin permissions; never passwords or private data)
 
 ## Phase 4 — Privacy Center (Months 6–8) — Y1
 
@@ -99,8 +108,10 @@ split view, command palette, session store.
 ## Phase 6 — AI & Personal Search (Months 10–12) — Y1
 
 - [ ] Ollama/llama.cpp runtime bridge
-- [ ] **Personal search index**: local index over history, bookmarks, saved pages —
-      retrieval backbone for AI features and later knowledge graph
+- [ ] **Personal search index**: local index over history, bookmarks, saved pages,
+      PDFs, downloads, and workspace notes — SQLite FTS + metadata, optional local
+      embeddings; local by default, encrypted-at-rest option, user-controlled
+      deletion. Retrieval backbone for AI features and later knowledge graph
 - [ ] Page summarization → sidebar
 - [ ] Natural-language history search (on the personal index)
 - [ ] Tab assistant via command palette ("group tabs by topic", "close duplicates",
@@ -117,6 +128,6 @@ mode) · Automation, focus mode, offline mode
 
 | Gate | Requirement |
 |---|---|
-| Developer Preview | Phase 1–2 complete; signed builds |
+| Developer Preview | MVP scope in [PLATFORM_PLAN.md](PLATFORM_PLAN.md): Phase 1–2 complete incl. workspace notes + archiving, command registry, basic universal search, distinct default look; signed builds |
 | Beta | + Phases 3–4; reproducible builds; disclosure program live |
 | v1.0 Public | MVP checklist in MASTER_PLAN.md fully checked; startup < 2 s; crash rate < 0.5 % |

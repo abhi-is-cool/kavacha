@@ -1,0 +1,195 @@
+# Patch 0006 — Workspace templates (Kavacha Workspace Identities, Phase 2).
+#
+# What: one-click complete identities. "New Space from Template" in the
+# create (+) menu offers Student / Developer / Private presets
+# (KAVACHA_SPACE_TEMPLATES); each creates a space with its own dedicated
+# Firefox container (created on demand, reused by name if it already
+# exists), a template gradient theme, a search-engine override (Private →
+# DuckDuckGo) and settings overrides (autoplay/notifications/passwords/
+# suggestions per template). The space records template=<id> per the
+# workspace schema. Extension recommendations are deferred until the
+# marketplace can install them.
+# Why a patch: composes the identity features from patches 0003–0005 with
+# Zen's createAndSaveWorkspace() and ContextualIdentityService; everything
+# applied on switch is handled by the hooks those patches added.
+# Touches: src/zen/spaces/ZenSpaceManager.mjs,
+#          src/browser/base/content/zen-panels/popups.inc,
+#          locales/en-US/browser/browser/zen-workspaces.ftl.
+# Applies on top of 0005 (same files).
+diff --git a/locales/en-US/browser/browser/zen-workspaces.ftl b/locales/en-US/browser/browser/zen-workspaces.ftl
+index 90df764..b573600 100644
+--- a/locales/en-US/browser/browser/zen-workspaces.ftl
++++ b/locales/en-US/browser/browser/zen-workspaces.ftl
+@@ -71,6 +71,18 @@ zen-workspaces-settings-search-suggestions =
+ zen-workspaces-settings-reset =
+     .label = Reset to Browser Defaults
+ 
++zen-workspaces-template-menu =
++    .label = New Space from Template
++
++zen-workspaces-template-student =
++    .label = 📚 Student
++
++zen-workspaces-template-developer =
++    .label = 🛠️ Developer
++
++zen-workspaces-template-privacy =
++    .label = 🛡️ Private
++
+ zen-workspaces-panel-unload =
+     .label = Unload Space
+ 
+diff --git a/src/browser/base/content/zen-panels/popups.inc b/src/browser/base/content/zen-panels/popups.inc
+index 7a60939..a8cdb34 100644
+--- a/src/browser/base/content/zen-panels/popups.inc
++++ b/src/browser/base/content/zen-panels/popups.inc
+@@ -4,6 +4,13 @@
+ 
+ <menupopup id="zenCreateNewPopup">
+   <menuitem data-l10n-id="zen-panel-ui-workspaces-create" command="cmd_zenOpenWorkspaceCreation" image="chrome://browser/skin/zen-icons/duplicate-tab.svg" />
++  <menu id="context_zenCreateFromTemplate" data-l10n-id="zen-workspaces-template-menu">
++    <menupopup>
++      <menuitem data-l10n-id="zen-workspaces-template-student" data-template-id="student"/>
++      <menuitem data-l10n-id="zen-workspaces-template-developer" data-template-id="developer"/>
++      <menuitem data-l10n-id="zen-workspaces-template-privacy" data-template-id="privacy"/>
++    </menupopup>
++  </menu>
+   <menuitem data-l10n-id="zen-panel-ui-folder-create" command="cmd_zenOpenFolderCreation" image="chrome://browser/skin/zen-icons/folder.svg" />
+   <menuseparator/>
+   <menuitem data-l10n-id="zen-panel-ui-new-empty-split" command="cmd_zenNewEmptySplit" image="chrome://browser/skin/zen-icons/split.svg" />
+diff --git a/src/zen/spaces/ZenSpaceManager.mjs b/src/zen/spaces/ZenSpaceManager.mjs
+index 0c544aa..e183fc2 100644
+--- a/src/zen/spaces/ZenSpaceManager.mjs
++++ b/src/zen/spaces/ZenSpaceManager.mjs
+@@ -75,6 +75,43 @@ const KAVACHA_SPACE_SETTINGS = [
+   },
+ ];
+ 
++// Kavacha: workspace templates — a template is a pre-filled space object plus
++// a dedicated Firefox container, composing the Phase 2 identity features
++// (container isolation + theme + search engine + settings). Extensions stay
++// at "all" until the marketplace can install recommended sets.
++// Container icons/colors must come from ContextualIdentityService's sets.
++const KAVACHA_SPACE_TEMPLATES = [
++  {
++    id: "student",
++    name: "Student",
++    icon: "📚",
++    container: { name: "Student", icon: "briefcase", color: "blue" },
++    themeColor: [59, 130, 246],
++    settings: { blockAutoplay: true, blockNotificationPrompts: true },
++  },
++  {
++    id: "developer",
++    name: "Developer",
++    icon: "🛠️",
++    container: { name: "Developer", icon: "circle", color: "green" },
++    themeColor: [34, 197, 94],
++    settings: { searchSuggestions: false },
++  },
++  {
++    id: "privacy",
++    name: "Private",
++    icon: "🛡️",
++    container: { name: "Private", icon: "fingerprint", color: "purple" },
++    themeColor: [139, 92, 246],
++    searchProvider: "DuckDuckGo",
++    settings: {
++      rememberPasswords: false,
++      searchSuggestions: false,
++      blockNotificationPrompts: true,
++    },
++  },
++];
++
+ /**
+  * Zen Spaces manager. This class is mainly responsible for the UI
+  * and user interactions but it also contains some logic to manage
+@@ -1299,6 +1336,18 @@ class nsZenWorkspaces {
+       "command",
+       this.contextChangeSettings.bind(this)
+     );
++
++    const createFromTemplateMenu = document.getElementById(
++      "context_zenCreateFromTemplate"
++    );
++    createFromTemplateMenu.addEventListener("command", event => {
++      const templateId = event.target.getAttribute("data-template-id");
++      if (templateId) {
++        this.createWorkspaceFromTemplate(templateId).catch(e =>
++          console.error("gZenWorkspaces: error creating from template", e)
++        );
++      }
++    });
+   }
+ 
+   generateMenuItemForWorkspace(workspace, disableCurrent = false) {
+@@ -3418,6 +3467,68 @@ class nsZenWorkspaces {
+     }
+   }
+ 
++  // ==========================================================================
++  // Kavacha: workspace templates (KAVACHA_SPACE_TEMPLATES). Creates a space
++  // with its own dedicated container plus the template's theme, search engine
++  // and settings — a complete identity in one click. Everything downstream
++  // (applying engine/settings on switch) is handled by the existing hooks.
++  // ==========================================================================
++  async createWorkspaceFromTemplate(templateId) {
++    const template = KAVACHA_SPACE_TEMPLATES.find(t => t.id === templateId);
++    if (!template || this.privateWindowOrDisabled) {
++      return null;
++    }
++    // Reuse a same-named container if one exists (e.g. template re-created
++    // after deleting the space) — containers are cheap but duplicates confuse.
++    let containerTabId = 0;
++    try {
++      const existing = ContextualIdentityService.getPublicIdentities().find(
++        identity => identity.name === template.container.name
++      );
++      const identity =
++        existing ||
++        ContextualIdentityService.create(
++          template.container.name,
++          template.container.icon,
++          template.container.color
++        );
++      containerTabId = identity.userContextId;
++    } catch (e) {
++      console.error("gZenWorkspaces: could not create template container", e);
++    }
++    return this.createAndSaveWorkspace(
++      template.name,
++      template.icon,
++      false,
++      containerTabId,
++      {
++        beforeChangeCallback: async workspace => {
++          workspace.theme = nsZenThemePicker.getTheme(
++            [
++              {
++                c: template.themeColor,
++                isPrimary: true,
++                isCustom: false,
++                lightness: 50,
++                type: "explicit-lightness",
++              },
++            ],
++            0.5,
++            0
++          );
++          if (template.searchProvider) {
++            workspace.searchProvider = template.searchProvider;
++          }
++          if (template.settings) {
++            workspace.settings = { ...template.settings };
++          }
++          workspace.template = template.id;
++          this.saveWorkspace(workspace);
++        },
++      }
++    );
++  }
++
+   async closeAllUnpinnedTabs() {
+     const workspaceId =
+       this.#contextMenuData?.workspaceId || this.activeWorkspace;

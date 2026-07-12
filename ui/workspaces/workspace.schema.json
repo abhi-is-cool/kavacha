@@ -44,8 +44,15 @@
     },
     "settings": {
       "type": "object",
-      "description": "Per-workspace setting overrides (subset of global settings keys).",
-      "additionalProperties": true
+      "description": "Per-workspace setting overrides. Curated allowlist (enforced by KAVACHA_SPACE_SETTINGS in patch 0005) — never arbitrary prefs, since workspaces sync across devices.",
+      "additionalProperties": false,
+      "properties": {
+        "colorScheme": { "enum": ["light", "dark"], "description": "Website content color scheme; absent = browser default." },
+        "blockAutoplay": { "type": "boolean", "description": "true blocks all media autoplay (audio+video)." },
+        "blockNotificationPrompts": { "type": "boolean", "description": "true silently blocks web notification permission prompts." },
+        "rememberPasswords": { "type": "boolean", "description": "Whether the browser offers to save passwords in this workspace." },
+        "searchSuggestions": { "type": "boolean", "description": "Whether URL-bar search suggestions are enabled in this workspace." }
+      }
     },
     "isolation": {
       "type": "object",

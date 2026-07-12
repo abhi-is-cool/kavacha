@@ -52,10 +52,16 @@ split view, command palette, session store.
         user global disables are never overridden. **Verified working in-app
         2026-07-12 — ADR 0003 validated**; workspace templates unblocked.
         (Keep an eye on switch latency with heavy addon sets as usage grows.)
-  - [ ] Settings overrides
+  - [x] Settings overrides (patch `0005-workspace-settings.patch`, 2026-07-12):
+        curated allowlist — website color scheme, autoplay, notification
+        prompts, password saving, search suggestions — with baseline restore;
+        "Workspace Settings" submenu
 - [ ] Per-workspace isolation options: bookmarks, history, password vault
 - [ ] Per-workspace AI settings (schema shipped; wiring in Phase 6)
-- [ ] Workspace templates: install "Student" / "Developer" / "Privacy" environments
+- [x] Workspace templates (patch `0006-workspace-templates.patch`, 2026-07-12):
+      "New Space from Template" → Student / Developer / Private, each composing a
+      dedicated container + themed gradient + search engine + settings overrides.
+      Extension recommendations deferred until the marketplace can install them
 - [ ] Tab memory management (30 min inactive → save → unload → restore)
 
 ## Phase 3 — Customization Studio & Marketplace (Months 4–6) — Y1

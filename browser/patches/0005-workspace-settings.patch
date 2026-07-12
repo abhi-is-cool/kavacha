@@ -1,0 +1,322 @@
+# Patch 0005 — Per-workspace setting overrides (Kavacha Workspace Identities, Phase 2).
+#
+# What: adds an optional `settings` object to Zen's space object, holding a
+# CURATED set of per-space overrides applied at the workspace-switch
+# chokepoint: website color scheme (light/dark/default), block-all media
+# autoplay, block notification prompts, offer-to-save passwords, and search
+# suggestions. A "Workspace Settings" submenu in the space actions menu edits
+# them; "Reset to Browser Defaults" clears the object.
+# Safety semantics: the key set is a deliberate allowlist
+# (KAVACHA_SPACE_SETTINGS) — workspaces sync across devices, so arbitrary
+# pref control would let a synced payload flip security-critical prefs.
+# The kavacha.workspaces.settings-baseline pref records the profile's value
+# before the first override of each key; spaces without that override
+# restore it (same pattern as the search-engine baseline).
+# Why a patch: same switch chokepoint and menu as 0003/0004; the field
+# persists + syncs for free through Zen's session store and spaces sync.
+# Touches: src/zen/spaces/ZenSpaceManager.mjs,
+#          src/browser/base/content/zen-panels/popups.inc,
+#          locales/en-US/browser/browser/zen-workspaces.ftl.
+# Applies on top of 0004 (same files).
+diff --git a/locales/en-US/browser/browser/zen-workspaces.ftl b/locales/en-US/browser/browser/zen-workspaces.ftl
+index 0a5a530..90df764 100644
+--- a/locales/en-US/browser/browser/zen-workspaces.ftl
++++ b/locales/en-US/browser/browser/zen-workspaces.ftl
+@@ -44,6 +44,33 @@ zen-workspaces-panel-context-extensions =
+ zen-workspaces-extensions-all =
+     .label = All Extensions
+ 
++zen-workspaces-panel-context-settings =
++    .label = Workspace Settings
++
++zen-workspaces-settings-color-default =
++    .label = Website Theme: Browser Default
++
++zen-workspaces-settings-color-light =
++    .label = Website Theme: Light
++
++zen-workspaces-settings-color-dark =
++    .label = Website Theme: Dark
++
++zen-workspaces-settings-block-autoplay =
++    .label = Block All Media Autoplay
++
++zen-workspaces-settings-block-notifications =
++    .label = Block Notification Prompts
++
++zen-workspaces-settings-remember-passwords =
++    .label = Offer to Save Passwords
++
++zen-workspaces-settings-search-suggestions =
++    .label = Show Search Suggestions
++
++zen-workspaces-settings-reset =
++    .label = Reset to Browser Defaults
++
+ zen-workspaces-panel-unload =
+     .label = Unload Space
+ 
+diff --git a/src/browser/base/content/zen-panels/popups.inc b/src/browser/base/content/zen-panels/popups.inc
+index 561da70..7a60939 100644
+--- a/src/browser/base/content/zen-panels/popups.inc
++++ b/src/browser/base/content/zen-panels/popups.inc
+@@ -35,6 +35,11 @@
+     hide-if-private-browsing="true">
+     <menupopup />
+   </menu>
++  <menu id="context_zenWorkspacesSettings"
++    data-l10n-id="zen-workspaces-panel-context-settings"
++    hide-if-private-browsing="true">
++    <menupopup />
++  </menu>
+   <menuseparator id="context_zenWorkspacesSeparator"/>
+   <menuseparator/>
+   <menuitem id="context_zenReorderWorkspaces" data-l10n-id="zen-workspaces-panel-context-reorder" command="cmd_zenReorderWorkspaces"/>
+diff --git a/src/zen/spaces/ZenSpaceManager.mjs b/src/zen/spaces/ZenSpaceManager.mjs
+index 75f38be..0c544aa 100644
+--- a/src/zen/spaces/ZenSpaceManager.mjs
++++ b/src/zen/spaces/ZenSpaceManager.mjs
+@@ -24,6 +24,57 @@ ChromeUtils.defineLazyGetter(lazy, "toolbarBackgroundElement", () => {
+   return document.getElementById("zen-toolbar-background");
+ });
+ 
++// Kavacha: curated per-workspace setting overrides (workspace.settings).
++// Deliberately an allowlist — workspaces sync across devices, so arbitrary
++// pref control would let a synced payload flip security-critical prefs.
++// `encode` maps the stored setting value to the pref value; `decode` maps the
++// current pref value to the checkbox state shown when no override exists.
++const KAVACHA_SPACE_SETTINGS = [
++  {
++    key: "colorScheme", // "light" | "dark"; absent = browser default
++    pref: "layout.css.prefers-color-scheme.content-override",
++    kind: "int",
++    menu: "radio",
++    encode: v => ({ dark: 0, light: 1 })[v],
++  },
++  {
++    key: "blockAutoplay", // true = block all media, false = block audible only
++    pref: "media.autoplay.default",
++    kind: "int",
++    menu: "checkbox",
++    l10n: "zen-workspaces-settings-block-autoplay",
++    encode: v => (v ? 5 /* BLOCKED_ALL */ : 1 /* BLOCKED (audible) */),
++    decode: prefValue => prefValue === 5,
++  },
++  {
++    key: "blockNotificationPrompts", // true = never ask for notifications
++    pref: "permissions.default.desktop-notification",
++    kind: "int",
++    menu: "checkbox",
++    l10n: "zen-workspaces-settings-block-notifications",
++    encode: v => (v ? 2 /* block */ : 0 /* ask */),
++    decode: prefValue => prefValue === 2,
++  },
++  {
++    key: "rememberPasswords",
++    pref: "signon.rememberSignons",
++    kind: "bool",
++    menu: "checkbox",
++    l10n: "zen-workspaces-settings-remember-passwords",
++    encode: v => !!v,
++    decode: prefValue => !!prefValue,
++  },
++  {
++    key: "searchSuggestions",
++    pref: "browser.search.suggest.enabled",
++    kind: "bool",
++    menu: "checkbox",
++    l10n: "zen-workspaces-settings-search-suggestions",
++    encode: v => !!v,
++    decode: prefValue => !!prefValue,
++  },
++];
++
+ /**
+  * Zen Spaces manager. This class is mainly responsible for the UI
+  * and user interactions but it also contains some logic to manage
+@@ -1236,6 +1287,18 @@ class nsZenWorkspaces {
+       "command",
+       this.contextChangeExtensions.bind(this)
+     );
++
++    const contextChangeSettingsMenu = document.getElementById(
++      "context_zenWorkspacesSettings"
++    );
++    contextChangeSettingsMenu.addEventListener(
++      "popupshowing",
++      this.updateWorkspaceActionsMenuSettings.bind(this)
++    );
++    contextChangeSettingsMenu.addEventListener(
++      "command",
++      this.contextChangeSettings.bind(this)
++    );
+   }
+ 
+   generateMenuItemForWorkspace(workspace, disableCurrent = false) {
+@@ -1849,6 +1912,13 @@ class nsZenWorkspaces {
+     // Kavacha: per-workspace extension set — also fire-and-forget; applies
+     // are internally serialized so rapid space cycling can't interleave.
+     this.applyWorkspaceExtensions(workspace);
++
++    // Kavacha: per-workspace setting overrides — synchronous pref flips.
++    try {
++      this.applyWorkspaceSettings(workspace);
++    } catch (e) {
++      console.error("gZenWorkspaces: error applying workspace settings", e);
++    }
+   }
+ 
+   makeSureEmptyTabIsFirst() {
+@@ -3202,6 +3272,152 @@ class nsZenWorkspaces {
+     }
+   }
+ 
++  // ==========================================================================
++  // Kavacha: per-workspace setting overrides (workspace.settings — curated
++  // keys only, see KAVACHA_SPACE_SETTINGS). Same baseline pattern as the
++  // search engine: the first override records the profile's value in
++  // kavacha.workspaces.settings-baseline, and spaces without that override
++  // restore it. Synchronous pref flips — no switch-latency cost.
++  // ==========================================================================
++  applyWorkspaceSettings(workspace) {
++    if (this.privateWindowOrDisabled || !workspace) {
++      return;
++    }
++    const BASELINE_PREF = "kavacha.workspaces.settings-baseline";
++    let baseline;
++    try {
++      baseline = JSON.parse(Services.prefs.getStringPref(BASELINE_PREF, "{}"));
++    } catch (e) {
++      baseline = {};
++    }
++    const overrides = workspace.settings || {};
++    for (const def of KAVACHA_SPACE_SETTINGS) {
++      const getPref = () =>
++        def.kind === "bool"
++          ? Services.prefs.getBoolPref(def.pref)
++          : Services.prefs.getIntPref(def.pref);
++      const setPref = value =>
++        def.kind === "bool"
++          ? Services.prefs.setBoolPref(def.pref, value)
++          : Services.prefs.setIntPref(def.pref, value);
++      if (Object.prototype.hasOwnProperty.call(overrides, def.key)) {
++        const value = def.encode(overrides[def.key]);
++        if (value === undefined) {
++          continue;
++        }
++        if (!(def.key in baseline)) {
++          baseline[def.key] = getPref();
++        }
++        if (getPref() !== value) {
++          setPref(value);
++        }
++      } else if (def.key in baseline) {
++        if (getPref() !== baseline[def.key]) {
++          setPref(baseline[def.key]);
++        }
++        delete baseline[def.key];
++      }
++    }
++    Services.prefs.setStringPref(BASELINE_PREF, JSON.stringify(baseline));
++  }
++
++  updateWorkspaceActionsMenuSettings(event) {
++    const workspace = this.#contextMenuData?.workspaceId
++      ? this.getWorkspaceFromId(this.#contextMenuData.workspaceId)
++      : this.getActiveWorkspaceFromCache();
++    const popup = event.target;
++    while (popup.firstChild) {
++      popup.firstChild.remove();
++    }
++    const overrides = workspace.settings || {};
++    // Website color scheme: Browser Default / Light / Dark radio group.
++    for (const [value, l10nId] of [
++      ["", "zen-workspaces-settings-color-default"],
++      ["light", "zen-workspaces-settings-color-light"],
++      ["dark", "zen-workspaces-settings-color-dark"],
++    ]) {
++      const item = document.createXULElement("menuitem");
++      item.setAttribute("type", "radio");
++      item.setAttribute("name", "kavacha-space-colorscheme");
++      item.setAttribute("closemenu", "none");
++      item.setAttribute("data-setting-key", "colorScheme");
++      item.setAttribute("data-setting-value", value);
++      document.l10n.setAttributes(item, l10nId);
++      if ((overrides.colorScheme || "") === value) {
++        item.setAttribute("checked", "true");
++      }
++      popup.appendChild(item);
++    }
++    popup.appendChild(document.createXULElement("menuseparator"));
++    for (const def of KAVACHA_SPACE_SETTINGS) {
++      if (def.menu !== "checkbox") {
++        continue;
++      }
++      const item = document.createXULElement("menuitem");
++      item.setAttribute("type", "checkbox");
++      item.setAttribute("closemenu", "none");
++      item.setAttribute("data-setting-key", def.key);
++      document.l10n.setAttributes(item, def.l10n);
++      // Show the override if set, otherwise the current effective pref value.
++      const checked = Object.prototype.hasOwnProperty.call(overrides, def.key)
++        ? !!overrides[def.key]
++        : def.decode(
++            def.kind === "bool"
++              ? Services.prefs.getBoolPref(def.pref)
++              : Services.prefs.getIntPref(def.pref)
++          );
++      if (checked) {
++        item.setAttribute("checked", "true");
++      }
++      popup.appendChild(item);
++    }
++    popup.appendChild(document.createXULElement("menuseparator"));
++    const resetItem = document.createXULElement("menuitem");
++    resetItem.setAttribute("data-setting-reset", "true");
++    document.l10n.setAttributes(resetItem, "zen-workspaces-settings-reset");
++    popup.appendChild(resetItem);
++  }
++
++  async contextChangeSettings(event) {
++    const workspace = this.getWorkspaces().find(
++      w =>
++        w.uuid === (this.#contextMenuData?.workspaceId || this.activeWorkspace)
++    );
++    if (!workspace) {
++      return;
++    }
++    const target = event.target;
++    if (target.hasAttribute("data-setting-reset")) {
++      delete workspace.settings;
++    } else {
++      const key = target.getAttribute("data-setting-key");
++      const def = KAVACHA_SPACE_SETTINGS.find(d => d.key === key);
++      if (!def) {
++        return;
++      }
++      workspace.settings = workspace.settings || {};
++      if (def.menu === "radio") {
++        const value = target.getAttribute("data-setting-value");
++        if (value) {
++          workspace.settings[key] = value;
++        } else {
++          delete workspace.settings[key];
++        }
++      } else {
++        // Checkbox menuitems autotoggle before command fires, so the current
++        // checked state is the newly-desired value.
++        workspace.settings[key] = target.getAttribute("checked") === "true";
++      }
++      if (!Object.keys(workspace.settings).length) {
++        delete workspace.settings;
++      }
++    }
++    this.saveWorkspace(workspace);
++    if (this.isWorkspaceActive(workspace)) {
++      this.applyWorkspaceSettings(workspace);
++    }
++  }
++
+   async closeAllUnpinnedTabs() {
+     const workspaceId =
+       this.#contextMenuData?.workspaceId || this.activeWorkspace;

@@ -34,9 +34,7 @@
     },
     "searchProvider": {
       "type": "string",
-      "enum": ["brave", "duckduckgo", "kagi", "startpage", "google"],
-      "default": "brave",
-      "description": "Per-workspace default search engine."
+      "description": "Per-workspace default search engine, as the installed engine's name (e.g. \"DuckDuckGo\", any user-installed engine). Absent = browser default. Implemented by patch 0003; engines not installed on a device are ignored there."
     },
     "extensions": {
       "type": "array",

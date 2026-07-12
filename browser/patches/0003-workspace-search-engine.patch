@@ -1,0 +1,251 @@
+# Patch 0003 — Per-workspace search engine (Kavacha Workspace Identities, Phase 2).
+#
+# What: adds an optional `searchProvider` field (engine name) to Zen's space
+# object. Switching to a space with an override makes that engine the default
+# search engine; spaces without one restore the profile's baseline (remembered
+# in the kavacha.workspaces.baseline-search-engine pref, cleared on restore).
+# A "Set Search Engine" submenu in the space actions menu sets/clears it, and
+# manually changing the default engine while an override is active adopts the
+# new engine into the workspace instead of reverting on the next switch.
+# Engines synced from another device but not installed here are ignored.
+# Why a patch: the switch chokepoint (#performWorkspaceChange) and the space
+# actions menu live in Zen's source; the field itself persists + syncs for
+# free through Zen's session store and spaces sync engine.
+# Touches: src/zen/spaces/ZenSpaceManager.mjs,
+#          src/browser/base/content/zen-panels/popups.inc,
+#          locales/en-US/browser/browser/zen-workspaces.ftl.
+# Independent of 0001/0002 content-wise; apply in order regardless.
+diff --git a/locales/en-US/browser/browser/zen-workspaces.ftl b/locales/en-US/browser/browser/zen-workspaces.ftl
+index c295497..63ac9b6 100644
+--- a/locales/en-US/browser/browser/zen-workspaces.ftl
++++ b/locales/en-US/browser/browser/zen-workspaces.ftl
+@@ -32,6 +32,12 @@ zen-workspaces-panel-change-icon =
+ zen-workspaces-panel-context-default-profile =
+     .label = Set Profile
+ 
++zen-workspaces-panel-context-search-engine =
++    .label = Set Search Engine
++
++zen-workspaces-search-engine-default =
++    .label = Browser Default
++
+ zen-workspaces-panel-unload =
+     .label = Unload Space
+ 
+diff --git a/src/browser/base/content/zen-panels/popups.inc b/src/browser/base/content/zen-panels/popups.inc
+index 2ff9238..44c1b30 100644
+--- a/src/browser/base/content/zen-panels/popups.inc
++++ b/src/browser/base/content/zen-panels/popups.inc
+@@ -25,6 +25,11 @@
+     hide-if-usercontext-disabled="true">
+     <menupopup />
+   </menu>
++  <menu id="context_zenWorkspacesSearchEngine"
++    data-l10n-id="zen-workspaces-panel-context-search-engine"
++    hide-if-private-browsing="true">
++    <menupopup />
++  </menu>
+   <menuseparator id="context_zenWorkspacesSeparator"/>
+   <menuseparator/>
+   <menuitem id="context_zenReorderWorkspaces" data-l10n-id="zen-workspaces-panel-context-reorder" command="cmd_zenReorderWorkspaces"/>
+diff --git a/src/zen/spaces/ZenSpaceManager.mjs b/src/zen/spaces/ZenSpaceManager.mjs
+index 0a3d8ca..360bb56 100644
+--- a/src/zen/spaces/ZenSpaceManager.mjs
++++ b/src/zen/spaces/ZenSpaceManager.mjs
+@@ -153,11 +153,26 @@ class nsZenWorkspaces {
+         this._invalidateBookmarkContainers();
+       };
+       Services.obs.addObserver(observerFunction, "workspace-bookmarks-updated");
++      // Kavacha: track manual default-engine changes so an active workspace
++      // override follows the user's choice instead of reverting it.
++      const searchEngineObserver = (subject, topic, data) => {
++        if (data === "engine-default") {
++          this.onDefaultSearchEngineChanged();
++        }
++      };
++      Services.obs.addObserver(
++        searchEngineObserver,
++        "browser-search-engine-modified"
++      );
+       window.addEventListener("unload", () => {
+         Services.obs.removeObserver(
+           observerFunction,
+           "workspace-bookmarks-updated"
+         );
++        Services.obs.removeObserver(
++          searchEngineObserver,
++          "browser-search-engine-modified"
++        );
+       });
+     }
+   }
+@@ -1155,6 +1170,18 @@ class nsZenWorkspaces {
+       "command",
+       this.contextChangeContainerTab.bind(this)
+     );
++
++    const contextChangeSearchEngineMenu = document.getElementById(
++      "context_zenWorkspacesSearchEngine"
++    );
++    contextChangeSearchEngineMenu.addEventListener(
++      "popupshowing",
++      this.updateWorkspaceActionsMenuSearchEngine.bind(this)
++    );
++    contextChangeSearchEngineMenu.addEventListener(
++      "command",
++      this.contextChangeSearchEngine.bind(this)
++    );
+   }
+ 
+   generateMenuItemForWorkspace(workspace, disableCurrent = false) {
+@@ -1758,6 +1785,12 @@ class nsZenWorkspaces {
+       previousWorkspaceIndex,
+       previousWorkspace,
+     });
++
++    // Kavacha: per-workspace search engine. Fire-and-forget so the switch
++    // animation is never blocked on the search service.
++    this.applyWorkspaceSearchEngine(workspace).catch(e =>
++      console.error("gZenWorkspaces: error applying workspace search engine", e)
++    );
+   }
+ 
+   makeSureEmptyTabIsFirst() {
+@@ -2840,6 +2873,137 @@ class nsZenWorkspaces {
+     this.saveWorkspace(workspace);
+   }
+ 
++  // ==========================================================================
++  // Kavacha: per-workspace search engine (workspace.searchProvider = engine
++  // name; absent = browser default). The pref below remembers the profile's
++  // baseline default so we can restore it on spaces without an override.
++  // ==========================================================================
++  #applyingWorkspaceSearchEngine = false;
++
++  async applyWorkspaceSearchEngine(workspace) {
++    if (this.privateWindowOrDisabled || !workspace) {
++      return;
++    }
++    await Services.search.promiseInitialized;
++    const baselinePref = "kavacha.workspaces.baseline-search-engine";
++    const override = workspace.searchProvider;
++    try {
++      this.#applyingWorkspaceSearchEngine = true;
++      if (override) {
++        const engine = Services.search.getEngineByName(override);
++        if (!engine || engine.hidden) {
++          // Engine not installed on this device (e.g. synced from another
++          // machine) — leave the default alone rather than failing.
++          return;
++        }
++        if (Services.search.defaultEngine?.name !== override) {
++          if (!Services.prefs.prefHasUserValue(baselinePref)) {
++            Services.prefs.setStringPref(
++              baselinePref,
++              Services.search.defaultEngine?.name || ""
++            );
++          }
++          await Services.search.setDefault(
++            engine,
++            Services.search.CHANGE_REASON.USER
++          );
++        }
++      } else if (Services.prefs.prefHasUserValue(baselinePref)) {
++        const baselineName = Services.prefs.getStringPref(baselinePref);
++        Services.prefs.clearUserPref(baselinePref);
++        const engine =
++          baselineName && Services.search.getEngineByName(baselineName);
++        if (
++          engine &&
++          !engine.hidden &&
++          Services.search.defaultEngine?.name !== baselineName
++        ) {
++          await Services.search.setDefault(
++            engine,
++            Services.search.CHANGE_REASON.USER
++          );
++        }
++      }
++    } finally {
++      this.#applyingWorkspaceSearchEngine = false;
++    }
++  }
++
++  // The user changed the default engine themselves (prefs UI, searchbar…)
++  // while a workspace override is active: adopt it as the workspace's engine
++  // so we don't silently revert their choice on the next space switch.
++  onDefaultSearchEngineChanged() {
++    if (this.#applyingWorkspaceSearchEngine || this.privateWindowOrDisabled) {
++      return;
++    }
++    const workspace = this.getActiveWorkspaceFromCache();
++    if (!workspace?.searchProvider) {
++      return;
++    }
++    const newName = Services.search.defaultEngine?.name;
++    if (newName && workspace.searchProvider !== newName) {
++      workspace.searchProvider = newName;
++      this.saveWorkspace(workspace);
++    }
++  }
++
++  updateWorkspaceActionsMenuSearchEngine(event) {
++    const workspace = this.#contextMenuData?.workspaceId
++      ? this.getWorkspaceFromId(this.#contextMenuData.workspaceId)
++      : this.getActiveWorkspaceFromCache();
++    const popup = event.target;
++    while (popup.firstChild) {
++      popup.firstChild.remove();
++    }
++    const defaultItem = document.createXULElement("menuitem");
++    defaultItem.setAttribute("type", "radio");
++    document.l10n.setAttributes(
++      defaultItem,
++      "zen-workspaces-search-engine-default"
++    );
++    if (!workspace.searchProvider) {
++      defaultItem.setAttribute("checked", "true");
++    }
++    popup.appendChild(defaultItem);
++    popup.appendChild(document.createXULElement("menuseparator"));
++    Services.search.getVisibleEngines().then(engines => {
++      for (const engine of engines) {
++        const item = document.createXULElement("menuitem");
++        item.setAttribute("type", "radio");
++        item.setAttribute("label", engine.name);
++        item.setAttribute("data-search-engine-name", engine.name);
++        if (engine.iconURI?.spec) {
++          item.setAttribute("image", engine.iconURI.spec);
++          item.classList.add("menuitem-iconic");
++        }
++        if (workspace.searchProvider === engine.name) {
++          item.setAttribute("checked", "true");
++        }
++        popup.appendChild(item);
++      }
++    });
++  }
++
++  async contextChangeSearchEngine(event) {
++    const workspace = this.getWorkspaces().find(
++      w =>
++        w.uuid === (this.#contextMenuData?.workspaceId || this.activeWorkspace)
++    );
++    if (!workspace) {
++      return;
++    }
++    const engineName = event.target.getAttribute("data-search-engine-name");
++    if (engineName) {
++      workspace.searchProvider = engineName;
++    } else {
++      delete workspace.searchProvider;
++    }
++    this.saveWorkspace(workspace);
++    if (this.isWorkspaceActive(workspace)) {
++      await this.applyWorkspaceSearchEngine(workspace);
++    }
++  }
++
+   async closeAllUnpinnedTabs() {
+     const workspaceId =
+       this.#contextMenuData?.workspaceId || this.activeWorkspace;

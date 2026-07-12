@@ -85,6 +85,22 @@ Studio makes users *authors*:
 - **Marketplace with validation:** submissions statically checked against schemas,
   chrome-sandboxed, auto-updating.
 
+## Visual identity — don't look like a Zen fork
+
+*(2026-07-12)* If Kavacha's default look is Zen's look, users will reasonably ask
+"why not just use Zen?" The out-of-box experience must read as its own product:
+
+- **Distinct default layout** — e.g. **horizontal tabs by default** (Zen's signature
+  is the vertical-tab sidebar; inverting the default is the fastest visual
+  separation, and vertical stays one toggle away via the layout engine).
+- **Kavacha default theme** (`kavacha-midnight`), not Zen's gradient look; own
+  spacing/typography accents.
+- **Own onboarding/welcome flow** — first-run should tour workspaces + privacy
+  dashboard, not Zen's welcome.
+- Zen's features stay (that's inherited machinery); it's the *defaults and skin*
+  that must diverge. Track concrete changes in Phase 3 (Customization Studio +
+  default layout work), where the layout engine makes this cheap.
+
 ## Litmus test for new features
 
 Before building anything, it must pass one of:

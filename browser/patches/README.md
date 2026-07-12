@@ -20,6 +20,7 @@ overlay/pref could not do it, and which upstream files it touches.
 |---|---|
 | `0001-branding-kavacha.patch` | Register the `kavacha` brand in Zen's build config (surfer.json) |
 | `0002-strip-phone-home-endpoints.patch` | Point `updateHostname` at updates.kavacha.app so installs stop pinging Zen's update server; fails closed until Kavacha update infra exists |
+| `0003-workspace-search-engine.patch` | Per-workspace search engine: optional `searchProvider` on the space object, applied at the workspace-switch chokepoint, with a "Set Search Engine" submenu in the space actions menu (Phase 2 Workspace Identities) |
 
 Audit note (2026-07-09): Zen's tracked sources contain no analytics/crash SDKs.
 Mozilla telemetry is already compiled out by Zen's build config; remaining automatic

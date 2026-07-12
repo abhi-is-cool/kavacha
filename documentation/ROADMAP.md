@@ -42,6 +42,11 @@ split view, command palette, session store.
       object + extend; ~60-70% of the environment concept already exists; gaps are
       exactly the Kavacha layer (search/extensions/settings/isolation/templates)
 - [ ] Per-workspace search engine, extension set, and settings overrides
+  - [x] Search engine (patch `0003-workspace-search-engine.patch`, 2026-07-12):
+        `searchProvider` on the space object, applied at the switch chokepoint,
+        set via the space actions menu; persists + syncs through Zen's machinery
+  - [ ] Extension set (prototype next — riskiest, see ZEN-SPACES-AUDIT.md)
+  - [ ] Settings overrides
 - [ ] Per-workspace isolation options: bookmarks, history, password vault
 - [ ] Per-workspace AI settings (schema shipped; wiring in Phase 6)
 - [ ] Workspace templates: install "Student" / "Developer" / "Privacy" environments
@@ -49,6 +54,9 @@ split view, command palette, session store.
 
 ## Phase 3 — Customization Studio & Marketplace (Months 4–6) — Y1
 
+- [ ] **Distinct default look — must not read as a Zen fork** (see
+      [DIFFERENTIATION.md](DIFFERENTIATION.md) § Visual identity): horizontal tabs
+      by default, kavacha-midnight as default theme, own welcome flow
 - [ ] Layout engine applies layout JSON live (default shipped: `customization/layout-engine/`)
 - [ ] Theme engine loads theme packages (reference theme shipped: `kavacha-midnight`)
 - [ ] **Visual Browser Builder** (`about:studio`): redesign the browser without CSS —

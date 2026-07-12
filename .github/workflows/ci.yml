@@ -90,6 +90,10 @@ jobs:
     continue-on-error: ${{ matrix.experimental || false }}
     # Cold builds on 3-4 core hosted runners take ~4h; 360 is GitHub's job max.
     timeout-minutes: 360
+    env:
+      # Zen's configs/common/mozconfig turns this into --with-ccache=sccache +
+      # RUSTC_WRAPPER=sccache, so compiles hit the GitHub Actions cache backend.
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v4
 
@@ -101,10 +105,23 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Rust + sccache
-        run: |
-          rustup update stable
-          cargo install sccache --locked || true
+      - name: Install Rust
+        run: rustup update stable
+
+      # Persistent compile cache across nightlies (same recipe as Zen's release
+      # workflows). The first cold build populates it; later builds should drop
+      # from ~4h to well under an hour on cache hits. Caveat: GitHub caps the
+      # repo cache at 10GB LRU, shared across platforms — partial hits expected.
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@main
+
+      - name: Expose actions cache variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env['ACTIONS_CACHE_URL'])
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env['ACTIONS_RESULTS_URL'])
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env['ACTIONS_RUNTIME_TOKEN'])
 
       # surfer import commits into the Firefox tree; icon rendering needs an
       # image resizer on non-macOS hosts (see render_png in generate-branding.sh).

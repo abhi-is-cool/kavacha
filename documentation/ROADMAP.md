@@ -21,7 +21,10 @@ project start (2026-07-09).
       disabled via prefs (2026-07-09)
 - [x] Brand assets: lotus-shield logo → all icon sizes + .icns via
       build/generate-branding.sh (Windows .ico/.bmp installer imagery still placeholder)
-- [ ] **Deliverable: first Kavacha Nightly artifact from CI**
+- [x] **Deliverable: first Kavacha Nightly artifact from CI** — `kavacha-nightly-macos`
+      (174 MB DMG + update MAR) built and uploaded by run 29123975884 (2026-07-10).
+      Linux expected green after portable-icon fix; Windows experimental
+      (continue-on-error) — even Zen cross-compiles Windows from Linux.
 
 > **Note (2026-07-09):** the Zen source audit ([DIFFERENTIATION.md](DIFFERENTIATION.md))
 > showed Zen already ships workspaces (spaces), vertical tabs, tab groups (folders),

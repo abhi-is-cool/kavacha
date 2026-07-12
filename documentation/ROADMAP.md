@@ -44,7 +44,8 @@ split view, command palette, session store.
 - [ ] Per-workspace search engine, extension set, and settings overrides
   - [x] Search engine (patch `0003-workspace-search-engine.patch`, 2026-07-12):
         `searchProvider` on the space object, applied at the switch chokepoint,
-        set via the space actions menu; persists + syncs through Zen's machinery
+        set via the space actions menu; persists + syncs through Zen's machinery.
+        Verified working in-app 2026-07-12 (menu populates, engine follows space)
   - [ ] Extension set (prototype next — riskiest, see ZEN-SPACES-AUDIT.md)
   - [ ] Settings overrides
 - [ ] Per-workspace isolation options: bookmarks, history, password vault

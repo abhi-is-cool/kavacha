@@ -124,28 +124,51 @@ log "Update host set to updates.kavacha.app in build/moz.build."
 LOGO="$REPO_ROOT/browser/branding/kavacha/assets/logo.png"
 [ -f "$LOGO" ] || { echo "ERROR: $LOGO missing." >&2; exit 1; }
 
+# Portable square resize: sips on macOS, ImageMagick or Pillow elsewhere
+# (CI installs Pillow; Linux runners also ship ImageMagick).
+render_png() {
+    local size="$1" src="$2" dst="$3"
+    if command -v sips >/dev/null; then
+        sips -z "$size" "$size" "$src" --out "$dst" >/dev/null
+    elif command -v magick >/dev/null; then
+        magick "$src" -resize "${size}x${size}" "$dst"
+    elif command -v convert >/dev/null; then
+        convert "$src" -resize "${size}x${size}" "$dst"
+    elif python3 -c 'import PIL' 2>/dev/null; then
+        python3 -c "
+import sys
+from PIL import Image
+src, dst, size = sys.argv[1], sys.argv[2], int(sys.argv[3])
+Image.open(src).resize((size, size), Image.LANCZOS).save(dst)
+" "$src" "$dst" "$size"
+    else
+        echo "ERROR: no image resizer found (need sips, ImageMagick, or Python Pillow)." >&2
+        exit 1
+    fi
+}
+
 log "Rendering logo sizes from assets/logo.png..."
 for size in 16 22 24 32 48 64 128 256 512 1024; do
-    sips -z "$size" "$size" "$LOGO" --out "$DST/logo${size}.png" >/dev/null
+    render_png "$size" "$LOGO" "$DST/logo${size}.png"
 done
 for size in 16 22 24 32 48 64 128 256 512; do
     cp "$DST/logo${size}.png" "$DST/default${size}.png"
 done
 cp "$LOGO" "$DST/logo.png"
 cp "$LOGO" "$DST/logo-mac.png"
-sips -z 192 192 "$LOGO" --out "$DST/content/about-logo.png" >/dev/null
-sips -z 384 384 "$LOGO" --out "$DST/content/about-logo@2x.png" >/dev/null
-sips -z 150 150 "$LOGO" --out "$DST/VisualElements_150.png" >/dev/null
-sips -z 70 70  "$LOGO" --out "$DST/VisualElements_70.png"  >/dev/null
+render_png 192 "$LOGO" "$DST/content/about-logo.png"
+render_png 384 "$LOGO" "$DST/content/about-logo@2x.png"
+render_png 150 "$LOGO" "$DST/VisualElements_150.png"
+render_png 70  "$LOGO" "$DST/VisualElements_70.png"
 
 if [ "$(uname)" = "Darwin" ]; then
     log "Building firefox.icns via iconutil..."
     ICONSET="$(mktemp -d)/kavacha.iconset"
     mkdir -p "$ICONSET"
     for size in 16 32 128 256 512; do
-        sips -z "$size" "$size" "$LOGO" --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
+        render_png "$size" "$LOGO" "$ICONSET/icon_${size}x${size}.png"
         double=$((size * 2))
-        sips -z "$double" "$double" "$LOGO" --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
+        render_png "$double" "$LOGO" "$ICONSET/icon_${size}x${size}@2x.png"
     done
     iconutil -c icns "$ICONSET" -o "$DST/firefox.icns"
     rm -rf "$(dirname "$ICONSET")"

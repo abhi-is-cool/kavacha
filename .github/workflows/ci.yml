@@ -80,9 +80,14 @@ jobs:
             platform: linux
           - os: macos-latest
             platform: macos
+          # Windows is experimental: even Zen cross-compiles its Windows
+          # releases from Linux rather than building natively. Don't let it
+          # fail the run while we iterate on native-build support.
           - os: windows-latest
             platform: windows
+            experimental: true
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental || false }}
     # Cold builds on 3-4 core hosted runners take ~4h; 360 is GitHub's job max.
     timeout-minutes: 360
     steps:
@@ -100,6 +105,25 @@ jobs:
         run: |
           rustup update stable
           cargo install sccache --locked || true
+
+      # surfer import commits into the Firefox tree; icon rendering needs an
+      # image resizer on non-macOS hosts (see render_png in generate-branding.sh).
+      - name: Configure git identity + icon tooling
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          pip install --quiet pillow
+        shell: bash
+
+      # Firefox's tree exceeds MAX_PATH, and mach needs the MozillaBuild shell.
+      - name: Windows build prerequisites
+        if: matrix.platform == 'windows'
+        run: |
+          git config --global core.longpaths true
+          git config --global core.safecrlf false
+          (New-Object System.Net.WebClient).DownloadFile("https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe", "C:\MozillaBuildSetup-Latest.exe")
+          C:\MozillaBuildSetup-Latest.exe /S | out-null
+        shell: pwsh
 
       - name: Bootstrap (fetch upstream + Firefox source)
         run: ./build/bootstrap.sh

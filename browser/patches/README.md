@@ -24,6 +24,7 @@ overlay/pref could not do it, and which upstream files it touches.
 | `0004-workspace-extensions.patch` | Per-workspace extension set (ADR 0003 prototype): optional `extensions` allowlist on the space object, addons toggled globally at switch time; only re-enables addons Kavacha itself disabled, never overriding user global disables |
 | `0005-workspace-settings.patch` | Per-workspace setting overrides — curated allowlist only (website color scheme, autoplay, notification prompts, password saving, search suggestions), applied at switch with baseline restore; "Workspace Settings" submenu |
 | `0006-workspace-templates.patch` | Workspace templates: Student/Developer/Private presets in the create (+) menu; each creates a space with a dedicated container, themed gradient, search engine and settings overrides — a complete identity in one click |
+| `0007-command-registry-templates.patch` | Command-registry start: template creation exposed as commands in Zen's palette ("New Space from Template: …") |
 
 Audit note (2026-07-09): Zen's tracked sources contain no analytics/crash SDKs.
 Mozilla telemetry is already compiled out by Zen's build config; remaining automatic

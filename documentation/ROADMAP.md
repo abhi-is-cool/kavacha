@@ -82,7 +82,8 @@ split view, command palette, session store.
       sidebar widgets, tool panels; bundles like "Research Mode"
 - [ ] **Command registry** on Zen's palette (Cmd+K): every Kavacha feature exposes
       commands — navigation / organization / productivity / automation
-      (see [PLATFORM_PLAN.md](PLATFORM_PLAN.md))
+      (see [PLATFORM_PLAN.md](PLATFORM_PLAN.md)). Started 2026-07-12: template
+      creation commands (patch `0007-command-registry-templates.patch`)
 - [ ] Kavacha SDK + plugin permission model (workspaces/tabs/notes/commands behind
       explicit per-plugin permissions; never passwords or private data)
 

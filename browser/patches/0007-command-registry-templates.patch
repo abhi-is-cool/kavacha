@@ -1,0 +1,60 @@
+# Patch 0007 — Template commands in the command palette (command registry, start).
+#
+# What: first step of the PLATFORM_PLAN.md command registry — Kavacha
+# features exposed as commands in Zen's palette. Adds "New Space from
+# Template: Student / Developer / Private" global actions that call
+# gZenWorkspaces.createWorkspaceFromTemplate() (patch 0006). Hidden in
+# private/disabled-workspace windows.
+# Why a patch: Zen's global actions are a static template array in
+# ZenUBGlobalActions.sys.mjs; there is no registration API yet. When the
+# registry grows past a handful of commands, consider upstreaming a real
+# registration hook instead of growing this diff.
+# Touches: src/zen/urlbar/ZenUBGlobalActions.sys.mjs,
+#          locales/en-US/browser/browser/zen-command-palette.ftl.
+# Depends on 0006 (createWorkspaceFromTemplate) at runtime; textually
+# independent of all prior patches.
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index c8af413..4a32a80 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -34,3 +34,7 @@ zen-action-switch-to-dark-mode = Switch to Dark Mode
+ zen-action-print = Print
+ zen-action-focus-on = Focus on
+ zen-action-extension = Extension
++
++kavacha-action-new-space-student = New Space from Template: Student
++kavacha-action-new-space-developer = New Space from Template: Developer
++kavacha-action-new-space-privacy = New Space from Template: Private
+diff --git a/src/zen/urlbar/ZenUBGlobalActions.sys.mjs b/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
+index 517938e..7c13c92 100644
+--- a/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
++++ b/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
+@@ -257,6 +257,28 @@ const globalActionsTemplate = [
+       return isNotEmptyTab(window);
+     },
+   },
++  // Kavacha: workspace-template commands (command registry, PLATFORM_PLAN.md).
++  {
++    l10nId: "kavacha-action-new-space-student",
++    command: window =>
++      window.gZenWorkspaces.createWorkspaceFromTemplate("student"),
++    icon: "chrome://browser/skin/zen-icons/selectable/school.svg",
++    isAvailable: window => !window.gZenWorkspaces?.privateWindowOrDisabled,
++  },
++  {
++    l10nId: "kavacha-action-new-space-developer",
++    command: window =>
++      window.gZenWorkspaces.createWorkspaceFromTemplate("developer"),
++    icon: "chrome://browser/skin/zen-icons/selectable/code.svg",
++    isAvailable: window => !window.gZenWorkspaces?.privateWindowOrDisabled,
++  },
++  {
++    l10nId: "kavacha-action-new-space-privacy",
++    command: window =>
++      window.gZenWorkspaces.createWorkspaceFromTemplate("privacy"),
++    icon: "chrome://browser/skin/zen-icons/selectable/lock-closed.svg",
++    isAvailable: window => !window.gZenWorkspaces?.privateWindowOrDisabled,
++  },
+ ];
+ 
+ export const globalActions = globalActionsTemplate.map(action => ({

@@ -37,7 +37,10 @@ project start (2026-07-09).
 Inherited from Zen (verify + adopt): spaces, space-routing, vertical tabs, folders,
 split view, command palette, session store.
 
-- [ ] Audit Zen spaces vs the workspace schema; adopt or extend (`ui/workspaces/`)
+- [x] Audit Zen spaces vs the workspace schema; adopt or extend (`ui/workspaces/`) —
+      see [ZEN-SPACES-AUDIT.md](ZEN-SPACES-AUDIT.md) (2026-07-12): adopt Zen's space
+      object + extend; ~60-70% of the environment concept already exists; gaps are
+      exactly the Kavacha layer (search/extensions/settings/isolation/templates)
 - [ ] Per-workspace search engine, extension set, and settings overrides
 - [ ] Per-workspace isolation options: bookmarks, history, password vault
 - [ ] Per-workspace AI settings (schema shipped; wiring in Phase 6)

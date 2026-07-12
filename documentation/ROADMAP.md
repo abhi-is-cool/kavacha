@@ -49,9 +49,9 @@ split view, command palette, session store.
   - [x] Extension set prototype (patch `0004-workspace-extensions.patch`,
         2026-07-12): `extensions` allowlist on the space object, toggled via
         AddonManager at switch time with a Kavacha-disabled tracking pref so
-        user global disables are never overridden. **Go/no-go pending**: needs
-        real-world testing of switch latency + addon state survival (timing
-        logged via zen.workspaces.debug) before building templates on top
+        user global disables are never overridden. **Verified working in-app
+        2026-07-12 — ADR 0003 validated**; workspace templates unblocked.
+        (Keep an eye on switch latency with heavy addon sets as usage grows.)
   - [ ] Settings overrides
 - [ ] Per-workspace isolation options: bookmarks, history, password vault
 - [ ] Per-workspace AI settings (schema shipped; wiring in Phase 6)

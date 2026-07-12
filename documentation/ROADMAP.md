@@ -46,7 +46,12 @@ split view, command palette, session store.
         `searchProvider` on the space object, applied at the switch chokepoint,
         set via the space actions menu; persists + syncs through Zen's machinery.
         Verified working in-app 2026-07-12 (menu populates, engine follows space)
-  - [ ] Extension set (prototype next — riskiest, see ZEN-SPACES-AUDIT.md)
+  - [x] Extension set prototype (patch `0004-workspace-extensions.patch`,
+        2026-07-12): `extensions` allowlist on the space object, toggled via
+        AddonManager at switch time with a Kavacha-disabled tracking pref so
+        user global disables are never overridden. **Go/no-go pending**: needs
+        real-world testing of switch latency + addon state survival (timing
+        logged via zen.workspaces.debug) before building templates on top
   - [ ] Settings overrides
 - [ ] Per-workspace isolation options: bookmarks, history, password vault
 - [ ] Per-workspace AI settings (schema shipped; wiring in Phase 6)

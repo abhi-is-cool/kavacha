@@ -1,0 +1,318 @@
+# Patch 0004 — Per-workspace extension set (Kavacha Workspace Identities, Phase 2).
+#
+# What: adds an optional `extensions` field (array of addon IDs) to Zen's
+# space object. Spaces with a list have exactly those extensions active;
+# switching spaces enables/disables addons to match. Absent = all extensions
+# (Zen behavior). A "Workspace Extensions" checkbox submenu in the space
+# actions menu edits the set (first toggle seeds the list from everything
+# currently active).
+# Safety semantics: Firefox has no per-container extension scoping, so this
+# toggles addons globally at switch time. The pref
+# kavacha.workspaces.extensions-disabled tracks which addons *Kavacha*
+# disabled — a space without a list re-enables only those, never overriding
+# an addon the user disabled globally themselves. Applies are serialized so
+# rapid space cycling cannot interleave, and toggle timing is logged (with
+# zen.workspaces.debug) to evaluate switch latency.
+# Status: ADR 0003 prototype — the riskiest Workspace Identities assumption.
+# Ships behind normal defaults (no list = no behavior change).
+# Touches: src/zen/spaces/ZenSpaceManager.mjs,
+#          src/browser/base/content/zen-panels/popups.inc,
+#          locales/en-US/browser/browser/zen-workspaces.ftl.
+# Applies on top of 0003 (same files).
+diff --git a/locales/en-US/browser/browser/zen-workspaces.ftl b/locales/en-US/browser/browser/zen-workspaces.ftl
+index 63ac9b6..0a5a530 100644
+--- a/locales/en-US/browser/browser/zen-workspaces.ftl
++++ b/locales/en-US/browser/browser/zen-workspaces.ftl
+@@ -38,6 +38,12 @@ zen-workspaces-panel-context-search-engine =
+ zen-workspaces-search-engine-default =
+     .label = Browser Default
+ 
++zen-workspaces-panel-context-extensions =
++    .label = Workspace Extensions
++
++zen-workspaces-extensions-all =
++    .label = All Extensions
++
+ zen-workspaces-panel-unload =
+     .label = Unload Space
+ 
+diff --git a/src/browser/base/content/zen-panels/popups.inc b/src/browser/base/content/zen-panels/popups.inc
+index 44c1b30..561da70 100644
+--- a/src/browser/base/content/zen-panels/popups.inc
++++ b/src/browser/base/content/zen-panels/popups.inc
+@@ -30,6 +30,11 @@
+     hide-if-private-browsing="true">
+     <menupopup />
+   </menu>
++  <menu id="context_zenWorkspacesExtensions"
++    data-l10n-id="zen-workspaces-panel-context-extensions"
++    hide-if-private-browsing="true">
++    <menupopup />
++  </menu>
+   <menuseparator id="context_zenWorkspacesSeparator"/>
+   <menuseparator/>
+   <menuitem id="context_zenReorderWorkspaces" data-l10n-id="zen-workspaces-panel-context-reorder" command="cmd_zenReorderWorkspaces"/>
+diff --git a/src/zen/spaces/ZenSpaceManager.mjs b/src/zen/spaces/ZenSpaceManager.mjs
+index 2f571e6..75f38be 100644
+--- a/src/zen/spaces/ZenSpaceManager.mjs
++++ b/src/zen/spaces/ZenSpaceManager.mjs
+@@ -10,6 +10,7 @@ import { ZenSpacesSwipe } from "resource:///modules/zen/ZenSpacesSwipe.mjs";
+ const lazy = {};
+ 
+ ChromeUtils.defineESModuleGetters(lazy, {
++  AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
+   SearchService: "moz-src:///toolkit/components/search/SearchService.sys.mjs",
+   ZenSessionStore: "resource:///modules/zen/ZenSessionManager.sys.mjs",
+   ZenSyncStore: "resource:///modules/zen/ZenSyncManager.sys.mjs",
+@@ -182,6 +183,28 @@ class nsZenWorkspaces {
+         searchEngineObserver,
+         "browser-search-engine-modified"
+       );
++      // Kavacha: cache user-controllable extensions for the space extensions
++      // submenu (same synchronous-populate constraint as the engine cache).
++      this._kavachaExtensions = [];
++      const refreshExtensionCache = () => {
++        lazy.AddonManager.getAddonsByTypes(["extension"])
++          .then(addons => {
++            this._kavachaExtensions = addons.filter(
++              a => !a.isSystem && !a.isBuiltin && !a.hidden
++            );
++          })
++          .catch(e =>
++            console.error("gZenWorkspaces: error caching extensions", e)
++          );
++      };
++      refreshExtensionCache();
++      const addonListener = {
++        onInstalled: refreshExtensionCache,
++        onUninstalled: refreshExtensionCache,
++        onEnabled: refreshExtensionCache,
++        onDisabled: refreshExtensionCache,
++      };
++      lazy.AddonManager.addAddonListener(addonListener);
+       window.addEventListener("unload", () => {
+         Services.obs.removeObserver(
+           observerFunction,
+@@ -191,6 +214,7 @@ class nsZenWorkspaces {
+           searchEngineObserver,
+           "browser-search-engine-modified"
+         );
++        lazy.AddonManager.removeAddonListener(addonListener);
+       });
+     }
+   }
+@@ -493,19 +517,16 @@ class nsZenWorkspaces {
+       document
+         .getElementById("zen-essentials")
+         .appendChild(essentialsContainer);
+-    }
+ 
+-    // Set a hidden state if the essentials section is not supposed
+-    // to be shown on the current workspace, else remove the hidden state
+-    if (
+-      this.containerSpecificEssentials &&
+-      this.getActiveWorkspaceFromCache()?.containerTabId != container
+-    ) {
+-      essentialsContainer.setAttribute("hidden", "true");
+-    } else {
+-      essentialsContainer.removeAttribute("hidden");
++      // Set an initial hidden state if the essentials section is not supposed
++      // to be shown on the current workspace
++      if (
++        this.containerSpecificEssentials &&
++        this.getActiveWorkspaceFromCache()?.containerTabId != container
++      ) {
++        essentialsContainer.setAttribute("hidden", "true");
++      }
+     }
+-
+     return essentialsContainer;
+   }
+ 
+@@ -1203,15 +1224,24 @@ class nsZenWorkspaces {
+       "command",
+       this.contextChangeSearchEngine.bind(this)
+     );
++
++    const contextChangeExtensionsMenu = document.getElementById(
++      "context_zenWorkspacesExtensions"
++    );
++    contextChangeExtensionsMenu.addEventListener(
++      "popupshowing",
++      this.updateWorkspaceActionsMenuExtensions.bind(this)
++    );
++    contextChangeExtensionsMenu.addEventListener(
++      "command",
++      this.contextChangeExtensions.bind(this)
++    );
+   }
+ 
+   generateMenuItemForWorkspace(workspace, disableCurrent = false) {
+     const item = document.createXULElement("menuitem");
+     item.className = "zen-workspace-context-menu-item";
+     item.setAttribute("zen-workspace-id", workspace.uuid);
+-    if (AppConstants.platform === "linux") {
+-      disableCurrent = true;
+-    }
+     if (!disableCurrent) {
+       item.setAttribute("type", "radio");
+     }
+@@ -1815,6 +1845,10 @@ class nsZenWorkspaces {
+     this.applyWorkspaceSearchEngine(workspace).catch(e =>
+       console.error("gZenWorkspaces: error applying workspace search engine", e)
+     );
++
++    // Kavacha: per-workspace extension set — also fire-and-forget; applies
++    // are internally serialized so rapid space cycling can't interleave.
++    this.applyWorkspaceExtensions(workspace);
+   }
+ 
+   makeSureEmptyTabIsFirst() {
+@@ -3027,6 +3061,147 @@ class nsZenWorkspaces {
+     }
+   }
+ 
++  // ==========================================================================
++  // Kavacha: per-workspace extension set (workspace.extensions = array of
++  // addon IDs active in this space; absent = all extensions, Zen behavior).
++  //
++  // Firefox has no per-container extension scoping, so this toggles addons
++  // globally at switch time. A tracking pref records which addons *Kavacha*
++  // disabled, so a space without a list only re-enables those — a user's own
++  // global disables are never overridden. This is the ADR 0003 prototype;
++  // switch timing is logged (zen.workspaces.debug) for the go/no-go call.
++  // ==========================================================================
++  #extensionApplyChain = Promise.resolve();
++
++  applyWorkspaceExtensions(workspace) {
++    if (this.privateWindowOrDisabled || !workspace) {
++      return this.#extensionApplyChain;
++    }
++    this.#extensionApplyChain = this.#extensionApplyChain
++      .then(() => this.#doApplyWorkspaceExtensions(workspace))
++      .catch(e =>
++        console.error("gZenWorkspaces: error applying workspace extensions", e)
++      );
++    return this.#extensionApplyChain;
++  }
++
++  async #doApplyWorkspaceExtensions(workspace) {
++    const TRACK_PREF = "kavacha.workspaces.extensions-disabled";
++    const list = workspace.extensions;
++    const start = performance.now();
++    const addons = (
++      await lazy.AddonManager.getAddonsByTypes(["extension"])
++    ).filter(a => !a.isSystem && !a.isBuiltin && !a.hidden);
++    let tracked;
++    try {
++      tracked = new Set(
++        JSON.parse(Services.prefs.getStringPref(TRACK_PREF, "[]"))
++      );
++    } catch (e) {
++      tracked = new Set();
++    }
++    const ops = [];
++    if (Array.isArray(list)) {
++      const wanted = new Set(list);
++      for (const addon of addons) {
++        if (wanted.has(addon.id)) {
++          // Only re-enable addons Kavacha disabled — a global user disable
++          // (not in the tracking pref) is the user's choice, keep it.
++          if (addon.userDisabled && tracked.has(addon.id)) {
++            ops.push(addon.enable());
++            tracked.delete(addon.id);
++          }
++        } else if (!addon.userDisabled) {
++          ops.push(addon.disable());
++          tracked.add(addon.id);
++        }
++      }
++    } else {
++      for (const addon of addons) {
++        if (addon.userDisabled && tracked.has(addon.id)) {
++          ops.push(addon.enable());
++          tracked.delete(addon.id);
++        }
++      }
++    }
++    Services.prefs.setStringPref(TRACK_PREF, JSON.stringify([...tracked]));
++    await Promise.all(ops);
++    if (ops.length) {
++      this.log(
++        `workspace extensions applied: ${ops.length} toggles in ${Math.round(
++          performance.now() - start
++        )}ms`
++      );
++    }
++  }
++
++  updateWorkspaceActionsMenuExtensions(event) {
++    const workspace = this.#contextMenuData?.workspaceId
++      ? this.getWorkspaceFromId(this.#contextMenuData.workspaceId)
++      : this.getActiveWorkspaceFromCache();
++    const popup = event.target;
++    while (popup.firstChild) {
++      popup.firstChild.remove();
++    }
++    const list = workspace.extensions;
++    const allItem = document.createXULElement("menuitem");
++    allItem.setAttribute("type", "radio");
++    document.l10n.setAttributes(allItem, "zen-workspaces-extensions-all");
++    if (!Array.isArray(list)) {
++      allItem.setAttribute("checked", "true");
++    }
++    popup.appendChild(allItem);
++    popup.appendChild(document.createXULElement("menuseparator"));
++    for (const addon of this._kavachaExtensions || []) {
++      const item = document.createXULElement("menuitem");
++      item.setAttribute("type", "checkbox");
++      // Keep the menu open so several extensions can be toggled in one visit.
++      item.setAttribute("closemenu", "none");
++      item.setAttribute("label", addon.name);
++      item.setAttribute("data-extension-id", addon.id);
++      if (Array.isArray(list) ? list.includes(addon.id) : !addon.userDisabled) {
++        item.setAttribute("checked", "true");
++      }
++      if (addon.iconURL) {
++        item.setAttribute("image", addon.iconURL);
++        item.classList.add("menuitem-iconic");
++      }
++      popup.appendChild(item);
++    }
++  }
++
++  async contextChangeExtensions(event) {
++    const workspace = this.getWorkspaces().find(
++      w =>
++        w.uuid === (this.#contextMenuData?.workspaceId || this.activeWorkspace)
++    );
++    if (!workspace) {
++      return;
++    }
++    const addonId = event.target.getAttribute("data-extension-id");
++    if (!addonId) {
++      // "All Extensions" — back to Zen behavior.
++      delete workspace.extensions;
++    } else {
++      if (!Array.isArray(workspace.extensions)) {
++        // First toggle: start from everything currently active.
++        workspace.extensions = (this._kavachaExtensions || [])
++          .filter(a => !a.userDisabled)
++          .map(a => a.id);
++      }
++      const idx = workspace.extensions.indexOf(addonId);
++      if (idx === -1) {
++        workspace.extensions.push(addonId);
++      } else {
++        workspace.extensions.splice(idx, 1);
++      }
++    }
++    this.saveWorkspace(workspace);
++    if (this.isWorkspaceActive(workspace)) {
++      await this.applyWorkspaceExtensions(workspace);
++    }
++  }
++
+   async closeAllUnpinnedTabs() {
+     const workspaceId =
+       this.#contextMenuData?.workspaceId || this.activeWorkspace;

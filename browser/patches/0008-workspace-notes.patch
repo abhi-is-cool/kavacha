@@ -1,0 +1,204 @@
+# Patch 0008 — Workspace notes (Kavacha platform plan, MVP item).
+#
+# What: local notes attached to each space. "Workspace Notes" opens a panel
+# (space actions menu or the command palette) with an autosaving textarea —
+# 500ms debounce plus a flush on close. Notes are stored per-profile in
+# kavacha-notes.json (JSONFile, keyed by workspace uuid), deliberately NOT
+# on the space object: they would bloat the session file and ride
+# Mozilla-account sync. They stay on-device until Kavacha's own E2E sync
+# (Phase 5) can carry them. Empty notes are deleted from the store.
+# Last-write-wins across windows (single shared store per profile).
+# Why a patch: the panel lives in Zen's popupset and the open/save logic in
+# the spaces manager; the notes store itself is new Kavacha state.
+# Touches: src/zen/spaces/ZenSpaceManager.mjs,
+#          src/browser/base/content/zen-panels/popups.inc,
+#          locales/en-US/browser/browser/zen-workspaces.ftl,
+#          src/zen/urlbar/ZenUBGlobalActions.sys.mjs,
+#          locales/en-US/browser/browser/zen-command-palette.ftl.
+# Applies on top of 0007.
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index 4a32a80..aeed639 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -38,3 +38,4 @@ zen-action-extension = Extension
+ kavacha-action-new-space-student = New Space from Template: Student
+ kavacha-action-new-space-developer = New Space from Template: Developer
+ kavacha-action-new-space-privacy = New Space from Template: Private
++kavacha-action-workspace-notes = Workspace Notes
+diff --git a/locales/en-US/browser/browser/zen-workspaces.ftl b/locales/en-US/browser/browser/zen-workspaces.ftl
+index 0093d47..4a04f0d 100644
+--- a/locales/en-US/browser/browser/zen-workspaces.ftl
++++ b/locales/en-US/browser/browser/zen-workspaces.ftl
+@@ -71,6 +71,15 @@ zen-workspaces-settings-search-suggestions =
+ zen-workspaces-settings-reset =
+     .label = Reset to Browser Defaults
+ 
++zen-workspaces-panel-context-notes =
++    .label = Workspace Notes
++
++kavacha-notes-title =
++    .value = Notes — { $name }
++
++kavacha-notes-textarea =
++    .placeholder = Notes for this space. Saved locally, on this device only.
++
+ zen-workspaces-template-menu =
+     .label = New Space from Template
+ 
+diff --git a/src/browser/base/content/zen-panels/popups.inc b/src/browser/base/content/zen-panels/popups.inc
+index a8cdb34..7c6418b 100644
+--- a/src/browser/base/content/zen-panels/popups.inc
++++ b/src/browser/base/content/zen-panels/popups.inc
+@@ -47,6 +47,9 @@
+     hide-if-private-browsing="true">
+     <menupopup />
+   </menu>
++  <menuitem id="context_zenWorkspacesNotes"
++    data-l10n-id="zen-workspaces-panel-context-notes"
++    hide-if-private-browsing="true"/>
+   <menuseparator id="context_zenWorkspacesSeparator"/>
+   <menuseparator/>
+   <menuitem id="context_zenReorderWorkspaces" data-l10n-id="zen-workspaces-panel-context-reorder" command="cmd_zenReorderWorkspaces"/>
+@@ -95,3 +98,12 @@
+ # Popup to move tabs to a synced workspace.
+ # This would be automatically populated with the list of available synced workspaces.
+ </menupopup>
++
++<panel id="kavacha-notes-panel" type="arrow" orient="vertical">
++  <vbox style="width: 360px; padding: 10px; gap: 8px;">
++    <label id="kavacha-notes-title" style="font-weight: 600;"/>
++    <html:textarea id="kavacha-notes-textarea" rows="14"
++      data-l10n-id="kavacha-notes-textarea"
++      style="width: 100%; min-height: 220px; resize: vertical; font: inherit; box-sizing: border-box;"/>
++  </vbox>
++</panel>
+diff --git a/src/zen/spaces/ZenSpaceManager.mjs b/src/zen/spaces/ZenSpaceManager.mjs
+index 7624c38..f6ab628 100644
+--- a/src/zen/spaces/ZenSpaceManager.mjs
++++ b/src/zen/spaces/ZenSpaceManager.mjs
+@@ -11,6 +11,7 @@ const lazy = {};
+ 
+ ChromeUtils.defineESModuleGetters(lazy, {
+   AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
++  JSONFile: "resource://gre/modules/JSONFile.sys.mjs",
+   SearchService: "moz-src:///toolkit/components/search/SearchService.sys.mjs",
+   ZenSessionStore: "resource:///modules/zen/ZenSessionManager.sys.mjs",
+   ZenSyncStore: "resource:///modules/zen/ZenSyncManager.sys.mjs",
+@@ -1348,6 +1349,29 @@ class nsZenWorkspaces {
+         );
+       }
+     });
++
++    document
++      .getElementById("context_zenWorkspacesNotes")
++      .addEventListener("command", () => {
++        this.openWorkspaceNotes(this.#contextMenuData?.workspaceId).catch(e =>
++          console.error("gZenWorkspaces: error opening workspace notes", e)
++        );
++      });
++    document
++      .getElementById("kavacha-notes-textarea")
++      .addEventListener("input", () => {
++        clearTimeout(this.#notesSaveTimer);
++        this.#notesSaveTimer = setTimeout(
++          () => this.#flushWorkspaceNotes(),
++          500
++        );
++      });
++    document
++      .getElementById("kavacha-notes-panel")
++      .addEventListener("popuphidden", () => {
++        clearTimeout(this.#notesSaveTimer);
++        this.#flushWorkspaceNotes();
++      });
+   }
+ 
+   generateMenuItemForWorkspace(workspace, disableCurrent = false) {
+@@ -3529,6 +3553,70 @@ class nsZenWorkspaces {
+     );
+   }
+ 
++  // ==========================================================================
++  // Kavacha: workspace notes (PLATFORM_PLAN.md MVP item). Notes live in a
++  // profile-local JSONFile (kavacha-notes.json), keyed by workspace uuid —
++  // deliberately NOT on the space object: they'd bloat the session file and
++  // ride Mozilla-account sync. They stay on this device until Kavacha's own
++  // E2E sync (Phase 5) can carry them. Last-write-wins across windows.
++  // ==========================================================================
++  #notesFile = null;
++  #notesSaveTimer = null;
++
++  async #ensureNotesFile() {
++    if (!this.#notesFile) {
++      this.#notesFile = new lazy.JSONFile({
++        path: PathUtils.join(PathUtils.profileDir, "kavacha-notes.json"),
++      });
++      await this.#notesFile.load();
++      this.#notesFile.data.notes ||= {};
++    }
++    return this.#notesFile;
++  }
++
++  async openWorkspaceNotes(workspaceId = null) {
++    if (this.privateWindowOrDisabled) {
++      return;
++    }
++    const workspace = workspaceId
++      ? this.getWorkspaceFromId(workspaceId)
++      : this.getActiveWorkspaceFromCache();
++    if (!workspace) {
++      return;
++    }
++    const file = await this.#ensureNotesFile();
++    const panel = document.getElementById("kavacha-notes-panel");
++    const textarea = document.getElementById("kavacha-notes-textarea");
++    document.l10n.setAttributes(
++      document.getElementById("kavacha-notes-title"),
++      "kavacha-notes-title",
++      { name: workspace.name }
++    );
++    panel.setAttribute("data-workspace-id", workspace.uuid);
++    textarea.value = file.data.notes[workspace.uuid]?.content ?? "";
++    const anchor = this.workspaceIcons || gURLBar.textbox;
++    panel.openPopup(anchor, "after_start", 0, 0, false, false);
++    textarea.focus();
++  }
++
++  #flushWorkspaceNotes() {
++    const panel = document.getElementById("kavacha-notes-panel");
++    const uuid = panel.getAttribute("data-workspace-id");
++    if (!uuid || !this.#notesFile) {
++      return;
++    }
++    const content = document.getElementById("kavacha-notes-textarea").value;
++    if (content.trim()) {
++      this.#notesFile.data.notes[uuid] = {
++        content,
++        updatedAt: new Date().toISOString(),
++      };
++    } else {
++      delete this.#notesFile.data.notes[uuid];
++    }
++    this.#notesFile.saveSoon();
++  }
++
+   async closeAllUnpinnedTabs() {
+     const workspaceId =
+       this.#contextMenuData?.workspaceId || this.activeWorkspace;
+diff --git a/src/zen/urlbar/ZenUBGlobalActions.sys.mjs b/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
+index 7c13c92..b31f37e 100644
+--- a/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
++++ b/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
+@@ -279,6 +279,12 @@ const globalActionsTemplate = [
+     icon: "chrome://browser/skin/zen-icons/selectable/lock-closed.svg",
+     isAvailable: window => !window.gZenWorkspaces?.privateWindowOrDisabled,
+   },
++  {
++    l10nId: "kavacha-action-workspace-notes",
++    command: window => window.gZenWorkspaces.openWorkspaceNotes(),
++    icon: "chrome://browser/skin/zen-icons/selectable/page.svg",
++    isAvailable: window => !window.gZenWorkspaces?.privateWindowOrDisabled,
++  },
+ ];
+ 
+ export const globalActions = globalActionsTemplate.map(action => ({

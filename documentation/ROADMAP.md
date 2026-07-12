@@ -65,7 +65,10 @@ split view, command palette, session store.
 - [ ] Tab memory management (30 min inactive → save → unload → restore)
 - [ ] Workspace lifecycle: **archive/restore** + `description` metadata
       (see [PLATFORM_PLAN.md](PLATFORM_PLAN.md) — workspaces as persistent projects)
-- [ ] **Workspace notes**: local markdown notes attached to a space (MVP item)
+- [x] **Workspace notes** (patch `0008-workspace-notes.patch`, 2026-07-12):
+      autosaving notes panel per space (actions menu + palette command); stored
+      locally in profile `kavacha-notes.json` — never on the synced space object;
+      rides Kavacha E2E sync in Phase 5. Markdown rendering: later enhancement
 - [ ] Verify session-restore depth (scroll positions, page state) across restarts
 
 ## Phase 3 — Customization Studio & Marketplace (Months 4–6) — Y1

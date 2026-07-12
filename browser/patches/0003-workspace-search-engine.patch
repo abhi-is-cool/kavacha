@@ -8,6 +8,9 @@
 # manually changing the default engine while an override is active adopts the
 # new engine into the workspace instead of reverting on the next switch.
 # Engines synced from another device but not installed here are ignored.
+# The submenu is populated synchronously from a cached engine list (refreshed
+# via browser-search-engine-modified) — async appends don't reliably relayout
+# an already-open XUL popup.
 # Why a patch: the switch chokepoint (#performWorkspaceChange) and the space
 # actions menu live in Zen's source; the field itself persists + syncs for
 # free through Zen's session store and spaces sync engine.
@@ -49,19 +52,36 @@ index 2ff9238..44c1b30 100644
    <menuseparator/>
    <menuitem id="context_zenReorderWorkspaces" data-l10n-id="zen-workspaces-panel-context-reorder" command="cmd_zenReorderWorkspaces"/>
 diff --git a/src/zen/spaces/ZenSpaceManager.mjs b/src/zen/spaces/ZenSpaceManager.mjs
-index 0a3d8ca..360bb56 100644
+index 0a3d8ca..4d437f0 100644
 --- a/src/zen/spaces/ZenSpaceManager.mjs
 +++ b/src/zen/spaces/ZenSpaceManager.mjs
-@@ -153,11 +153,26 @@ class nsZenWorkspaces {
+@@ -153,11 +153,43 @@ class nsZenWorkspaces {
          this._invalidateBookmarkContainers();
        };
        Services.obs.addObserver(observerFunction, "workspace-bookmarks-updated");
++      // Kavacha: cache the engine list for the space search-engine submenu.
++      // popupshowing must populate synchronously — items appended async don't
++      // reliably relayout an already-open XUL popup.
++      this._kavachaVisibleEngines = [];
++      const refreshEngineCache = () => {
++        Services.search.promiseInitialized
++          .then(() => Services.search.getVisibleEngines())
++          .then(engines => {
++            this._kavachaVisibleEngines = engines;
++          })
++          .catch(e =>
++            console.error("gZenWorkspaces: error caching search engines", e)
++          );
++      };
++      refreshEngineCache();
 +      // Kavacha: track manual default-engine changes so an active workspace
-+      // override follows the user's choice instead of reverting it.
++      // override follows the user's choice instead of reverting it, and keep
++      // the engine cache fresh on install/removal/rename.
 +      const searchEngineObserver = (subject, topic, data) => {
 +        if (data === "engine-default") {
 +          this.onDefaultSearchEngineChanged();
 +        }
++        refreshEngineCache();
 +      };
 +      Services.obs.addObserver(
 +        searchEngineObserver,
@@ -79,7 +99,7 @@ index 0a3d8ca..360bb56 100644
        });
      }
    }
-@@ -1155,6 +1170,18 @@ class nsZenWorkspaces {
+@@ -1155,6 +1187,18 @@ class nsZenWorkspaces {
        "command",
        this.contextChangeContainerTab.bind(this)
      );
@@ -98,7 +118,7 @@ index 0a3d8ca..360bb56 100644
    }
  
    generateMenuItemForWorkspace(workspace, disableCurrent = false) {
-@@ -1758,6 +1785,12 @@ class nsZenWorkspaces {
+@@ -1758,6 +1802,12 @@ class nsZenWorkspaces {
        previousWorkspaceIndex,
        previousWorkspace,
      });
@@ -111,7 +131,7 @@ index 0a3d8ca..360bb56 100644
    }
  
    makeSureEmptyTabIsFirst() {
-@@ -2840,6 +2873,137 @@ class nsZenWorkspaces {
+@@ -2840,6 +2890,136 @@ class nsZenWorkspaces {
      this.saveWorkspace(workspace);
    }
  
@@ -208,22 +228,21 @@ index 0a3d8ca..360bb56 100644
 +    }
 +    popup.appendChild(defaultItem);
 +    popup.appendChild(document.createXULElement("menuseparator"));
-+    Services.search.getVisibleEngines().then(engines => {
-+      for (const engine of engines) {
-+        const item = document.createXULElement("menuitem");
-+        item.setAttribute("type", "radio");
-+        item.setAttribute("label", engine.name);
-+        item.setAttribute("data-search-engine-name", engine.name);
-+        if (engine.iconURI?.spec) {
-+          item.setAttribute("image", engine.iconURI.spec);
-+          item.classList.add("menuitem-iconic");
-+        }
-+        if (workspace.searchProvider === engine.name) {
-+          item.setAttribute("checked", "true");
-+        }
-+        popup.appendChild(item);
++    for (const engine of this._kavachaVisibleEngines || []) {
++      const item = document.createXULElement("menuitem");
++      item.setAttribute("type", "radio");
++      item.setAttribute("label", engine.name);
++      item.setAttribute("data-search-engine-name", engine.name);
++      if (workspace.searchProvider === engine.name) {
++        item.setAttribute("checked", "true");
 +      }
-+    });
++      item.classList.add("menuitem-iconic");
++      popup.appendChild(item);
++      engine
++        .getIconURL()
++        .then(url => url && item.setAttribute("image", url))
++        .catch(() => {});
++    }
 +  }
 +
 +  async contextChangeSearchEngine(event) {

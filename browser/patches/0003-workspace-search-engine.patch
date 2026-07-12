@@ -8,9 +8,11 @@
 # manually changing the default engine while an override is active adopts the
 # new engine into the workspace instead of reverting on the next switch.
 # Engines synced from another device but not installed here are ignored.
-# The submenu is populated synchronously from a cached engine list (refreshed
-# via browser-search-engine-modified) — async appends don't reliably relayout
-# an already-open XUL popup.
+# Implementation notes: the search service is imported as lazy.SearchService
+# from moz-src (Services.search no longer exists in Firefox 152); the submenu
+# is populated synchronously from a cached engine list (refreshed via
+# browser-search-engine-modified) because async appends don't reliably
+# relayout an already-open XUL popup; icons come from async getIconURL().
 # Why a patch: the switch chokepoint (#performWorkspaceChange) and the space
 # actions menu live in Zen's source; the field itself persists + syncs for
 # free through Zen's session store and spaces sync engine.
@@ -52,10 +54,18 @@ index 2ff9238..44c1b30 100644
    <menuseparator/>
    <menuitem id="context_zenReorderWorkspaces" data-l10n-id="zen-workspaces-panel-context-reorder" command="cmd_zenReorderWorkspaces"/>
 diff --git a/src/zen/spaces/ZenSpaceManager.mjs b/src/zen/spaces/ZenSpaceManager.mjs
-index 0a3d8ca..4d437f0 100644
+index 0a3d8ca..26bee06 100644
 --- a/src/zen/spaces/ZenSpaceManager.mjs
 +++ b/src/zen/spaces/ZenSpaceManager.mjs
-@@ -153,11 +153,43 @@ class nsZenWorkspaces {
+@@ -10,6 +10,7 @@ import { ZenSpacesSwipe } from "resource:///modules/zen/ZenSpacesSwipe.mjs";
+ const lazy = {};
+ 
+ ChromeUtils.defineESModuleGetters(lazy, {
++  SearchService: "moz-src:///toolkit/components/search/SearchService.sys.mjs",
+   ZenSessionStore: "resource:///modules/zen/ZenSessionManager.sys.mjs",
+   ZenSyncStore: "resource:///modules/zen/ZenSyncManager.sys.mjs",
+ });
+@@ -153,11 +154,43 @@ class nsZenWorkspaces {
          this._invalidateBookmarkContainers();
        };
        Services.obs.addObserver(observerFunction, "workspace-bookmarks-updated");
@@ -64,8 +74,8 @@ index 0a3d8ca..4d437f0 100644
 +      // reliably relayout an already-open XUL popup.
 +      this._kavachaVisibleEngines = [];
 +      const refreshEngineCache = () => {
-+        Services.search.promiseInitialized
-+          .then(() => Services.search.getVisibleEngines())
++        lazy.SearchService.promiseInitialized
++          .then(() => lazy.SearchService.getVisibleEngines())
 +          .then(engines => {
 +            this._kavachaVisibleEngines = engines;
 +          })
@@ -99,7 +109,7 @@ index 0a3d8ca..4d437f0 100644
        });
      }
    }
-@@ -1155,6 +1187,18 @@ class nsZenWorkspaces {
+@@ -1155,6 +1188,18 @@ class nsZenWorkspaces {
        "command",
        this.contextChangeContainerTab.bind(this)
      );
@@ -118,7 +128,7 @@ index 0a3d8ca..4d437f0 100644
    }
  
    generateMenuItemForWorkspace(workspace, disableCurrent = false) {
-@@ -1758,6 +1802,12 @@ class nsZenWorkspaces {
+@@ -1758,6 +1803,12 @@ class nsZenWorkspaces {
        previousWorkspaceIndex,
        previousWorkspace,
      });
@@ -131,7 +141,7 @@ index 0a3d8ca..4d437f0 100644
    }
  
    makeSureEmptyTabIsFirst() {
-@@ -2840,6 +2890,136 @@ class nsZenWorkspaces {
+@@ -2840,6 +2891,136 @@ class nsZenWorkspaces {
      this.saveWorkspace(workspace);
    }
  
@@ -146,43 +156,43 @@ index 0a3d8ca..4d437f0 100644
 +    if (this.privateWindowOrDisabled || !workspace) {
 +      return;
 +    }
-+    await Services.search.promiseInitialized;
++    await lazy.SearchService.promiseInitialized;
 +    const baselinePref = "kavacha.workspaces.baseline-search-engine";
 +    const override = workspace.searchProvider;
 +    try {
 +      this.#applyingWorkspaceSearchEngine = true;
 +      if (override) {
-+        const engine = Services.search.getEngineByName(override);
++        const engine = lazy.SearchService.getEngineByName(override);
 +        if (!engine || engine.hidden) {
 +          // Engine not installed on this device (e.g. synced from another
 +          // machine) — leave the default alone rather than failing.
 +          return;
 +        }
-+        if (Services.search.defaultEngine?.name !== override) {
++        if (lazy.SearchService.defaultEngine?.name !== override) {
 +          if (!Services.prefs.prefHasUserValue(baselinePref)) {
 +            Services.prefs.setStringPref(
 +              baselinePref,
-+              Services.search.defaultEngine?.name || ""
++              lazy.SearchService.defaultEngine?.name || ""
 +            );
 +          }
-+          await Services.search.setDefault(
++          await lazy.SearchService.setDefault(
 +            engine,
-+            Services.search.CHANGE_REASON.USER
++            lazy.SearchService.CHANGE_REASON.USER
 +          );
 +        }
 +      } else if (Services.prefs.prefHasUserValue(baselinePref)) {
 +        const baselineName = Services.prefs.getStringPref(baselinePref);
 +        Services.prefs.clearUserPref(baselinePref);
 +        const engine =
-+          baselineName && Services.search.getEngineByName(baselineName);
++          baselineName && lazy.SearchService.getEngineByName(baselineName);
 +        if (
 +          engine &&
 +          !engine.hidden &&
-+          Services.search.defaultEngine?.name !== baselineName
++          lazy.SearchService.defaultEngine?.name !== baselineName
 +        ) {
-+          await Services.search.setDefault(
++          await lazy.SearchService.setDefault(
 +            engine,
-+            Services.search.CHANGE_REASON.USER
++            lazy.SearchService.CHANGE_REASON.USER
 +          );
 +        }
 +      }
@@ -202,7 +212,7 @@ index 0a3d8ca..4d437f0 100644
 +    if (!workspace?.searchProvider) {
 +      return;
 +    }
-+    const newName = Services.search.defaultEngine?.name;
++    const newName = lazy.SearchService.defaultEngine?.name;
 +    if (newName && workspace.searchProvider !== newName) {
 +      workspace.searchProvider = newName;
 +      this.saveWorkspace(workspace);

@@ -46,6 +46,13 @@
 # now capped at one strip-height and center-aligned. Verified on a copy of
 # a real profile: all spaces show tabs in-strip at startup and across
 # switches.
+# Chrome-convention pass (user feedback): tab strip is the TOP row (padded
+# for macOS traffic lights, whose stale reservation in the buttons row is
+# dropped), URL bar row below shares its line with the app-menu/extensions
+# buttons via wrapping row flex. Sidebar notifications (e.g. the
+# post-update card, previously an unclosable sliver in the strip) float as
+# a fixed dismissable card. Verified: all spaces populate the top strip
+# across switches; Gmail loads and renders.
 diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
 index 307fa0d..18a7153 100644
 --- a/src/zen/common/modules/ZenStartup.mjs
@@ -98,10 +105,10 @@ index b7340b0..7d479df 100644
 +%include zen-tabs/kavacha-horizontal-tabs.inc.css
 diff --git a/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
 new file mode 100644
-index 0000000..54cfaae
+index 0000000..3da3a6b
 --- /dev/null
 +++ b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
-@@ -0,0 +1,251 @@
+@@ -0,0 +1,301 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -144,14 +151,64 @@ index 0000000..54cfaae
 +    height: auto !important;
 +  }
 +
++  /* Chrome-convention ordering: tab strip on the very top row, URL bar row
++     under it with the app menu / extensions on its right. Wrapping row flex
++     lets nav-bar and the (former sidebar) top-buttons share the second row. */
 +  #navigator-toolbox {
 +    width: 100% !important;
 +    max-width: none !important;
 +    min-width: 0 !important;
 +    height: auto !important;
 +    flex: none !important;
-+    flex-direction: column;
++    flex-direction: row !important;
++    flex-wrap: wrap !important;
 +    padding: 0 !important;
++  }
++
++  #titlebar {
++    order: -1;
++    width: 100% !important;
++  }
++
++  #nav-bar {
++    order: 1;
++    flex: 1 1 auto !important;
++    width: auto !important;
++  }
++
++  #zen-sidebar-top-buttons {
++    order: 2;
++    width: auto !important;
++    min-width: 0 !important;
++    height: auto !important;
++    align-items: center;
++  }
++
++  /* macOS traffic lights are painted natively at the window's top-left —
++     over the tab strip now — so reserve their space there and drop the
++     stale reservation from the buttons row. */
++  @media (-moz-platform: macos) {
++    #TabsToolbar {
++      padding-left: 78px !important;
++    }
++
++    #zen-sidebar-top-buttons .titlebar-buttonbox-container {
++      display: none !important;
++    }
++  }
++
++  /* Sidebar notifications (e.g. the post-update card) anchor next to the
++     media toolbar inside the strip — float them as a dismissable card
++     instead of an unclickable sliver. */
++  zen-sidebar-notification {
++    position: fixed !important;
++    top: 100px;
++    right: 16px;
++    width: 320px !important;
++    max-width: 320px !important;
++    height: auto !important;
++    max-height: none !important;
++    z-index: 1000;
 +  }
 +
 +  /* Undo the unconditional vertical stacking of the strip chain, and pin the

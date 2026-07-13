@@ -53,11 +53,22 @@
 # post-update card, previously an unclosable sliver in the strip) float as
 # a fixed dismissable card. Verified: all spaces populate the top strip
 # across switches; Gmail loads and renders.
+# URL-row refinement (user feedback): edge padding; nav buttons
+# (back/forward) moved INTO the nav bar left of the URL bar at startup
+# (ZenStartup, horizontal only); URL bar un-capped (Zen's min(90%,62rem)
+# float width) and filling the row; app menu/extensions right. macOS
+# traffic lights: the buttonbox must be MOVED into the tab strip row in
+# normal flow — position:fixed makes Cocoa ghost multiple button sets, and
+# display:none hides the native buttons entirely (they are positioned from
+# this element's geometry).
+# Known polish: Zen's _updateEvent may reshuffle nav buttons to the
+# top-buttons container on customize/compact events (startup state is
+# correct); disabled back/forward render faint on fresh sessions.
 diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
-index 307fa0d..18a7153 100644
+index 307fa0d..9876e0f 100644
 --- a/src/zen/common/modules/ZenStartup.mjs
 +++ b/src/zen/common/modules/ZenStartup.mjs
-@@ -94,7 +94,15 @@ class ZenStartup {
+@@ -94,7 +94,42 @@ class ZenStartup {
        this.closeWatermark();
        document
          .getElementById("tabbrowser-arrowscrollbox")
@@ -71,6 +82,33 @@ index 307fa0d..18a7153 100644
 +            ? "vertical"
 +            : "horizontal"
 +        );
++      if (!Services.prefs.getBoolPref("zen.tabs.vertical", true)) {
++        // Kavacha horizontal mode: macOS positions the native traffic
++        // lights on the buttonbox element — it must sit in the tab strip
++        // row (the top row), in normal flow.
++        const buttonBox = document.querySelector(
++          "#zen-sidebar-top-buttons .titlebar-buttonbox-container"
++        );
++        if (buttonBox) {
++          document.getElementById("TabsToolbar").prepend(buttonBox);
++        }
++        // Standard browser URL row: navigation buttons live LEFT of the
++        // URL bar, inside the nav bar itself.
++        const navTarget = document.getElementById(
++          "nav-bar-customization-target"
++        );
++        const urlbarContainer = document.getElementById("urlbar-container");
++        for (const id of [
++          "back-button",
++          "forward-button",
++          "stop-reload-button",
++        ]) {
++          const el = document.getElementById(id);
++          if (el && navTarget && urlbarContainer) {
++            navTarget.insertBefore(el, urlbarContainer);
++          }
++        }
++      }
        this.isReady = true;
        this.promiseInitializedResolve();
        delete this.promiseInitializedResolve;
@@ -105,10 +143,10 @@ index b7340b0..7d479df 100644
 +%include zen-tabs/kavacha-horizontal-tabs.inc.css
 diff --git a/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
 new file mode 100644
-index 0000000..3da3a6b
+index 0000000..1d53852
 --- /dev/null
 +++ b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
-@@ -0,0 +1,301 @@
+@@ -0,0 +1,349 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -170,30 +208,78 @@ index 0000000..3da3a6b
 +    width: 100% !important;
 +  }
 +
-+  #nav-bar {
-+    order: 1;
-+    flex: 1 1 auto !important;
-+    width: auto !important;
-+  }
-+
++  /* Nav buttons are moved into the nav bar by ZenStartup (patched); the
++     remaining top-buttons (app menu, extensions) sit at the row's right,
++     Chrome-style. */
 +  #zen-sidebar-top-buttons {
 +    order: 2;
++    flex: 0 0 auto !important;
 +    width: auto !important;
 +    min-width: 0 !important;
 +    height: auto !important;
 +    align-items: center;
 +  }
 +
-+  /* macOS traffic lights are painted natively at the window's top-left —
-+     over the tab strip now — so reserve their space there and drop the
-+     stale reservation from the buttons row. */
-+  @media (-moz-platform: macos) {
-+    #TabsToolbar {
-+      padding-left: 78px !important;
-+    }
++  #zen-sidebar-top-buttons-customization-target {
++    flex: 0 0 auto !important;
++    width: auto !important;
++    max-width: fit-content !important;
++    flex-direction: row !important;
++    align-items: center;
++  }
 +
-+    #zen-sidebar-top-buttons .titlebar-buttonbox-container {
-+      display: none !important;
++  #nav-bar {
++    order: 1;
++    flex: 1 1 auto !important;
++    width: auto !important;
++    min-width: 0;
++  }
++
++  /* Standard browser URL row: nav icons on the left, URL bar filling the
++     remaining window width, menu/extensions at the far right. */
++  #nav-bar {
++    padding: 2px 8px !important;
++  }
++
++  #nav-bar #nav-bar-customization-target {
++    flex: 1 1 auto;
++    align-items: center;
++  }
++
++  #nav-bar #urlbar-container {
++    flex: 1 1 auto !important;
++    width: auto !important;
++    max-width: none !important;
++    min-width: 0;
++  }
++
++  /* Zen caps the omnibox at min(90%, 62rem) and floats it — fill the row. */
++  #nav-bar #urlbar {
++    position: relative !important;
++    width: 100% !important;
++    max-width: none !important;
++    left: 0 !important;
++  }
++
++  /* Breathing room at the window edges. */
++  #titlebar {
++    padding-right: 10px;
++  }
++
++  #TabsToolbar > .toolbar-items {
++    padding-left: 2px;
++  }
++
++  /* macOS: the native traffic lights are POSITIONED to match the buttonbox
++     element's geometry, so it must live in normal flow inside the tab strip
++     row — ZenStartup (patched) moves it into #TabsToolbar in horizontal
++     mode. Just size it here. */
++  @media (-moz-platform: macos) {
++    #TabsToolbar > .titlebar-buttonbox-container {
++      display: flex !important;
++      width: 78px;
++      align-items: center;
++      justify-content: center;
 +    }
 +  }
 +

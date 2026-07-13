@@ -1,27 +1,48 @@
-# Patch 0010 — EXPERIMENTAL: horizontal tabs mode CSS layer.
+# Patch 0010 — Horizontal tabs mode (functional; Kavacha default).
 #
-# Status: opt-in, NOT the default. Activates only under
-# @media not -moz-pref("zen.tabs.vertical") — zero effect at Zen's default.
-# Zen's JS fully supports horizontal orientation; its CSS hard-codes the
-# vertical sidebar. This layer restores a top-bar layout.
+# Zen's JS supports horizontal orientation (zen.tabs.vertical=false) but its
+# CSS hard-codes the vertical sidebar and its workspace markup hardcodes
+# orient="vertical" on the tab scrollbox. This patch restores a working
+# top-bar layout, gated entirely on @media not -moz-pref("zen.tabs.vertical")
+# plus one pref check — zero effect when the pref is true.
 #
-# Progress (Marionette-instrumented debugging, 2026-07-13):
-# WORKING — toolbox converts to a full-width top bar (nav row + URL bar);
-# tab strip renders real tabs horizontally at correct sizes (favicons,
-# titles, 225px tabs, new-tab after tabs, downloads/+ pinned right); the
-# strip fixes were: tab containers need flex in a row (vertical never did),
-# foot-buttons/essentials min-width:100% starved the row, workspace pane
-# vertical padding, pinned-section separator stacking, scrollbox shadow
-# parts stay column without orient. URL bar accepts focus (the reported
-# "search broken" was actually the content area, below).
-# REMAINING — #zen-appcontent-wrapper/#zen-tabbox-wrapper chain collapses to
-# zero height in the column layout (pages load but render 0px tall; flex
-# overrides on the chain did not take — next: inspect what constrains
-# zen-appcontent-wrapper to 16px); empty pinned-section still claims ~700px
-# of strip; visual polish (active-tab styling, strip borders).
+# Functionally verified via Marionette automation (2026-07-13): tabs render
+# horizontally (favicons/titles, correct sizes), click-selection, URL bar
+# typing + navigation, web content fills the window, new-tab behavior, and
+# workspace create/switch with correct tab swapping all work.
+# Key fixes, for future maintenance:
+#   - row layout needs flex bases vertical mode never set (toolbar-items,
+#     tabs container, tabs wrapper)
+#   - foot-buttons + essentials carried min-width:100% from the sidebar and
+#     starved the row
+#   - the sidebar resize splitter stays in flow and eats the window column —
+#     content collapses to 0 height unless it's hidden
+#   - the workspace scrollbox markup hardcodes orient="vertical", which is
+#     forwarded into shadow DOM where CSS can't reach — ZenSpace.mjs now sets
+#     it from the pref at connect time
+# Remaining polish: active-tab visual emphasis, strip spacing/borders,
+# multi-space icon strip placement — track in ROADMAP Phase 3.
 # Touches: src/zen/tabs/zen-tabs.css (adds %include),
-#          src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css (new).
+#          src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css (new),
+#          src/zen/spaces/ZenSpace.mjs (orient from pref).
 # Applies on top of 0009.
+diff --git a/src/zen/spaces/ZenSpace.mjs b/src/zen/spaces/ZenSpace.mjs
+index d024ded..e2ace39 100644
+--- a/src/zen/spaces/ZenSpace.mjs
++++ b/src/zen/spaces/ZenSpace.mjs
+@@ -130,6 +130,12 @@ export class nsZenWorkspace extends MozXULElement {
+     this.initializeAttributeInheritance();
+ 
+     this.scrollbox = this.querySelector("arrowscrollbox");
++    // Kavacha: the markup hardcodes orient="vertical", and the attribute is
++    // forwarded into the shadow scrollbox where CSS can't reach — follow the
++    // tab-layout pref instead (patch 0010, horizontal tabs).
++    if (!Services.prefs.getBoolPref("zen.tabs.vertical", true)) {
++      this.scrollbox.setAttribute("orient", "horizontal");
++    }
+     this.scrollbox.smoothScroll = Services.prefs.getBoolPref(
+       "zen.startup.smooth-scroll-in-tabs",
+       false
 diff --git a/src/zen/tabs/zen-tabs.css b/src/zen/tabs/zen-tabs.css
 index b7340b0..7d479df 100644
 --- a/src/zen/tabs/zen-tabs.css
@@ -36,10 +57,10 @@ index b7340b0..7d479df 100644
 +%include zen-tabs/kavacha-horizontal-tabs.inc.css
 diff --git a/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
 new file mode 100644
-index 0000000..7d11288
+index 0000000..bbdc941
 --- /dev/null
 +++ b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
-@@ -0,0 +1,203 @@
+@@ -0,0 +1,209 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -58,6 +79,12 @@ index 0000000..7d11288
 +  /* The window becomes a column: toolbox bar on top, content below. */
 +  #browser {
 +    flex-direction: column;
++  }
++
++  /* The sidebar resize splitter has no sidebar to resize — and left in flow
++     it stretches to fill the column, shoving the content to the bottom. */
++  #zen-sidebar-splitter {
++    display: none !important;
 +  }
 +
 +  /* Web content takes everything under the bar — the XUL flex chain was

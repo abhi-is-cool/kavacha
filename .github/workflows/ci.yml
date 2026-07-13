@@ -121,8 +121,12 @@ jobs:
       # workflows). The first cold build populates it; later builds should drop
       # from ~4h to well under an hour on cache hits. Caveat: GitHub caps the
       # repo cache at 10GB LRU, shared across platforms — partial hits expected.
+      # continue-on-error: the action's post-run stats step can fail (seen on
+      # macOS even after a fully successful build+upload) and must not poison
+      # the job result.
       - name: Set up sccache
-        uses: mozilla-actions/sccache-action@main
+        uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true
 
       - name: Expose actions cache variables
         uses: actions/github-script@v7
@@ -155,13 +159,22 @@ jobs:
         run: ./build/bootstrap.sh
         shell: bash
 
-      # 16GB Windows runners OOM in rustc at Firefox's default parallelism
-      # ("rustc-LLVM ERROR: out of memory" ~84 min in). Halve the job count via
-      # surfer's uncommitted root-mozconfig hook — slower, but Windows is
-      # experimental and correctness comes first.
-      - name: Cap build parallelism (Windows)
+      # 16GB hosted runners can't take Firefox's default build parallelism:
+      # Linux runners die with a "shutdown signal" (OOM kills the runner agent,
+      # twice, even with disk freed) and Windows rustc hits LLVM out-of-memory
+      # even at -j2 — a single rustc with full debuginfo is too big, so
+      # Windows also drops debug symbols. Uses surfer's uncommitted
+      # root-mozconfig hook. Slower, but these runs must finish.
+      - name: Cap build parallelism (Linux)
+        if: matrix.platform == 'linux'
+        run: echo 'mk_add_options MOZ_MAKE_FLAGS="-j3"' >> browser/zen-upstream/mozconfig
+        shell: bash
+
+      - name: Cap build parallelism + drop debug symbols (Windows)
         if: matrix.platform == 'windows'
-        run: echo 'mk_add_options MOZ_MAKE_FLAGS="-j2"' >> browser/zen-upstream/mozconfig
+        run: |
+          echo 'mk_add_options MOZ_MAKE_FLAGS="-j2"' >> browser/zen-upstream/mozconfig
+          echo 'ac_add_options --disable-debug-symbols' >> browser/zen-upstream/mozconfig
         shell: bash
 
       - name: Build

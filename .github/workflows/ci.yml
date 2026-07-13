@@ -165,11 +165,21 @@ jobs:
       # even at -j2 — a single rustc with full debuginfo is too big, so
       # Windows also drops debug symbols. Uses surfer's uncommitted
       # root-mozconfig hook. Slower, but these runs must finish.
-      - name: Cap build parallelism (Linux)
+      # Linux at -j3 still lost its runner ~92 min in (hard kill, no logs) —
+      # the link-stage memory spike. Same fix that saved Windows: no debug
+      # symbols, and -j2 for headroom.
+      - name: Cap build parallelism + drop debug symbols (Linux)
         if: matrix.platform == 'linux'
-        run: echo 'mk_add_options MOZ_MAKE_FLAGS="-j3"' >> browser/zen-upstream/mozconfig
+        run: |
+          echo 'mk_add_options MOZ_MAKE_FLAGS="-j2"' >> browser/zen-upstream/mozconfig
+          echo 'ac_add_options --disable-debug-symbols' >> browser/zen-upstream/mozconfig
         shell: bash
 
+      # Windows now compiles 3.5h and dies linking xul.dll on a TRUNCATED
+      # object path ("Unified_cpp_etwork_controller...") — deep libwebrtc
+      # paths + the D:\a\kavacha\kavacha prefix exceed Windows path limits by
+      # a hair. Build through a short junction (C:\k) to shave ~25 chars;
+      # surfer's obj-dir discovery (engine/obj-*) keeps working.
       - name: Cap build parallelism + drop debug symbols (Windows)
         if: matrix.platform == 'windows'
         run: |
@@ -177,14 +187,23 @@ jobs:
           echo 'ac_add_options --disable-debug-symbols' >> browser/zen-upstream/mozconfig
         shell: bash
 
+      - name: Short-path junction (Windows)
+        if: matrix.platform == 'windows'
+        run: New-Item -ItemType Junction -Path C:\k -Target $env:GITHUB_WORKSPACE
+        shell: pwsh
+
       - name: Build
-        run: ./build/bootstrap.sh build
+        run: |
+          if [ "${{ matrix.platform }}" = "windows" ]; then cd /c/k; fi
+          ./build/bootstrap.sh build
         shell: bash
 
       # Compilation lands in the obj dir; `surfer package` is what produces the
       # distributables (DMG / tar / installer + update MAR) in zen-upstream/dist/.
       - name: Package
-        run: ./build/bootstrap.sh package
+        run: |
+          if [ "${{ matrix.platform }}" = "windows" ]; then cd /c/k; fi
+          ./build/bootstrap.sh package
         shell: bash
 
       - name: Upload artifact

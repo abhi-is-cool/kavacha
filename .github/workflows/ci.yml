@@ -175,11 +175,14 @@ jobs:
           echo 'ac_add_options --disable-debug-symbols' >> browser/zen-upstream/mozconfig
         shell: bash
 
-      # Windows now compiles 3.5h and dies linking xul.dll on a TRUNCATED
-      # object path ("Unified_cpp_etwork_controller...") — deep libwebrtc
-      # paths + the D:\a\kavacha\kavacha prefix exceed Windows path limits by
-      # a hair. Build through a short junction (C:\k) to shave ~25 chars;
-      # surfer's obj-dir discovery (engine/obj-*) keeps working.
+      # Windows compiles for hours then dies linking xul.dll: "No rule to
+      # make target ...goog_cc_scream...Unified_cpp_etwork_controller_gn0.obj".
+      # NOT path length (macOS generates the identical unified name and links
+      # fine) — an upstream inconsistency in Zen's native-Windows libwebrtc
+      # build config, which tracks: Zen cross-compiles its Windows releases
+      # from Linux and doesn't maintain the native path. Real fix later:
+      # adopt Zen's win-cross recipe. The short-path junction stays (harmless,
+      # avoids other MAX_PATH edges).
       - name: Cap build parallelism + drop debug symbols (Windows)
         if: matrix.platform == 'windows'
         run: |

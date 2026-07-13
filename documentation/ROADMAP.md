@@ -23,8 +23,11 @@ project start (2026-07-09).
       build/generate-branding.sh (Windows .ico/.bmp installer imagery still placeholder)
 - [x] **Deliverable: first Kavacha Nightly artifact from CI** — `kavacha-nightly-macos`
       (174 MB DMG + update MAR) built and uploaded by run 29123975884 (2026-07-10).
-      Linux expected green after portable-icon fix; Windows experimental
-      (continue-on-error) — even Zen cross-compiles Windows from Linux.
+      **Linux landed 2026-07-13**: `kavacha-nightly-linux` (165 MB) — fixes were
+      resource caps (-j2, no debug symbols; hosted runners OOM-kill otherwise).
+      Windows native is upstream-broken at this pin (libwebrtc rule missing when
+      linking xul.dll; Zen only cross-compiles Windows) — stays experimental
+      until we adopt Zen's win-cross recipe.
 
 > **Note (2026-07-09):** the Zen source audit ([DIFFERENTIATION.md](DIFFERENTIATION.md))
 > showed Zen already ships workspaces (spaces), vertical tabs, tab groups (folders),

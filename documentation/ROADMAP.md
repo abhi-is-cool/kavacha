@@ -79,11 +79,13 @@ split view, command palette, session store.
       [DIFFERENTIATION.md](DIFFERENTIATION.md) § Visual identity)
   - [x] Kavacha gold accent by default (2026-07-12, `ui/defaults/kavacha-ux.js`
         shipped via branding prefs)
-  - [ ] **Horizontal tabs by default** — needs a Kavacha CSS layer: Zen's
-        horizontal mode is vestigial (JS honors `zen.tabs.vertical=false`, but
-        vertical-tabs.css hard-codes the column layout with no pref gate; the
-        settings chooser only offers sidebar variants). Reverted the pref flip
-        2026-07-13; do this properly with the layout engine
+  - [ ] **Horizontal tabs by default** — experimental CSS layer shipped as patch
+        `0010-horizontal-tabs-experimental.patch` (2026-07-13, opt-in via
+        `zen.tabs.vertical=false`). In-app findings: toolbar merge + top-bar
+        conversion work; remaining blockers are the tab-strip row collapsing to
+        zero height (zen-workspace absolute panes need a horizontal-aware
+        wrapper) and floating-URL-bar input breaking. Needs Browser Toolbox
+        debugging — finish as part of the layout engine
   - [ ] kavacha-midnight as default theme
   - [ ] Own welcome flow
 - [ ] Layout engine applies layout JSON live (default shipped: `customization/layout-engine/`)

@@ -1,0 +1,143 @@
+# Patch 0010 — EXPERIMENTAL: horizontal tabs mode CSS layer.
+#
+# Status: opt-in groundwork, NOT the default. Zen's JS fully supports
+# horizontal orientation (zen.tabs.vertical=false flips orient and merges
+# toolbars) but its CSS hard-codes the vertical sidebar; this layer restores
+# a top-bar layout. Activates only under
+# @media not -moz-pref("zen.tabs.vertical") — zero effect at Zen's default.
+#
+# What works (verified in-app 2026-07-13): toolbox becomes a full-width top
+# bar; nav row + URL bar merge correctly; window buttons placed; sidebar
+# bottom buttons (downloads / space icons / new tab) render as a row.
+# Known broken (why this is not the default):
+#   - the tab strip row collapses to zero height — the zen-workspace panes
+#     (absolute + translateX slide mechanism) don't take the wrapper's
+#     height; likely needs the pane/wrapper chain rebuilt for horizontal
+#     rather than overridden
+#   - URL bar input was non-functional in testing (floating-urlbar behavior
+#     likely positions against the sidebar)
+# Next step is live debugging via the Browser Toolbox — tracked as the
+# Phase 3 "distinct default look" layout-engine item in ROADMAP.md.
+# Touches: src/zen/tabs/zen-tabs.css (adds %include),
+#          src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css (new).
+# Applies on top of 0009 (independent files; ordered for consistency).
+diff --git a/src/zen/tabs/zen-tabs.css b/src/zen/tabs/zen-tabs.css
+index b7340b0..7d479df 100644
+--- a/src/zen/tabs/zen-tabs.css
++++ b/src/zen/tabs/zen-tabs.css
+@@ -128,3 +128,7 @@
+ }
+ 
+ %include zen-essentials-promo.css
++
++/* Kavacha: horizontal tabs mode — restores the layout Zen's JS still
++   supports but its CSS dropped. */
++%include zen-tabs/kavacha-horizontal-tabs.inc.css
+diff --git a/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
+new file mode 100644
+index 0000000..a1d48c5
+--- /dev/null
++++ b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
+@@ -0,0 +1,102 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* ==========================================================================
++   Kavacha: horizontal tabs mode (`zen.tabs.vertical` = false)
++
++   Zen's JS fully supports horizontal orientation (ZenUIManager flips the
++   tab-strip orient and merges the toolbars when the pref is false), but the
++   stylesheet hard-codes the vertical sidebar. This layer restores a top-bar
++   layout: URL-bar row on top (single-toolbar mode is forced by JS when
++   horizontal), tab strip row below it, web content underneath.
++   ========================================================================== */
++/* stylelint-disable-next-line media-query-no-invalid */
++@media not -moz-pref("zen.tabs.vertical") {
++  /* The window becomes a column: toolbox bar on top, content below. */
++  #browser {
++    flex-direction: column;
++  }
++
++  #navigator-toolbox {
++    width: 100% !important;
++    max-width: none !important;
++    min-width: 0 !important;
++    height: auto !important;
++    flex: none !important;
++    flex-direction: column;
++    padding: 0 !important;
++  }
++
++  /* Undo the unconditional vertical stacking of the strip chain. */
++  #titlebar,
++  #TabsToolbar,
++  #TabsToolbar-customization-target {
++    flex-direction: row !important;
++    height: auto !important;
++    width: 100%;
++  }
++
++  /* The strip needs a definite height: zen-workspace panes are absolutely
++     positioned (the slide-switch animation) and size to this box. */
++  #zen-tabs-wrapper {
++    height: var(--kavacha-horizontal-strip-height, 42px);
++    min-height: var(--kavacha-horizontal-strip-height, 42px);
++    width: 100%;
++    position: relative;
++    overflow: visible;
++  }
++
++  #tabbrowser-tabs {
++    flex-direction: row !important;
++    height: 100%;
++    width: 100%;
++  }
++
++  /* Workspace panes: keep the absolute + translateX slide mechanism, but
++     lay their content out in a row. */
++  zen-workspace {
++    flex-direction: row !important;
++    height: 100% !important;
++    width: 100% !important;
++    align-items: center;
++  }
++
++  zen-workspace > arrowscrollbox {
++    width: 100%;
++    max-height: none;
++  }
++
++  /* The arrowscrollbox shadow scrollbox follows its `orient` attribute,
++     which Zen's JS only flips on the active workspace at startup — force
++     row layout for every workspace's strip regardless. */
++  zen-workspace arrowscrollbox::part(scrollbox) {
++    flex-direction: row !important;
++  }
++
++  .zen-workspace-tabs-section {
++    flex-direction: row !important;
++    width: auto !important;
++    align-items: center;
++  }
++
++  /* Sidebar-only chrome that has no place in a top bar. Note: hiding the
++     current-workspace indicator removes its right-click affordance; space
++     actions stay reachable from the icon strip / command palette. */
++  .zen-current-workspace-indicator,
++  .zen-workspace-empty-space,
++  #zen-sidebar-top-buttons-separator {
++    display: none !important;
++  }
++
++  /* Standard horizontal tab sizing instead of full-width sidebar rows. */
++  .tabbrowser-tab {
++    width: auto !important;
++    min-width: 100px;
++    max-width: 225px;
++  }
++
++  .tabbrowser-tab .tab-background {
++    width: auto;
++  }
++}

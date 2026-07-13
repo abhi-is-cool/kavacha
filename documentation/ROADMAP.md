@@ -63,8 +63,10 @@ split view, command palette, session store.
       dedicated container + themed gradient + search engine + settings overrides.
       Extension recommendations deferred until the marketplace can install them
 - [ ] Tab memory management (30 min inactive → save → unload → restore)
-- [ ] Workspace lifecycle: **archive/restore** + `description` metadata
-      (see [PLATFORM_PLAN.md](PLATFORM_PLAN.md) — workspaces as persistent projects)
+- [x] Workspace lifecycle: **archive/restore** (patch `0009-workspace-archiving.patch`,
+      2026-07-12): archived spaces hidden from strip/navigation with tabs unloaded,
+      all data kept + synced; restore via "Archived Spaces" submenu or after sync.
+      `description` metadata still to do
 - [x] **Workspace notes** (patch `0008-workspace-notes.patch`, 2026-07-12):
       autosaving notes panel per space (actions menu + palette command); stored
       locally in profile `kavacha-notes.json` — never on the synced space object;

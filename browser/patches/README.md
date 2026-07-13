@@ -26,6 +26,7 @@ overlay/pref could not do it, and which upstream files it touches.
 | `0006-workspace-templates.patch` | Workspace templates: Student/Developer/Private presets in the create (+) menu; each creates a space with a dedicated container, themed gradient, search engine and settings overrides — a complete identity in one click |
 | `0007-command-registry-templates.patch` | Command-registry start: template creation exposed as commands in Zen's palette ("New Space from Template: …") |
 | `0008-workspace-notes.patch` | Workspace notes (MVP): autosaving notes panel per space, opened from the space actions menu or the palette; stored locally in profile `kavacha-notes.json`, never on the synced space object |
+| `0009-workspace-archiving.patch` | Workspace archiving (MVP): archived spaces vanish from strip/navigation with tabs unloaded, but keep all data and stay in session store + sync; restore via "Archived Spaces" submenu |
 
 Audit note (2026-07-09): Zen's tracked sources contain no analytics/crash SDKs.
 Mozilla telemetry is already compiled out by Zen's build config; remaining automatic

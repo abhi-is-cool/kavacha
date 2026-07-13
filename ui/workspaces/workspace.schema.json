@@ -76,6 +76,10 @@
       "type": "string",
       "description": "Id of the workspace template this was created from (e.g. 'student', 'developer', 'privacy'), if any."
     },
+    "archived": {
+      "type": "boolean",
+      "description": "Archived workspaces keep all data (tabs, notes, identity) but are hidden from the strip and navigation, with tabs unloaded. Restorable from the Archived Spaces menu (patch 0009)."
+    },
     "createdAt": {
       "type": "string",
       "format": "date-time"

@@ -1,0 +1,275 @@
+# Patch 0009 — Workspace archiving (Kavacha platform plan — workspaces as
+# persistent projects).
+#
+# What: "Archive Space" (space actions menu or palette) hides a space from
+# the strip, icon row, switch menus and scroll/shortcut navigation, and
+# unloads its tabs to free memory — while keeping ALL its data: tabs stay in
+# the session store, the space keeps syncing, notes and identity settings
+# are untouched. "Archived Spaces" submenu restores one instantly (restore
+# switches to it). Archiving the active space switches to the next visible
+# space first; the last visible space cannot be archived. Element hiding is
+# re-applied at every switch, which also covers startup restore.
+# Deliberately NOT filtered in getWorkspaces() itself: that feeds the
+# session store and sync — archived spaces must persist. Filtering happens
+# at the UI/navigation call sites only.
+# Touches: src/zen/spaces/ZenSpaceManager.mjs,
+#          src/zen/spaces/ZenSpaceIcons.mjs,
+#          src/browser/base/content/zen-panels/popups.inc,
+#          locales/en-US/browser/browser/zen-workspaces.ftl,
+#          src/zen/urlbar/ZenUBGlobalActions.sys.mjs,
+#          locales/en-US/browser/browser/zen-command-palette.ftl.
+# Applies on top of 0008.
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index aeed639..476ac29 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -39,3 +39,4 @@ kavacha-action-new-space-student = New Space from Template: Student
+ kavacha-action-new-space-developer = New Space from Template: Developer
+ kavacha-action-new-space-privacy = New Space from Template: Private
+ kavacha-action-workspace-notes = Workspace Notes
++kavacha-action-archive-space = Archive Current Space
+diff --git a/locales/en-US/browser/browser/zen-workspaces.ftl b/locales/en-US/browser/browser/zen-workspaces.ftl
+index 4a04f0d..cec36ac 100644
+--- a/locales/en-US/browser/browser/zen-workspaces.ftl
++++ b/locales/en-US/browser/browser/zen-workspaces.ftl
+@@ -74,6 +74,12 @@ zen-workspaces-settings-reset =
+ zen-workspaces-panel-context-notes =
+     .label = Workspace Notes
+ 
++zen-workspaces-panel-context-archive =
++    .label = Archive Space
++
++zen-workspaces-panel-context-archived =
++    .label = Archived Spaces
++
+ kavacha-notes-title =
+     .value = Notes — { $name }
+ 
+diff --git a/src/browser/base/content/zen-panels/popups.inc b/src/browser/base/content/zen-panels/popups.inc
+index 7c6418b..07913b1 100644
+--- a/src/browser/base/content/zen-panels/popups.inc
++++ b/src/browser/base/content/zen-panels/popups.inc
+@@ -50,6 +50,14 @@
+   <menuitem id="context_zenWorkspacesNotes"
+     data-l10n-id="zen-workspaces-panel-context-notes"
+     hide-if-private-browsing="true"/>
++  <menuitem id="context_zenArchiveWorkspace"
++    data-l10n-id="zen-workspaces-panel-context-archive"
++    hide-if-private-browsing="true"/>
++  <menu id="context_zenArchivedWorkspaces"
++    data-l10n-id="zen-workspaces-panel-context-archived"
++    hide-if-private-browsing="true">
++    <menupopup />
++  </menu>
+   <menuseparator id="context_zenWorkspacesSeparator"/>
+   <menuseparator/>
+   <menuitem id="context_zenReorderWorkspaces" data-l10n-id="zen-workspaces-panel-context-reorder" command="cmd_zenReorderWorkspaces"/>
+diff --git a/src/zen/spaces/ZenSpaceIcons.mjs b/src/zen/spaces/ZenSpaceIcons.mjs
+index b8bfb67..9950ccf 100644
+--- a/src/zen/spaces/ZenSpaceIcons.mjs
++++ b/src/zen/spaces/ZenSpaceIcons.mjs
+@@ -132,7 +132,8 @@ class nsZenWorkspaceIcons extends MozXULElement {
+   }
+ 
+   async #updateIcons() {
+-    const workspaces = gZenWorkspaces.getWorkspaces();
++    // Kavacha: archived spaces are hidden from the icon strip.
++    const workspaces = gZenWorkspaces.getWorkspaces().filter(w => !w.archived);
+     this.innerHTML = "";
+     for (const workspace of workspaces) {
+       const button = this.#createWorkspaceIcon(workspace);
+diff --git a/src/zen/spaces/ZenSpaceManager.mjs b/src/zen/spaces/ZenSpaceManager.mjs
+index f6ab628..591831e 100644
+--- a/src/zen/spaces/ZenSpaceManager.mjs
++++ b/src/zen/spaces/ZenSpaceManager.mjs
+@@ -1372,6 +1372,42 @@ class nsZenWorkspaces {
+         clearTimeout(this.#notesSaveTimer);
+         this.#flushWorkspaceNotes();
+       });
++
++    document
++      .getElementById("context_zenArchiveWorkspace")
++      .addEventListener("command", () => {
++        this.archiveWorkspace(this.#contextMenuData?.workspaceId).catch(e =>
++          console.error("gZenWorkspaces: error archiving workspace", e)
++        );
++      });
++    const archivedMenu = document.getElementById(
++      "context_zenArchivedWorkspaces"
++    );
++    archivedMenu.addEventListener(
++      "popupshowing",
++      this.updateArchivedWorkspacesMenu.bind(this)
++    );
++    archivedMenu.addEventListener("command", event => {
++      const uuid = event.target.getAttribute("zen-workspace-id");
++      if (uuid) {
++        this.unarchiveWorkspace(uuid).catch(e =>
++          console.error("gZenWorkspaces: error restoring workspace", e)
++        );
++      }
++    });
++    // Disable Archive when it's the last visible space; hide the Archived
++    // submenu when there is nothing to restore.
++    workspaceActions.addEventListener("popupshowing", event => {
++      if (event.target.id !== "zenWorkspaceMoreActions") {
++        return;
++      }
++      const spaces = this.getWorkspaces();
++      const visibleCount = spaces.filter(w => !w.archived).length;
++      document
++        .getElementById("context_zenArchiveWorkspace")
++        .toggleAttribute("disabled", visibleCount <= 1);
++      archivedMenu.hidden = !spaces.some(w => w.archived);
++    });
+   }
+ 
+   generateMenuItemForWorkspace(workspace, disableCurrent = false) {
+@@ -1445,7 +1481,9 @@ class nsZenWorkspaces {
+     }
+     if (!this.#contextMenuData.workspaceId) {
+       separator.hidden = false;
+-      for (const workspace of this.getWorkspaces().reverse()) {
++      for (const workspace of this.getWorkspaces()
++        .filter(w => !w.archived)
++        .reverse()) {
+         const item = this.generateMenuItemForWorkspace(workspace);
+         item.addEventListener("command", e => {
+           this.changeWorkspaceWithID(
+@@ -1992,6 +2030,9 @@ class nsZenWorkspaces {
+     } catch (e) {
+       console.error("gZenWorkspaces: error applying workspace settings", e);
+     }
++
++    // Kavacha: keep archived spaces hidden (covers startup restore too).
++    this.#applyArchivedStateToElements();
+   }
+ 
+   makeSureEmptyTabIsFirst() {
+@@ -2701,7 +2742,7 @@ class nsZenWorkspaces {
+     if (gZenWorkspaces.privateWindowOrDisabled) {
+       return;
+     }
+-    const workspaces = this.getWorkspaces();
++    const workspaces = this.getWorkspaces().filter(w => !w.archived);
+     const ctxCommand = document.getElementById("cmd_zenCtxDeleteWorkspace");
+     if (workspaces.length <= 1) {
+       ctxCommand.setAttribute("disabled", "true");
+@@ -3617,6 +3658,83 @@ class nsZenWorkspaces {
+     this.#notesFile.saveSoon();
+   }
+ 
++  // ==========================================================================
++  // Kavacha: workspace archiving (PLATFORM_PLAN.md — workspaces as persistent
++  // projects). Archived spaces keep all their data (tabs, notes, identity) and
++  // stay in the session store and sync; they are simply hidden from the strip,
++  // icon row and navigation, and their tabs are unloaded to free memory.
++  // Restore from the "Archived Spaces" submenu at any time.
++  // ==========================================================================
++  async archiveWorkspace(workspaceId = null) {
++    const uuid = workspaceId || this.activeWorkspace;
++    const workspace = this.getWorkspaceFromId(uuid);
++    const visible = this.getWorkspaces().filter(w => !w.archived);
++    if (!workspace || workspace.archived || visible.length <= 1) {
++      return;
++    }
++    if (this.isWorkspaceActive(workspace)) {
++      const next = visible.find(w => w.uuid !== workspace.uuid);
++      await this.changeWorkspace(next);
++    }
++    workspace.archived = true;
++    this.saveWorkspace(workspace);
++    const tabsToUnload = this.allStoredTabs.filter(
++      tab =>
++        tab.getAttribute("zen-workspace-id") === workspace.uuid &&
++        !tab.hasAttribute("zen-empty-tab") &&
++        !tab.hasAttribute("zen-essential") &&
++        !tab.hasAttribute("pending")
++    );
++    if (tabsToUnload.length) {
++      await gBrowser.explicitUnloadTabs(tabsToUnload);
++    }
++    this.#applyArchivedStateToElements();
++    this.#fireSpaceUIUpdate();
++  }
++
++  async unarchiveWorkspace(workspaceId) {
++    const workspace = this.getWorkspaceFromId(workspaceId);
++    if (!workspace?.archived) {
++      return;
++    }
++    delete workspace.archived;
++    this.saveWorkspace(workspace);
++    this.#applyArchivedStateToElements();
++    this.#fireSpaceUIUpdate();
++    await this.changeWorkspace(workspace);
++  }
++
++  #applyArchivedStateToElements() {
++    for (const workspace of this.getWorkspaces()) {
++      const element = this.workspaceElement(workspace.uuid);
++      if (element) {
++        element.hidden = !!workspace.archived;
++      }
++    }
++  }
++
++  updateArchivedWorkspacesMenu(event) {
++    const popup = event.target;
++    while (popup.firstChild) {
++      popup.firstChild.remove();
++    }
++    for (const workspace of this.getWorkspaces().filter(w => w.archived)) {
++      const item = document.createXULElement("menuitem");
++      item.setAttribute("zen-workspace-id", workspace.uuid);
++      const iconIsSvg = workspace.icon && workspace.icon.endsWith(".svg");
++      let name = workspace.name;
++      if (workspace.icon && !iconIsSvg) {
++        name = `${workspace.icon}  ${name}`;
++      }
++      item.setAttribute("label", name);
++      if (iconIsSvg) {
++        item.setAttribute("image", workspace.icon);
++        item.classList.add("menuitem-iconic");
++      }
++      popup.appendChild(item);
++    }
++  }
++
+   async closeAllUnpinnedTabs() {
+     const workspaceId =
+       this.#contextMenuData?.workspaceId || this.activeWorkspace;
+@@ -3667,8 +3785,8 @@ class nsZenWorkspaces {
+     whileScrolling = false,
+     disableWrap = false
+   ) {
+-    // Cycle through workspaces
+-    let workspaces = this.getWorkspaces();
++    // Cycle through workspaces (Kavacha: archived spaces are not stops)
++    let workspaces = this.getWorkspaces().filter(w => !w.archived);
+     let activeWorkspace = this.getActiveWorkspace();
+     let workspaceIndex = workspaces.indexOf(activeWorkspace);
+ 
+diff --git a/src/zen/urlbar/ZenUBGlobalActions.sys.mjs b/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
+index b31f37e..414f635 100644
+--- a/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
++++ b/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
+@@ -285,6 +285,18 @@ const globalActionsTemplate = [
+     icon: "chrome://browser/skin/zen-icons/selectable/page.svg",
+     isAvailable: window => !window.gZenWorkspaces?.privateWindowOrDisabled,
+   },
++  {
++    l10nId: "kavacha-action-archive-space",
++    command: window => window.gZenWorkspaces.archiveWorkspace(),
++    icon: "chrome://browser/skin/zen-icons/selectable/inbox.svg",
++    isAvailable: window => {
++      const spaces = window.gZenWorkspaces;
++      return (
++        !spaces?.privateWindowOrDisabled &&
++        spaces.getWorkspaces().filter(w => !w.archived).length > 1
++      );
++    },
++  },
+ ];
+ 
+ export const globalActions = globalActionsTemplate.map(action => ({

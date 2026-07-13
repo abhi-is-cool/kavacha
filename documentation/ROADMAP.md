@@ -77,9 +77,13 @@ split view, command palette, session store.
 
 - [ ] **Distinct default look — must not read as a Zen fork** (see
       [DIFFERENTIATION.md](DIFFERENTIATION.md) § Visual identity)
-  - [x] Horizontal tabs by default + Kavacha gold accent (2026-07-12,
-        `ui/defaults/kavacha-ux.js` shipped via branding prefs; vertical stays one
-        toggle away in Settings → Browser Layout)
+  - [x] Kavacha gold accent by default (2026-07-12, `ui/defaults/kavacha-ux.js`
+        shipped via branding prefs)
+  - [ ] **Horizontal tabs by default** — needs a Kavacha CSS layer: Zen's
+        horizontal mode is vestigial (JS honors `zen.tabs.vertical=false`, but
+        vertical-tabs.css hard-codes the column layout with no pref gate; the
+        settings chooser only offers sidebar variants). Reverted the pref flip
+        2026-07-13; do this properly with the layout engine
   - [ ] kavacha-midnight as default theme
   - [ ] Own welcome flow
 - [ ] Layout engine applies layout JSON live (default shipped: `customization/layout-engine/`)

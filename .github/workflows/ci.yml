@@ -218,6 +218,60 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # Rolling "nightly" prerelease: Actions artifacts require a GitHub login to
+  # download, a Release gives a public link anyone can try. The tag is moved
+  # to the built commit each publish.
+  publish-nightly:
+    name: Publish nightly release
+    needs: nightly-build
+    # always(): publish whatever platforms succeeded even if one failed
+    # (Windows is experimental and continue-on-error already).
+    if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_build))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Assemble release files
+        run: |
+          set -e
+          mkdir -p out
+          shopt -s nullglob
+          for f in artifacts/kavacha-nightly-macos/*.dmg; do
+            cp "$f" "out/kavacha-nightly-macos-arm64.dmg"
+          done
+          for f in artifacts/kavacha-nightly-linux/*.tar.*; do
+            ext="${f#*.tar.}"
+            cp "$f" "out/kavacha-nightly-linux-x86_64.tar.${ext}"
+          done
+          for f in artifacts/kavacha-nightly-windows/*.exe artifacts/kavacha-nightly-windows/*.zip; do
+            cp "$f" "out/kavacha-nightly-windows-$(basename "$f")"
+          done
+          ls -la out
+          [ -n "$(ls -A out)" ] || { echo "no release files found"; exit 1; }
+
+      - name: Publish rolling prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          NOTES="Automated Kavacha nightly from commit ${GITHUB_SHA:0:7} ($(date -u +%Y-%m-%d)).
+
+          Unsigned development builds — macOS: right-click the app and choose Open the first time, or run: xattr -dr com.apple.quarantine /Applications/Kavacha.app
+
+          Not audited yet; see the roadmap for release gates."
+          gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
+          gh release create nightly out/* \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Kavacha Nightly ($(date -u +%Y-%m-%d))" \
+            --notes "$NOTES"
+
   # TODO (before Developer Preview): code signing + notarization, reproducible-build
   # verification, dependency audit gates (cargo audit / npm audit), network-silence
   # privacy test on the built binary. Tracked in documentation/ROADMAP.md.

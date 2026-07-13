@@ -110,10 +110,35 @@ case "${1:-setup}" in
     package) (cd "$UPSTREAM_DIR" && npm run package) ;;
     brand)  apply_branding ;;
     update)
-        git -C "$UPSTREAM_DIR" checkout -- . && git -C "$UPSTREAM_DIR" pull
+        # Discard applied-patch modifications (they all live in browser/patches/)
+        # and any generated overlay files patches will recreate.
+        git -C "$UPSTREAM_DIR" checkout -- .
+        git -C "$UPSTREAM_DIR" clean -fd src/ 2>/dev/null || true
+        OLD_FF="$(python3 -c "import json; print(json.load(open('$UPSTREAM_DIR/surfer.json'))['version']['version'])")"
+        git -C "$UPSTREAM_DIR" fetch --depth 10 origin dev
+        git -C "$UPSTREAM_DIR" reset --hard FETCH_HEAD
+        NEW_FF="$(python3 -c "import json; print(json.load(open('$UPSTREAM_DIR/surfer.json'))['version']['version'])")"
         apply_patches
+        log "Refreshing upstream dependencies..."
+        (cd "$UPSTREAM_DIR" && npm i)
+        if [ "$OLD_FF" != "$NEW_FF" ]; then
+            log "Firefox version changed ($OLD_FF -> $NEW_FF); downloading new engine..."
+            (cd "$UPSTREAM_DIR" && npm run download)
+        fi
+        # Surfer applies Zen's engine patches as uncommitted modifications on
+        # the pristine "Firefox <version>" base commit — a re-import needs the
+        # engine back at that base first. clean WITHOUT -x keeps the obj dir
+        # (git-ignored), so the next build stays incremental.
+        log "Resetting engine to pristine Firefox state (obj dir preserved)..."
+        git -C "$UPSTREAM_DIR/engine" reset -q
+        git -C "$UPSTREAM_DIR/engine" checkout -q -- .
+        git -C "$UPSTREAM_DIR/engine" clean -fdq
+        log "Re-importing source into the engine..."
+        (cd "$UPSTREAM_DIR" && npm run import)
+        log "Updating en-US language packs..."
+        (cd "$UPSTREAM_DIR" && python3 ./scripts/update_en_US_packs.py)
         apply_branding
-        log "Upstream updated and patches re-applied. Re-run: ./build/bootstrap.sh build"
+        log "Upstream updated to $(git -C "$UPSTREAM_DIR" log -1 --format='%h (%cd)' --date=short); patches re-applied. Re-run: ./build/bootstrap.sh build"
         ;;
     *) fail "Unknown command: $1 (expected: setup | build | ui | start | package | update)" ;;
 esac

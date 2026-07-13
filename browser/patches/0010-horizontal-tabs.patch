@@ -37,6 +37,36 @@
 # hidden sections into the strip as stacked 44px rows; now scoped to
 # :not([hidden]) with hidden sections display:none, and essentials render
 # as 36px favicon squares inline.
+# Startup-space fix (the "my tabs never show" bug): ZenStartup.mjs ends
+# startup by unconditionally setting the active workspace's scrollbox back
+# to orient="vertical" ("a bit of a hack") — overriding the per-workspace
+# orient fix for exactly the space active at launch. Now follows the pref.
+# Also: .toolbar-items carries XUL align="end", so an oversized child
+# inflates the strip row and sinks the tab area below the clip — the row is
+# now capped at one strip-height and center-aligned. Verified on a copy of
+# a real profile: all spaces show tabs in-strip at startup and across
+# switches.
+diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
+index 307fa0d..18a7153 100644
+--- a/src/zen/common/modules/ZenStartup.mjs
++++ b/src/zen/common/modules/ZenStartup.mjs
+@@ -94,7 +94,15 @@ class ZenStartup {
+       this.closeWatermark();
+       document
+         .getElementById("tabbrowser-arrowscrollbox")
+-        .setAttribute("orient", "vertical");
++        .setAttribute(
++          "orient",
++          // Kavacha: follow the tab-layout pref (patch 0010). This ran after
++          // the per-workspace orient fix and re-verticalized the startup
++          // space's strip, hiding exactly that space's tabs in horizontal.
++          Services.prefs.getBoolPref("zen.tabs.vertical", true)
++            ? "vertical"
++            : "horizontal"
++        );
+       this.isReady = true;
+       this.promiseInitializedResolve();
+       delete this.promiseInitializedResolve;
 diff --git a/src/zen/spaces/ZenSpace.mjs b/src/zen/spaces/ZenSpace.mjs
 index d024ded..e2ace39 100644
 --- a/src/zen/spaces/ZenSpace.mjs
@@ -68,10 +98,10 @@ index b7340b0..7d479df 100644
 +%include zen-tabs/kavacha-horizontal-tabs.inc.css
 diff --git a/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
 new file mode 100644
-index 0000000..825c0c4
+index 0000000..54cfaae
 --- /dev/null
 +++ b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
-@@ -0,0 +1,245 @@
+@@ -0,0 +1,251 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -124,12 +154,18 @@ index 0000000..825c0c4
 +    padding: 0 !important;
 +  }
 +
-+  /* Undo the unconditional vertical stacking of the strip chain. */
++  /* Undo the unconditional vertical stacking of the strip chain, and pin the
++     row to one strip-height: .toolbar-items carries XUL align="end", so any
++     oversized child inflates the row and sinks the tab area below the
++     visible strip (clipped tabs). Cap + center instead. */
 +  #titlebar,
 +  #TabsToolbar,
++  #TabsToolbar > .toolbar-items,
 +  #TabsToolbar-customization-target {
 +    flex-direction: row !important;
-+    height: auto !important;
++    height: var(--kavacha-horizontal-strip-height, 44px) !important;
++    max-height: var(--kavacha-horizontal-strip-height, 44px) !important;
++    align-items: center !important;
 +    width: 100%;
 +  }
 +

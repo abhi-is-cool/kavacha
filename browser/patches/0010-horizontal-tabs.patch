@@ -26,6 +26,11 @@
 #          src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css (new),
 #          src/zen/spaces/ZenSpace.mjs (orient from pref).
 # Applies on top of 0009.
+# Multi-space fix (same day): the space icon strip collapsed to 0 width in
+# horizontal (width:100% of an auto-width parent + container-type:
+# inline-size making intrinsic sizing ignore the icons) — no visible
+# switcher. Now sized to content; icon-click switching Marionette-verified
+# with tabs swapping correctly.
 diff --git a/src/zen/spaces/ZenSpace.mjs b/src/zen/spaces/ZenSpace.mjs
 index d024ded..e2ace39 100644
 --- a/src/zen/spaces/ZenSpace.mjs
@@ -57,10 +62,10 @@ index b7340b0..7d479df 100644
 +%include zen-tabs/kavacha-horizontal-tabs.inc.css
 diff --git a/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
 new file mode 100644
-index 0000000..bbdc941
+index 0000000..a8a93dc
 --- /dev/null
 +++ b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
-@@ -0,0 +1,209 @@
+@@ -0,0 +1,219 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -178,6 +183,16 @@ index 0000000..bbdc941
 +  #zen-media-controls-toolbar {
 +    width: auto !important;
 +    flex: 0 0 auto !important;
++  }
++
++  /* The space icon strip is width:100% of the (now auto-width) foot buttons
++     — circular, collapses to 0 and removes the only click target for
++     switching spaces. Its container-type:inline-size also makes intrinsic
++     sizing ignore the icons, so drop the containment and size to content. */
++  #zen-workspaces-button {
++    container-type: normal !important;
++    width: auto !important;
++    min-width: fit-content;
 +  }
 +
 +  #TabsToolbar-customization-target {

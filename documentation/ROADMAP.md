@@ -76,8 +76,12 @@ split view, command palette, session store.
 ## Phase 3 — Customization Studio & Marketplace (Months 4–6) — Y1
 
 - [ ] **Distinct default look — must not read as a Zen fork** (see
-      [DIFFERENTIATION.md](DIFFERENTIATION.md) § Visual identity): horizontal tabs
-      by default, kavacha-midnight as default theme, own welcome flow
+      [DIFFERENTIATION.md](DIFFERENTIATION.md) § Visual identity)
+  - [x] Horizontal tabs by default + Kavacha gold accent (2026-07-12,
+        `ui/defaults/kavacha-ux.js` shipped via branding prefs; vertical stays one
+        toggle away in Settings → Browser Layout)
+  - [ ] kavacha-midnight as default theme
+  - [ ] Own welcome flow
 - [ ] Layout engine applies layout JSON live (default shipped: `customization/layout-engine/`)
 - [ ] Theme engine loads theme packages (reference theme shipped: `kavacha-midnight`)
 - [ ] **Visual Browser Builder** (`about:studio`): redesign the browser without CSS —

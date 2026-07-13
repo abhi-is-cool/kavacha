@@ -98,8 +98,13 @@ EOF
     echo "// Kavacha privacy defaults — generated from privacy/tracker-controls/kavacha.js"
     echo "// ============================================================================"
     cat "$REPO_ROOT/privacy/tracker-controls/kavacha.js"
+    echo ""
+    echo "// ============================================================================"
+    echo "// Kavacha UX defaults — generated from ui/defaults/kavacha-ux.js"
+    echo "// ============================================================================"
+    cat "$REPO_ROOT/ui/defaults/kavacha-ux.js"
 } >> "$DST/pref/firefox-branding.js"
-log "Privacy defaults appended to branding prefs ($(grep -c '^pref(' "$REPO_ROOT/privacy/tracker-controls/kavacha.js") prefs)."
+log "Privacy + UX defaults appended to branding prefs ($(cat "$REPO_ROOT/privacy/tracker-controls/kavacha.js" "$REPO_ROOT/ui/defaults/kavacha-ux.js" | grep -c '^pref(') prefs)."
 
 # ---------------------------------------------------------------------------
 # Update host. Patch 0002 sets updateHostname in surfer.json, but the

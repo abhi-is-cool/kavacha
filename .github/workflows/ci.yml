@@ -80,14 +80,13 @@ jobs:
             platform: linux
           - os: macos-latest
             platform: macos
-          # Windows is experimental: even Zen cross-compiles its Windows
-          # releases from Linux rather than building natively. Don't let it
-          # fail the run while we iterate on native-build support.
-          - os: windows-latest
-            platform: windows
-            experimental: true
+          # Windows is intentionally absent: native Windows is upstream-broken
+          # at this pin (libwebrtc rule missing at xul.dll link; Zen only
+          # cross-compiles Windows) and every attempt burns ~3.5h of runner
+          # time and delays publish-nightly. The windows-conditional steps
+          # below are kept for its return via Zen's win-cross recipe —
+          # tracked in ROADMAP.md.
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.experimental || false }}
     # Cold builds on 3-4 core hosted runners take ~4h; 360 is GitHub's job max.
     timeout-minutes: 360
     env:

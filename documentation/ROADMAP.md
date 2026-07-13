@@ -79,13 +79,16 @@ split view, command palette, session store.
       [DIFFERENTIATION.md](DIFFERENTIATION.md) § Visual identity)
   - [x] Kavacha gold accent by default (2026-07-12, `ui/defaults/kavacha-ux.js`
         shipped via branding prefs)
-  - [ ] **Horizontal tabs by default** — experimental CSS layer shipped as patch
-        `0010-horizontal-tabs-experimental.patch` (2026-07-13, opt-in via
-        `zen.tabs.vertical=false`). In-app findings: toolbar merge + top-bar
-        conversion work; remaining blockers are the tab-strip row collapsing to
-        zero height (zen-workspace absolute panes need a horizontal-aware
-        wrapper) and floating-URL-bar input breaking. Needs Browser Toolbox
-        debugging — finish as part of the layout engine
+  - [ ] **Horizontal tabs by default** — experimental CSS layer, patch
+        `0010-horizontal-tabs-experimental.patch` (opt-in via
+        `zen.tabs.vertical=false`). 2026-07-13 Marionette-debugging session:
+        **tab strip fully works** (real tabs render horizontally, correct
+        sizes/order, new-tab + downloads placed right) and the URL bar takes
+        focus. One blocker left: the content area
+        (`#zen-appcontent-wrapper` chain) collapses to 0 height in the column
+        layout — pages load but render invisibly. Plus polish: empty
+        pinned-section claims strip space. Debug loop documented in the patch
+        header; resume from there
   - [ ] kavacha-midnight as default theme
   - [ ] Own welcome flow
 - [ ] Layout engine applies layout JSON live (default shipped: `customization/layout-engine/`)

@@ -1,26 +1,27 @@
 # Patch 0010 — EXPERIMENTAL: horizontal tabs mode CSS layer.
 #
-# Status: opt-in groundwork, NOT the default. Zen's JS fully supports
-# horizontal orientation (zen.tabs.vertical=false flips orient and merges
-# toolbars) but its CSS hard-codes the vertical sidebar; this layer restores
-# a top-bar layout. Activates only under
+# Status: opt-in, NOT the default. Activates only under
 # @media not -moz-pref("zen.tabs.vertical") — zero effect at Zen's default.
+# Zen's JS fully supports horizontal orientation; its CSS hard-codes the
+# vertical sidebar. This layer restores a top-bar layout.
 #
-# What works (verified in-app 2026-07-13): toolbox becomes a full-width top
-# bar; nav row + URL bar merge correctly; window buttons placed; sidebar
-# bottom buttons (downloads / space icons / new tab) render as a row.
-# Known broken (why this is not the default):
-#   - the tab strip row collapses to zero height — the zen-workspace panes
-#     (absolute + translateX slide mechanism) don't take the wrapper's
-#     height; likely needs the pane/wrapper chain rebuilt for horizontal
-#     rather than overridden
-#   - URL bar input was non-functional in testing (floating-urlbar behavior
-#     likely positions against the sidebar)
-# Next step is live debugging via the Browser Toolbox — tracked as the
-# Phase 3 "distinct default look" layout-engine item in ROADMAP.md.
+# Progress (Marionette-instrumented debugging, 2026-07-13):
+# WORKING — toolbox converts to a full-width top bar (nav row + URL bar);
+# tab strip renders real tabs horizontally at correct sizes (favicons,
+# titles, 225px tabs, new-tab after tabs, downloads/+ pinned right); the
+# strip fixes were: tab containers need flex in a row (vertical never did),
+# foot-buttons/essentials min-width:100% starved the row, workspace pane
+# vertical padding, pinned-section separator stacking, scrollbox shadow
+# parts stay column without orient. URL bar accepts focus (the reported
+# "search broken" was actually the content area, below).
+# REMAINING — #zen-appcontent-wrapper/#zen-tabbox-wrapper chain collapses to
+# zero height in the column layout (pages load but render 0px tall; flex
+# overrides on the chain did not take — next: inspect what constrains
+# zen-appcontent-wrapper to 16px); empty pinned-section still claims ~700px
+# of strip; visual polish (active-tab styling, strip borders).
 # Touches: src/zen/tabs/zen-tabs.css (adds %include),
 #          src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css (new).
-# Applies on top of 0009 (independent files; ordered for consistency).
+# Applies on top of 0009.
 diff --git a/src/zen/tabs/zen-tabs.css b/src/zen/tabs/zen-tabs.css
 index b7340b0..7d479df 100644
 --- a/src/zen/tabs/zen-tabs.css
@@ -35,10 +36,10 @@ index b7340b0..7d479df 100644
 +%include zen-tabs/kavacha-horizontal-tabs.inc.css
 diff --git a/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
 new file mode 100644
-index 0000000..a1d48c5
+index 0000000..7d11288
 --- /dev/null
 +++ b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,203 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -57,6 +58,22 @@ index 0000000..a1d48c5
 +  /* The window becomes a column: toolbox bar on top, content below. */
 +  #browser {
 +    flex-direction: column;
++  }
++
++  /* Web content takes everything under the bar — the XUL flex chain was
++     tuned for the row layout and collapses to zero height in a column. */
++  #zen-appcontent-wrapper {
++    flex: 1 1 auto !important;
++    min-height: 0;
++    width: 100%;
++  }
++
++  #zen-tabbox-wrapper,
++  #tabbrowser-tabbox,
++  #tabbrowser-tabpanels {
++    flex: 1 1 auto !important;
++    min-height: 0;
++    height: auto !important;
 +  }
 +
 +  #navigator-toolbox {
@@ -78,47 +95,132 @@ index 0000000..a1d48c5
 +    width: 100%;
 +  }
 +
++  /* Essentials (pinned favorites) sit inline at the strip's start instead of
++     stretching to the sidebar's full width (their vertical-mode min-width is
++     100%+padding, which starves everything else in a row). */
++  #zen-essentials {
++    width: auto !important;
++    min-width: 0 !important;
++    margin-left: 0 !important;
++    flex: 0 0 auto;
++  }
++
++  #zen-essentials .zen-essentials-container {
++    display: flex !important;
++    position: static !important;
++    width: auto !important;
++    min-width: 0 !important;
++  }
++
 +  /* The strip needs a definite height: zen-workspace panes are absolutely
-+     positioned (the slide-switch animation) and size to this box. */
++     positioned (the slide-switch animation) and size to this box. The
++     wrapper is the flex item that takes the row's free space. */
 +  #zen-tabs-wrapper {
 +    height: var(--kavacha-horizontal-strip-height, 42px);
 +    min-height: var(--kavacha-horizontal-strip-height, 42px);
-+    width: 100%;
++    flex: 1 1 auto;
++    min-width: 0;
++    width: auto;
 +    position: relative;
 +    overflow: visible;
 +  }
 +
++  /* The main tab scrollbox chain must be a row too (its orient attribute
++     stays vertical except on the element Zen's JS touched at startup). */
++  #tabbrowser-arrowscrollbox {
++    flex-direction: row !important;
++    max-height: 100% !important;
++    height: 100%;
++  }
++
++  #tabbrowser-arrowscrollbox::part(scrollbox) {
++    flex-direction: row !important;
++  }
++
++  /* In a row toolbar the tabs container must claim the free space — vertical
++     mode never needed a flex basis (the column was sized by the sidebar).
++     The sidebar foot buttons (downloads / space icons / new tab) otherwise
++     hog the whole row at their vertical-mode 100% width; pin them to content
++     size so they sit at the strip's right end. */
++  #TabsToolbar > .toolbar-items {
++    flex: 1 !important;
++    min-width: 0;
++  }
++
++  #zen-sidebar-foot-buttons,
++  #zen-media-controls-toolbar {
++    width: auto !important;
++    flex: 0 0 auto !important;
++  }
++
++  #TabsToolbar-customization-target {
++    flex: 1;
++    min-width: 0;
++  }
++
 +  #tabbrowser-tabs {
++    flex: 1 !important;
++    min-width: 0;
 +    flex-direction: row !important;
 +    height: 100%;
 +    width: 100%;
 +  }
 +
 +  /* Workspace panes: keep the absolute + translateX slide mechanism, but
-+     lay their content out in a row. */
++     lay their content out in a row. Vertical mode pads the pane top for the
++     workspace indicator — that padding pushes tabs below the strip here. */
 +  zen-workspace {
 +    flex-direction: row !important;
 +    height: 100% !important;
 +    width: 100% !important;
 +    align-items: center;
++    padding-top: 0 !important;
++    padding-bottom: 0 !important;
 +  }
 +
 +  zen-workspace > arrowscrollbox {
 +    width: 100%;
++    height: 100%;
 +    max-height: none;
++  }
++
++  zen-workspace .zen-workspace-tabs-section {
++    height: 100%;
++    align-items: center;
 +  }
 +
 +  /* The arrowscrollbox shadow scrollbox follows its `orient` attribute,
 +     which Zen's JS only flips on the active workspace at startup — force
 +     row layout for every workspace's strip regardless. */
-+  zen-workspace arrowscrollbox::part(scrollbox) {
++  zen-workspace arrowscrollbox::part(scrollbox),
++  .workspace-arrowscrollbox::part(scrollbox) {
 +    flex-direction: row !important;
++    align-items: center;
 +  }
 +
 +  .zen-workspace-tabs-section {
 +    flex-direction: row !important;
 +    width: auto !important;
++    height: 100% !important;
 +    align-items: center;
++  }
++
++  /* The pinned section sizes to its pinned tabs only (it otherwise claims
++     sidebar-mode free space and indents the normal tabs). */
++  .zen-workspace-pinned-tabs-section {
++    flex: 0 0 auto !important;
++    min-width: 0 !important;
++  }
++
++  /* The pinned-section separator is a sidebar affordance (a 22px rule that
++     stacks above the tabs); drop it in a single-row strip. */
++  .pinned-tabs-container-separator {
++    display: none !important;
++  }
++
++  /* New-tab button belongs after the tabs, not before them. */
++  #tabbrowser-arrowscrollbox-periphery {
++    order: 9999;
 +  }
 +
 +  /* Sidebar-only chrome that has no place in a top bar. Note: hiding the

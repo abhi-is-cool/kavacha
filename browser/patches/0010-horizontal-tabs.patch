@@ -31,6 +31,12 @@
 # inline-size making intrinsic sizing ignore the icons) — no visible
 # switcher. Now sized to content; icon-click switching Marionette-verified
 # with tabs swapping correctly.
+# Real-profile fixes (verified against a copy of a real multi-space profile
+# with container spaces + essentials): per-container essentials sections are
+# hidden via position:fixed — the blanket static override dragged empty
+# hidden sections into the strip as stacked 44px rows; now scoped to
+# :not([hidden]) with hidden sections display:none, and essentials render
+# as 36px favicon squares inline.
 diff --git a/src/zen/spaces/ZenSpace.mjs b/src/zen/spaces/ZenSpace.mjs
 index d024ded..e2ace39 100644
 --- a/src/zen/spaces/ZenSpace.mjs
@@ -62,10 +68,10 @@ index b7340b0..7d479df 100644
 +%include zen-tabs/kavacha-horizontal-tabs.inc.css
 diff --git a/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
 new file mode 100644
-index 0000000..a8a93dc
+index 0000000..825c0c4
 --- /dev/null
 +++ b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
-@@ -0,0 +1,219 @@
+@@ -0,0 +1,245 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -137,11 +143,37 @@ index 0000000..a8a93dc
 +    flex: 0 0 auto;
 +  }
 +
-+  #zen-essentials .zen-essentials-container {
++  #zen-essentials {
 +    display: flex !important;
++    flex-direction: row;
++    align-items: center;
++  }
++
++  /* Inactive container-contexts keep their essentials section hidden via
++     position:fixed + visibility:hidden — drop them from layout entirely
++     rather than un-fixing them into the strip. */
++  #zen-essentials .zen-essentials-container[hidden="true"] {
++    display: none !important;
++  }
++
++  #zen-essentials .zen-essentials-container:not([hidden="true"]) {
++    display: flex !important;
++    flex-direction: row !important;
++    align-items: center;
 +    position: static !important;
 +    width: auto !important;
 +    min-width: 0 !important;
++    max-height: 100% !important;
++    padding: 0 !important;
++    gap: 2px;
++  }
++
++  /* Essentials are favicon-only squares in the strip. */
++  #zen-essentials .tabbrowser-tab {
++    width: 36px !important;
++    min-width: 36px !important;
++    max-width: 36px !important;
++    height: 36px;
 +  }
 +
 +  /* The strip needs a definite height: zen-workspace panes are absolutely

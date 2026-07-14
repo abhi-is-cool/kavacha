@@ -35,6 +35,13 @@
 # search box over the dashboard the moment the view opens. The page now
 # pulls focus into itself after load (like the extension it is modeled
 # on); Cmd+L still reaches the URL bar with the user's chosen behavior.
+# Preload fix (2026-07-14, user report "still black after restart"): the
+# preloaded new-tab browser is created for about:newtab's content process;
+# the chrome:// dashboard cannot load there, so every new tab AFTER the
+# first came up blank. Dashboard mode now sets browser.newtab.preload=false
+# on the DEFAULT pref branch and evicts preloaded browsers on flip.
+# Session restore verified: selected restored dashboard tabs render;
+# background ones stay lazy until selected (stock Firefox behavior).
 diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
 index b403bad..7eb3983 100644
 --- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
@@ -120,10 +127,10 @@ index d904916..638ae76 100644
    "sys/ZenUIMigration.sys.mjs",
 diff --git a/src/zen/common/sys/KavachaNewTab.sys.mjs b/src/zen/common/sys/KavachaNewTab.sys.mjs
 new file mode 100644
-index 0000000..bee17af
+index 0000000..f3a8a35
 --- /dev/null
 +++ b/src/zen/common/sys/KavachaNewTab.sys.mjs
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,59 @@
 +// This Source Code Form is subject to the terms of the Mozilla Public
 +// License, v. 2.0. If a copy of the MPL was not distributed with this
 +// file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -135,10 +142,13 @@ index 0000000..bee17af
 +const lazy = {};
 +ChromeUtils.defineESModuleGetters(lazy, {
 +  AboutNewTab: "resource:///modules/AboutNewTab.sys.mjs",
++  NewTabPagePreloading:
++    "moz-src:///browser/components/tabbrowser/NewTabPagePreloading.sys.mjs",
 +});
 +
 +const kFloatingSearchPref = "zen.urlbar.replace-newtab";
 +const kDashboardURL = "chrome://browser/content/kavacha-newtab/index.html";
++const kPreloadPref = "browser.newtab.preload";
 +
 +export const KavachaNewTab = {
 +  _initialized: false,
@@ -157,11 +167,26 @@ index 0000000..bee17af
 +  },
 +
 +  _apply() {
++    const defaults = Services.prefs.getDefaultBranch("");
 +    if (Services.prefs.getBoolPref(kFloatingSearchPref, true)) {
 +      // Floating search owns Cmd+T; leave about:newtab alone.
 +      lazy.AboutNewTab.resetNewTabURL();
++      defaults.setBoolPref(kPreloadPref, true);
 +    } else {
 +      lazy.AboutNewTab.newTabURL = kDashboardURL;
++      // The preloaded new-tab browser is created for about:newtab's content
++      // process; a chrome:// document cannot load there and every new tab
++      // after the first came up BLANK. The dashboard is a local static page
++      // — preloading buys nothing. Also evict any browser preloaded before
++      // the flip.
++      defaults.setBoolPref(kPreloadPref, false);
++      for (const win of Services.wm.getEnumerator("navigator:browser")) {
++        try {
++          lazy.NewTabPagePreloading.removePreloadedBrowser(win);
++        } catch (e) {
++          // window mid-teardown; nothing to evict
++        }
++      }
 +    }
 +  },
 +};

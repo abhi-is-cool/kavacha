@@ -61,9 +61,27 @@
 # normal flow — position:fixed makes Cocoa ghost multiple button sets, and
 # display:none hides the native buttons entirely (they are positioned from
 # this element's geometry).
-# Known polish: Zen's _updateEvent may reshuffle nav buttons to the
-# top-buttons container on customize/compact events (startup state is
-# correct); disabled back/forward render faint on fresh sessions.
+# URL-row hardening (2026-07-13, user-reported regressions):
+#   - The Chrome-convention moves now live at the END of _updateEvent in
+#     ZenUIManager.mjs (not just ZenStartup) — Zen's single-toolbar shuffle
+#     re-sent nav buttons and the macOS traffic lights to the row's right on
+#     every layout event; re-asserting inside _updateEvent survives them.
+#   - The urlbar is a top-layer POPOVER: Firefox syncs width via a
+#     ResizeObserver on #urlbar-container and x/y from the DOM slot's static
+#     position. Never pin its geometry from CSS (resolves against the
+#     viewport and paints over the row) — size the CONTAINER instead.
+#   - zen.urlbar.replace-newtab=false ships as a Kavacha default
+#     (ui/defaults/kavacha-ux.js): the detached floating search box is
+#     positioned for the sidebar layout; new tab opens a page instead.
+#   - Compact mode position:fixes the toolbox off-screen (sidebar hover
+#     reveal) = no UI at all in horizontal; neutralized in CSS until a real
+#     auto-hide top bar exists. The compact toggle still sits in the toolbar
+#     and currently no-ops visually.
+#   - #zen-sidebar-top-buttons carries flex="1", mapped by xul.css to
+#     flex:1 1 0% with UA-!important (unbeatable from author CSS) — it ate
+#     half the row; _updateEvent removes the attribute, CSS caps first paint
+#     with max-width:fit-content.
+# Known polish: disabled back/forward render faint on fresh sessions.
 diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
 index 307fa0d..9876e0f 100644
 --- a/src/zen/common/modules/ZenStartup.mjs
@@ -112,6 +130,48 @@ index 307fa0d..9876e0f 100644
        this.isReady = true;
        this.promiseInitializedResolve();
        delete this.promiseInitializedResolve;
+diff --git a/src/zen/common/modules/ZenUIManager.mjs b/src/zen/common/modules/ZenUIManager.mjs
+index 13434de..1a3033e 100644
+--- a/src/zen/common/modules/ZenUIManager.mjs
++++ b/src/zen/common/modules/ZenUIManager.mjs
+@@ -1484,6 +1484,37 @@ window.gZenVerticalTabsManager = {
+         appContentNavbarContaienr.append(windowButtons);
+       }
+ 
++      // Kavacha horizontal mode (patch 0010): Chrome-convention layout.
++      // The single-toolbar shuffle above sends the nav buttons and the
++      // macOS traffic lights to zen-sidebar-top-buttons (the URL row's
++      // right end, where the full-width urlbar paints over the lights).
++      // Re-assert our layout every update: back/forward/reload on the
++      // urlbar's left, traffic lights in the tab strip row (macOS
++      // positions the native buttons from that element's geometry).
++      if (!isVerticalTabs && !forCustomizableMode) {
++        const navTarget = document.getElementById(
++          "nav-bar-customization-target"
++        );
++        const urlbarContainer = document.getElementById("urlbar-container");
++        for (const id of [
++          "back-button",
++          "forward-button",
++          "stop-reload-button",
++        ]) {
++          const el = document.getElementById(id);
++          if (el && navTarget && urlbarContainer) {
++            navTarget.insertBefore(el, urlbarContainer);
++          }
++        }
++        if (!this.isWindowsStyledButtons && windowButtons) {
++          document.getElementById("TabsToolbar").prepend(windowButtons);
++        }
++        // xul.css maps flex="1" to flex:1 1 0% !important (UA origin, so no
++        // author rule can win) — in the URL row that grows top-buttons to
++        // half the row's width. Content-size it instead.
++        topButtons.removeAttribute("flex");
++      }
++
+       if (
+         this._hasSetSingleToolbar &&
+         Services.prefs.getBoolPref("zen.view.overflow-webext-toolbar", true)
 diff --git a/src/zen/spaces/ZenSpace.mjs b/src/zen/spaces/ZenSpace.mjs
 index d024ded..e2ace39 100644
 --- a/src/zen/spaces/ZenSpace.mjs
@@ -143,10 +203,10 @@ index b7340b0..7d479df 100644
 +%include zen-tabs/kavacha-horizontal-tabs.inc.css
 diff --git a/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
 new file mode 100644
-index 0000000..1d53852
+index 0000000..1777ef4
 --- /dev/null
 +++ b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
-@@ -0,0 +1,349 @@
+@@ -0,0 +1,369 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -214,6 +274,10 @@ index 0000000..1d53852
 +  #zen-sidebar-top-buttons {
 +    order: 2;
 +    flex: 0 0 auto !important;
++    /* The element carries flex="1", which xul.css maps to flex:1 1 0%
++       with UA-!important — unbeatable from author CSS (ZenUIManager,
++       patched, removes the attribute; this caps the first paint). */
++    max-width: fit-content !important;
 +    width: auto !important;
 +    min-width: 0 !important;
 +    height: auto !important;
@@ -253,12 +317,28 @@ index 0000000..1d53852
 +    min-width: 0;
 +  }
 +
-+  /* Zen caps the omnibox at min(90%, 62rem) and floats it — fill the row. */
-+  #nav-bar #urlbar {
++  /* The urlbar is a top-layer POPOVER: Firefox syncs its width to
++     #urlbar-container (ResizeObserver -> --urlbar-width) and its x/y come
++     from the static position of its DOM slot, so with the container
++     filling the row it aligns itself — don't override its geometry (a
++     width/left/top pin resolves against the viewport and paints it over
++     the nav buttons and traffic lights). Only Zen's detached-float state
++     needs correcting: it centers mid-window, sized for the sidebar layout. */
++  #nav-bar #urlbar[zen-floating-urlbar="true"] {
++    top: calc(var(--kavacha-horizontal-strip-height, 44px) + 6px) !important;
++    --urlbar-container-height: var(--urlbar-height) !important;
++    font-size: inherit !important;
++  }
++
++  /* Compact mode slides #navigator-toolbox off-screen (position:fixed +
++     negative left) for the vertical sidebar's hover reveal — with a top
++     bar that just removes the whole UI. Keep the toolbox in flow; compact
++     mode becomes a no-op in horizontal until a real auto-hide top bar. */
++  #navigator-toolbox {
 +    position: relative !important;
-+    width: 100% !important;
-+    max-width: none !important;
-+    left: 0 !important;
++    left: auto !important;
++    top: auto !important;
++    transform: none !important;
 +  }
 +
 +  /* Breathing room at the window edges. */

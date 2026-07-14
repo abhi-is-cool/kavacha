@@ -3,6 +3,39 @@
 Working checklist derived from the [Master Plan](MASTER_PLAN.md). Dates are relative to
 project start (2026-07-09).
 
+## End Goal — North Star (added 2026-07-14)
+
+> Tabs remain a core part of the browsing experience, but the browser treats
+> them as temporary windows into larger projects. Every action — pages
+> visited, searches performed, files downloaded, text copied, notes written,
+> and conversations had — is continuously indexed into a local-first personal
+> knowledge graph stored entirely on your device. Users can organize work
+> around goals such as "Apply to College," "Research Remote Sensing
+> Conferences," or "Build a Discord Bot," with the browser automatically
+> linking related tabs, resources, and discoveries across time. Research can
+> branch into multiple paths, allowing users to explore alternatives without
+> losing context, while a full time-travel system makes it possible to
+> restore or replay any previous browser state and revisit past lines of
+> thought. A built-in local AI understands the context behind your activity,
+> connecting people, organizations, articles, papers, websites, and ideas
+> into a dynamic relationship graph. Because the browser indexes everything
+> you've chosen to keep, you can ask questions such as "Where did I find that
+> paper on flood mapping?" or "Show me every source related to my scholarship
+> applications." An observing agent, running entirely on-device, can
+> passively monitor workflow patterns and occasionally ask questions like
+> "Are these tabs part of the same research project?" or "Would you like to
+> save this as a new branch of your investigation?" to improve organization
+> and context awareness. Rather than replacing tabs, the browser augments
+> them with memory, structure, and long-term understanding, transforming
+> them from isolated pages into components of a persistent, searchable
+> knowledge workspace.
+
+Every phase below is a step toward this. The through-line: workspaces are the
+projects, the personal index (Phase 6) grows into the knowledge graph, session
+depth (Phase 2) grows into branching + time travel, and the AI layer stays a
+local interface to the user's own data. Universal search is the first
+user-visible surface of the index and starts now (see Phase 3 checklist).
+
 ## Phase 1 — Foundation (Weeks 1–4) ← **current**
 
 - [x] Repository created; structure, license (MPL-2.0), docs, ADRs

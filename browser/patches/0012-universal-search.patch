@@ -1,0 +1,654 @@
+# Patch 0012 — Universal search (PLATFORM_PLAN.md MVP item 5; ADR 0004).
+#
+# One query surface over everything local: open tabs, history, bookmarks,
+# workspace notes, and downloads. Opened from the command palette action
+# "Search Everything"; centered panel, keyboard-first (type, arrows, Enter;
+# Escape closes). Results grouped by source, workspace-badged where a result
+# belongs to a space; activating a tab result switches space if needed.
+#
+# ARCHITECTURE (ADR 0004 — federated, not indexed): each source is queried
+# through its existing store — Places (nsINavHistoryQuery, frecency-sorted)
+# stays authoritative for history/bookmarks, tabs are live gBrowser state,
+# notes come through gZenWorkspaces.kavachaGetAllNotes() (single JSONFile
+# owner), downloads via Downloads.getList. No new database; the Phase 6
+# personal content index will plug in as one more source behind the same
+# {title, detail, workspaceId, score, action} contract. URL-level dedup
+# across sources: tab beats bookmark beats history.
+#
+# Mechanics, for future maintenance:
+#   - Window module loaded via ZenPreloadedScripts.js scripts list
+#     (chrome://browser/content/zen-components/KavachaUniversalSearch.mjs).
+#   - Panel markup lives in zen-panels/popups.inc; the stylesheet is loaded
+#     per window with windowUtils.loadSheetUsingURIString (AUTHOR_SHEET).
+#   - XUL panels are native popup widgets: they do NOT appear in
+#     window.drawWindow / Marionette screenshots — verify with computed
+#     styles and rects, not pixels.
+#   - Palette action registered in ZenUBGlobalActions.sys.mjs; strings in
+#     zen-command-palette.ftl + zen-workspaces.ftl.
+# Known follow-ups: dedicated keyboard shortcut (Zen kbs table), workspace
+# filter toggle, Phase 6 content-index source.
+# Applies on top of 0011.
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index 476ac29..7c20fc7 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -40,3 +40,4 @@ kavacha-action-new-space-developer = New Space from Template: Developer
+ kavacha-action-new-space-privacy = New Space from Template: Private
+ kavacha-action-workspace-notes = Workspace Notes
+ kavacha-action-archive-space = Archive Current Space
++kavacha-action-universal-search = Search Everything
+diff --git a/locales/en-US/browser/browser/zen-workspaces.ftl b/locales/en-US/browser/browser/zen-workspaces.ftl
+index cec36ac..77e792e 100644
+--- a/locales/en-US/browser/browser/zen-workspaces.ftl
++++ b/locales/en-US/browser/browser/zen-workspaces.ftl
+@@ -164,3 +164,12 @@ zen-panel-ui-workspaces-change-forward =
+ 
+ zen-panel-ui-workspaces-change-back =
+     .label = Previous Space
++
++kavacha-search-input =
++    .placeholder = Search everything…
++kavacha-search-hint = Searches your open tabs, history, bookmarks, workspace notes, and downloads. Everything stays on this device.
++kavacha-search-group-tabs = Open Tabs
++kavacha-search-group-notes = Workspace Notes
++kavacha-search-group-bookmarks = Bookmarks
++kavacha-search-group-history = History
++kavacha-search-group-downloads = Downloads
+diff --git a/src/browser/base/content/zen-assets.jar.inc.mn b/src/browser/base/content/zen-assets.jar.inc.mn
+index 41958e5..3fe26e2 100644
+--- a/src/browser/base/content/zen-assets.jar.inc.mn
++++ b/src/browser/base/content/zen-assets.jar.inc.mn
+@@ -22,3 +22,4 @@
+ #include ../../../zen/live-folders/jar.inc.mn
+ #include ../../../zen/space-routing/jar.inc.mn
+ #include ../../../zen/kavacha-newtab/jar.inc.mn
++#include ../../../zen/kavacha-search/jar.inc.mn
+diff --git a/src/browser/base/content/zen-panels/popups.inc b/src/browser/base/content/zen-panels/popups.inc
+index 07913b1..0fd1f99 100644
+--- a/src/browser/base/content/zen-panels/popups.inc
++++ b/src/browser/base/content/zen-panels/popups.inc
+@@ -107,6 +107,15 @@
+ # This would be automatically populated with the list of available synced workspaces.
+ </menupopup>
+ 
++<panel id="kavacha-search-panel" orient="vertical">
++  <vbox id="kavacha-search-box">
++    <html:input id="kavacha-search-input" type="text"
++      data-l10n-id="kavacha-search-input"/>
++    <html:div id="kavacha-search-hint" data-l10n-id="kavacha-search-hint"/>
++    <html:div id="kavacha-search-results" empty="true"/>
++  </vbox>
++</panel>
++
+ <panel id="kavacha-notes-panel" type="arrow" orient="vertical">
+   <vbox style="width: 360px; padding: 10px; gap: 8px;">
+     <label id="kavacha-notes-title" style="font-weight: 600;"/>
+diff --git a/src/zen/common/ZenPreloadedScripts.js b/src/zen/common/ZenPreloadedScripts.js
+index e812860..7a4f495 100644
+--- a/src/zen/common/ZenPreloadedScripts.js
++++ b/src/zen/common/ZenPreloadedScripts.js
+@@ -28,6 +28,7 @@
+     "chrome://browser/content/zen-components/ZenEmojiPicker.mjs",
+     "chrome://browser/content/zen-components/ZenLiveFoldersUI.mjs",
+     "chrome://browser/content/zen-components/ZenDownloadAnimation.mjs",
++    "chrome://browser/content/zen-components/KavachaUniversalSearch.mjs",
+   ];
+ 
+   for (let script of scripts) {
+diff --git a/src/zen/kavacha-search/KavachaUniversalSearch.mjs b/src/zen/kavacha-search/KavachaUniversalSearch.mjs
+new file mode 100644
+index 0000000..1874bc5
+--- /dev/null
++++ b/src/zen/kavacha-search/KavachaUniversalSearch.mjs
+@@ -0,0 +1,401 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha universal search (PLATFORM_PLAN.md MVP item 5; ADR 0004).
++//
++// One query surface over everything local: open tabs, history, bookmarks,
++// workspace notes, and downloads. Federated by design — each source is
++// queried through its existing store (Places stays authoritative for
++// history/bookmarks); the Phase 6 personal content index plugs in as one
++// more source behind the same interface. Every result carries its
++// workspace association where one exists so the UI can badge it now and
++// filter by it later.
++
++const lazy = {};
++ChromeUtils.defineESModuleGetters(lazy, {
++  Downloads: "resource://gre/modules/Downloads.sys.mjs",
++  PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
++});
++
++const kMaxPerSource = 12;
++const kMinQueryLength = 2;
++
++class nsKavachaUniversalSearch {
++  #panel = null;
++  #input = null;
++  #list = null;
++  #results = [];
++  #selectedIndex = -1;
++  #queryToken = 0;
++  #debounceTimer = null;
++  #groupLabels = null;
++
++  init() {
++    window.windowUtils.loadSheetUsingURIString(
++      "chrome://browser/content/zen-styles/kavacha-search.css",
++      window.windowUtils.AUTHOR_SHEET
++    );
++  }
++
++  get panel() {
++    if (!this.#panel) {
++      this.#panel = document.getElementById("kavacha-search-panel");
++      this.#input = document.getElementById("kavacha-search-input");
++      this.#list = document.getElementById("kavacha-search-results");
++      this.#input.addEventListener("input", () => {
++        clearTimeout(this.#debounceTimer);
++        this.#debounceTimer = setTimeout(() => {
++          this.#runQuery(this.#input.value.trim());
++        }, 120);
++      });
++      this.#input.addEventListener("keydown", e => this.#onKeyDown(e));
++      this.#list.addEventListener("click", e => {
++        const row = e.target.closest(".kavacha-search-row");
++        if (row) {
++          this.#activate(this.#results[Number(row.dataset.index)]);
++        }
++      });
++      this.#panel.addEventListener("popuphidden", () => {
++        this.#input.value = "";
++        this.#renderEmpty();
++      });
++    }
++    return this.#panel;
++  }
++
++  async open() {
++    const panel = this.panel;
++    if (!this.#groupLabels) {
++      const ids = ["tabs", "notes", "bookmarks", "history", "downloads"];
++      const values = await document.l10n.formatValues(
++        ids.map(id => ({ id: `kavacha-search-group-${id}` }))
++      );
++      this.#groupLabels = Object.fromEntries(ids.map((id, i) => [id, values[i]]));
++    }
++    const width = Math.min(680, window.innerWidth * 0.7);
++    panel.style.setProperty("--kavacha-search-width", `${width}px`);
++    panel.openPopupAtScreen(
++      window.mozInnerScreenX + (window.innerWidth - width) / 2,
++      window.mozInnerScreenY + Math.min(160, window.innerHeight * 0.18),
++      false
++    );
++    this.#renderEmpty();
++    this.#input.focus();
++  }
++
++  close() {
++    this.panel.hidePopup();
++  }
++
++  /* ------------------------------------------------------------- sources */
++
++  #searchTabs(q) {
++    const seen = new Set();
++    const out = [];
++    for (const tab of gBrowser.tabs) {
++      if (tab.hasAttribute("zen-empty-tab") || tab.closing) {
++        continue;
++      }
++      const label = tab.label || "";
++      const url = tab.linkedBrowser?.currentURI?.spec || "";
++      if (!this.#matches(q, label, url) || seen.has(tab)) {
++        continue;
++      }
++      seen.add(tab);
++      out.push({
++        group: "tabs",
++        title: label,
++        detail: this.#prettyUrl(url),
++        workspaceId: tab.getAttribute("zen-workspace-id") || null,
++        score: this.#score(q, label, url) + (tab.selected ? -1 : 0),
++        action: () => this.#selectTab(tab),
++      });
++      if (out.length >= kMaxPerSource) {
++        break;
++      }
++    }
++    return out;
++  }
++
++  #searchPlaces(q, type) {
++    const history = lazy.PlacesUtils.history;
++    const query = history.getNewQuery();
++    query.searchTerms = q;
++    const options = history.getNewQueryOptions();
++    options.queryType =
++      type === "bookmarks"
++        ? options.QUERY_TYPE_BOOKMARKS
++        : options.QUERY_TYPE_HISTORY;
++    options.sortingMode = options.SORT_BY_FRECENCY_DESCENDING;
++    options.maxResults = kMaxPerSource;
++    const root = history.executeQuery(query, options).root;
++    const out = [];
++    try {
++      root.containerOpen = true;
++      for (let i = 0; i < root.childCount; i++) {
++        const node = root.getChild(i);
++        out.push({
++          group: type,
++          title: node.title || node.uri,
++          detail: this.#prettyUrl(node.uri),
++          workspaceId: null,
++          score: this.#score(q, node.title || "", node.uri) + i * 0.1,
++          action: () => {
++            this.close();
++            window.openTrustedLinkIn(node.uri, "tab");
++          },
++        });
++      }
++    } finally {
++      root.containerOpen = false;
++    }
++    return out;
++  }
++
++  async #searchNotes(q) {
++    if (gZenWorkspaces.privateWindowOrDisabled) {
++      return [];
++    }
++    const notes = await gZenWorkspaces.kavachaGetAllNotes();
++    const out = [];
++    for (const [uuid, note] of Object.entries(notes)) {
++      const content = note?.content || "";
++      const idx = content.toLowerCase().indexOf(q.toLowerCase());
++      if (idx < 0) {
++        continue;
++      }
++      const workspace = gZenWorkspaces.getWorkspaceFromId(uuid);
++      const start = Math.max(0, idx - 30);
++      out.push({
++        group: "notes",
++        title: workspace?.name || "Workspace note",
++        detail:
++          (start > 0 ? "…" : "") +
++          content.slice(start, idx + q.length + 50).replace(/\s+/g, " ") +
++          "…",
++        workspaceId: uuid,
++        score: this.#score(q, content.slice(idx, idx + 40), ""),
++        action: () => {
++          this.close();
++          gZenWorkspaces.openWorkspaceNotes(uuid);
++        },
++      });
++      if (out.length >= kMaxPerSource) {
++        break;
++      }
++    }
++    return out;
++  }
++
++  async #searchDownloads(q) {
++    const list = await lazy.Downloads.getList(lazy.Downloads.ALL);
++    const all = await list.getAll();
++    const out = [];
++    for (const dl of all.reverse()) {
++      const path = dl.target?.path || "";
++      const name = PathUtils.filename(path || "") || "";
++      if (!name.toLowerCase().includes(q.toLowerCase())) {
++        continue;
++      }
++      out.push({
++        group: "downloads",
++        title: name,
++        detail: this.#prettyUrl(dl.source?.url || ""),
++        workspaceId: null,
++        score: this.#score(q, name, ""),
++        action: () => {
++          this.close();
++          try {
++            const file = Cc["@mozilla.org/file/local;1"].createInstance(
++              Ci.nsIFile
++            );
++            file.initWithPath(path);
++            file.reveal();
++          } catch (e) {
++            console.error("KavachaUniversalSearch: cannot reveal download", e);
++          }
++        },
++      });
++      if (out.length >= kMaxPerSource / 2) {
++        break;
++      }
++    }
++    return out;
++  }
++
++  /* ------------------------------------------------------------ querying */
++
++  async #runQuery(q) {
++    const token = ++this.#queryToken;
++    if (q.length < kMinQueryLength) {
++      this.#renderEmpty();
++      return;
++    }
++    const settled = await Promise.allSettled([
++      Promise.resolve().then(() => this.#searchTabs(q)),
++      this.#searchNotes(q),
++      Promise.resolve().then(() => this.#searchPlaces(q, "bookmarks")),
++      Promise.resolve().then(() => this.#searchPlaces(q, "history")),
++      this.#searchDownloads(q),
++    ]);
++    if (token !== this.#queryToken) {
++      return; // a newer query superseded this one
++    }
++    for (const s of settled) {
++      if (s.status === "rejected") {
++        console.error("KavachaUniversalSearch source failed:", s.reason);
++      }
++    }
++    const groups = settled
++      .filter(s => s.status === "fulfilled")
++      .map(s => s.value.sort((a, b) => a.score - b.score));
++    // Dedup URL-level results across sources: an open tab beats its own
++    // bookmark, a bookmark beats its history entry.
++    const seenDetails = new Set();
++    this.#results = [];
++    for (const group of groups) {
++      for (const r of group) {
++        const key = r.group === "notes" ? Symbol() : `${r.title}|${r.detail}`;
++        if (typeof key === "string" && seenDetails.has(key)) {
++          continue;
++        }
++        if (typeof key === "string") {
++          seenDetails.add(key);
++        }
++        this.#results.push(r);
++      }
++    }
++    this.#selectedIndex = this.#results.length ? 0 : -1;
++    this.#render();
++  }
++
++  #matches(q, ...haystacks) {
++    const needle = q.toLowerCase();
++    return haystacks.some(h => h && h.toLowerCase().includes(needle));
++  }
++
++  #score(q, title, url) {
++    const needle = q.toLowerCase();
++    const t = (title || "").toLowerCase();
++    if (t.startsWith(needle)) {
++      return 0;
++    }
++    if (t.includes(needle)) {
++      return 1;
++    }
++    if ((url || "").toLowerCase().includes(needle)) {
++      return 2;
++    }
++    return 3;
++  }
++
++  #prettyUrl(url) {
++    try {
++      const u = new URL(url);
++      return u.host + (u.pathname === "/" ? "" : u.pathname);
++    } catch (e) {
++      return url;
++    }
++  }
++
++  /* ----------------------------------------------------------- rendering */
++
++  #renderEmpty() {
++    this.#results = [];
++    this.#selectedIndex = -1;
++    this.#list.textContent = "";
++    this.#list.toggleAttribute("empty", true);
++  }
++
++  #render() {
++    this.#list.textContent = "";
++    this.#list.toggleAttribute("empty", !this.#results.length);
++    let lastGroup = null;
++    for (let i = 0; i < this.#results.length; i++) {
++      const r = this.#results[i];
++      if (r.group !== lastGroup) {
++        lastGroup = r.group;
++        const header = document.createElement("div");
++        header.className = "kavacha-search-group";
++        header.textContent = this.#groupLabels?.[r.group] || r.group;
++        this.#list.append(header);
++      }
++      const row = document.createElement("div");
++      row.className = "kavacha-search-row";
++      row.dataset.index = i;
++      row.toggleAttribute("selected", i === this.#selectedIndex);
++      const title = document.createElement("span");
++      title.className = "kavacha-search-title";
++      title.textContent = r.title;
++      row.append(title);
++      if (r.workspaceId) {
++        const badge = document.createElement("span");
++        badge.className = "kavacha-search-badge";
++        badge.textContent =
++          gZenWorkspaces.getWorkspaceFromId(r.workspaceId)?.name || "";
++        if (badge.textContent) {
++          row.append(badge);
++        }
++      }
++      const detail = document.createElement("span");
++      detail.className = "kavacha-search-detail";
++      detail.textContent = r.detail;
++      row.append(detail);
++      this.#list.append(row);
++    }
++  }
++
++  #onKeyDown(event) {
++    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
++      event.preventDefault();
++      if (!this.#results.length) {
++        return;
++      }
++      const delta = event.key === "ArrowDown" ? 1 : -1;
++      this.#selectedIndex =
++        (this.#selectedIndex + delta + this.#results.length) %
++        this.#results.length;
++      const rows = this.#list.querySelectorAll(".kavacha-search-row");
++      rows.forEach(row =>
++        row.toggleAttribute(
++          "selected",
++          Number(row.dataset.index) === this.#selectedIndex
++        )
++      );
++      rows[this.#selectedIndex]?.scrollIntoView({ block: "nearest" });
++    } else if (event.key === "Enter") {
++      event.preventDefault();
++      this.#activate(this.#results[this.#selectedIndex]);
++    }
++  }
++
++  async #activate(result) {
++    if (!result) {
++      return;
++    }
++    this.close();
++    await result.action();
++  }
++
++  async #selectTab(tab) {
++    const workspaceId = tab.getAttribute("zen-workspace-id");
++    if (workspaceId && workspaceId !== gZenWorkspaces.activeWorkspace) {
++      const workspace = gZenWorkspaces.getWorkspaceFromId(workspaceId);
++      if (workspace) {
++        await gZenWorkspaces.changeWorkspace(workspace);
++      }
++    }
++    gBrowser.selectedTab = tab;
++  }
++}
++
++window.gKavachaUniversalSearch = new nsKavachaUniversalSearch();
++
++window.addEventListener(
++  "MozAfterPaint",
++  () => {
++    window.gKavachaUniversalSearch.init();
++  },
++  { once: true }
++);
+diff --git a/src/zen/kavacha-search/jar.inc.mn b/src/zen/kavacha-search/jar.inc.mn
+new file mode 100644
+index 0000000..1062c5d
+--- /dev/null
++++ b/src/zen/kavacha-search/jar.inc.mn
+@@ -0,0 +1,6 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++        content/browser/zen-components/KavachaUniversalSearch.mjs              (../../zen/kavacha-search/KavachaUniversalSearch.mjs)
++        content/browser/zen-styles/kavacha-search.css                          (../../zen/kavacha-search/kavacha-search.css)
+diff --git a/src/zen/kavacha-search/kavacha-search.css b/src/zen/kavacha-search/kavacha-search.css
+new file mode 100644
+index 0000000..1f21dcd
+--- /dev/null
++++ b/src/zen/kavacha-search/kavacha-search.css
+@@ -0,0 +1,98 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* Kavacha universal search panel (ADR 0004). */
++
++#kavacha-search-panel {
++  --panel-padding: 0;
++  border-radius: 12px;
++}
++
++#kavacha-search-box {
++  width: var(--kavacha-search-width, 640px);
++  max-height: min(60vh, 520px);
++  padding: 10px;
++  gap: 8px;
++}
++
++#kavacha-search-input {
++  width: 100%;
++  box-sizing: border-box;
++  font: inherit;
++  font-size: 1.15em;
++  padding: 10px 12px;
++  border-radius: 8px;
++  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
++  background: color-mix(in srgb, currentColor 6%, transparent);
++  color: inherit;
++  outline: none;
++}
++
++#kavacha-search-results {
++  overflow-y: auto;
++  min-height: 0;
++  display: flex;
++  flex-direction: column;
++}
++
++#kavacha-search-results[empty] {
++  display: none;
++}
++
++#kavacha-search-hint {
++  font-size: 0.8em;
++  opacity: 0.6;
++  padding: 0 4px 2px;
++}
++
++.kavacha-search-group {
++  font-size: 0.75em;
++  font-weight: 600;
++  text-transform: uppercase;
++  letter-spacing: 0.05em;
++  opacity: 0.55;
++  padding: 8px 6px 3px;
++}
++
++.kavacha-search-row {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  padding: 6px 8px;
++  border-radius: 6px;
++  cursor: default;
++  min-width: 0;
++}
++
++.kavacha-search-row:hover,
++.kavacha-search-row[selected] {
++  background: color-mix(in srgb, currentColor 10%, transparent);
++}
++
++.kavacha-search-title {
++  flex: 0 1 auto;
++  white-space: nowrap;
++  overflow: hidden;
++  text-overflow: ellipsis;
++}
++
++.kavacha-search-badge {
++  flex: 0 0 auto;
++  font-size: 0.72em;
++  padding: 1px 7px;
++  border-radius: 8px;
++  background: color-mix(in srgb, currentColor 12%, transparent);
++  opacity: 0.8;
++}
++
++.kavacha-search-detail {
++  flex: 1 1 auto;
++  min-width: 0;
++  white-space: nowrap;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  opacity: 0.55;
++  font-size: 0.9em;
++  text-align: right;
++}
+diff --git a/src/zen/spaces/ZenSpaceManager.mjs b/src/zen/spaces/ZenSpaceManager.mjs
+index 591831e..1363c8c 100644
+--- a/src/zen/spaces/ZenSpaceManager.mjs
++++ b/src/zen/spaces/ZenSpaceManager.mjs
+@@ -3640,6 +3640,13 @@ class nsZenWorkspaces {
+     textarea.focus();
+   }
+ 
++  // Kavacha universal search reads notes through this accessor so a single
++  // JSONFile instance owns the file (two instances would clobber saves).
++  async kavachaGetAllNotes() {
++    const file = await this.#ensureNotesFile();
++    return file.data.notes;
++  }
++
+   #flushWorkspaceNotes() {
+     const panel = document.getElementById("kavacha-notes-panel");
+     const uuid = panel.getAttribute("data-workspace-id");
+diff --git a/src/zen/urlbar/ZenUBGlobalActions.sys.mjs b/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
+index 414f635..bf855fb 100644
+--- a/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
++++ b/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
+@@ -285,6 +285,11 @@ const globalActionsTemplate = [
+     icon: "chrome://browser/skin/zen-icons/selectable/page.svg",
+     isAvailable: window => !window.gZenWorkspaces?.privateWindowOrDisabled,
+   },
++  {
++    l10nId: "kavacha-action-universal-search",
++    command: window => window.gKavachaUniversalSearch.open(),
++    icon: "chrome://browser/skin/zen-icons/search-glass.svg",
++  },
+   {
+     l10nId: "kavacha-action-archive-space",
+     command: window => window.gZenWorkspaces.archiveWorkspace(),

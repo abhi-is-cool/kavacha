@@ -30,6 +30,11 @@
 #     preference= attr + id registration in zen-settings.js + ftl string in
 #     locales (update_en_US_packs.py syncs it into the engine).
 # Applies on top of 0010.
+# Focus fix (2026-07-14, user report): the browser focuses the URL bar on
+# fresh tabs, and Zen's zen.urlbar.behavior=float detaches a floating
+# search box over the dashboard the moment the view opens. The page now
+# pulls focus into itself after load (like the extension it is modeled
+# on); Cmd+L still reaches the URL bar with the user's chosen behavior.
 diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
 index b403bad..7eb3983 100644
 --- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
@@ -438,10 +443,10 @@ index 0000000..044193a
 +}
 diff --git a/src/zen/kavacha-newtab/newtab.js b/src/zen/kavacha-newtab/newtab.js
 new file mode 100644
-index 0000000..29c0691
+index 0000000..79f1e86
 --- /dev/null
 +++ b/src/zen/kavacha-newtab/newtab.js
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,197 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -625,6 +630,20 @@ index 0000000..29c0691
 +} else {
 +  showOnboarding();
 +}
++
++// Own the focus: the browser focuses the URL bar on fresh tabs, and with
++// Zen's floating URL bar behaviors that detaches a search box over the
++// dashboard. Like the extension this page is modeled on, the dashboard is
++// the surface — pull focus into the page (Cmd+L still reaches the URL bar).
++setTimeout(() => {
++  window.focus();
++  const input = document.getElementById("name-input");
++  if (!document.getElementById("onboarding").classList.contains("hidden")) {
++    input.focus();
++  } else {
++    document.body.focus();
++  }
++}, 60);
 diff --git a/src/zen/kavacha-newtab/quotes.json b/src/zen/kavacha-newtab/quotes.json
 new file mode 100644
 index 0000000..f88cedc

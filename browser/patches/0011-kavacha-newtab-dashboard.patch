@@ -50,6 +50,10 @@
 # Attribution (title/author/license) bottom-right links the source. This
 # single image GET is the dashboard's only network access;
 # kavacha.newtab.network-backgrounds=false restores gradients-only.
+# Favicon (2026-07-14, user request): dashboard tabs show the circle
+# Kavacha logo (64px render of branding/kavacha/assets/logo-circle.png,
+# bundled as favicon.png — the patch carries it as a git BINARY diff, so
+# the apply steps must keep using plain `git apply`, never `patch`).
 diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
 index b403bad..7eb3983 100644
 --- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
@@ -198,6 +202,145 @@ index 0000000..f3a8a35
 +    }
 +  },
 +};
+diff --git a/src/zen/kavacha-newtab/favicon.png b/src/zen/kavacha-newtab/favicon.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..67966dc10c8ba5ee848c525694d9cb5cd67edfdb
+GIT binary patch
+literal 7716
+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
+V#h=iW8ejZ1DKD)oRVHEN|37<eZ#Mt{
+
+literal 0
+HcmV?d00001
+
 diff --git a/src/zen/kavacha-newtab/featured.json b/src/zen/kavacha-newtab/featured.json
 new file mode 100644
 index 0000000..ad51f47
@@ -208,10 +351,10 @@ index 0000000..ad51f47
 \ No newline at end of file
 diff --git a/src/zen/kavacha-newtab/index.html b/src/zen/kavacha-newtab/index.html
 new file mode 100644
-index 0000000..9f69857
+index 0000000..f23baed
 --- /dev/null
 +++ b/src/zen/kavacha-newtab/index.html
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,48 @@
 +<!DOCTYPE html>
 +<!-- This Source Code Form is subject to the terms of the Mozilla Public
 +   - License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -221,6 +364,7 @@ index 0000000..9f69857
 +  <meta charset="utf-8">
 +  <title>New Tab</title>
 +  <meta name="viewport" content="width=device-width, initial-scale=1">
++  <link rel="icon" href="chrome://browser/content/kavacha-newtab/favicon.png">
 +  <link rel="stylesheet" href="chrome://browser/content/kavacha-newtab/newtab.css">
 +</head>
 +<body>
@@ -261,10 +405,10 @@ index 0000000..9f69857
 +</html>
 diff --git a/src/zen/kavacha-newtab/jar.inc.mn b/src/zen/kavacha-newtab/jar.inc.mn
 new file mode 100644
-index 0000000..0d3ada9
+index 0000000..f281f04
 --- /dev/null
 +++ b/src/zen/kavacha-newtab/jar.inc.mn
-@@ -0,0 +1,9 @@
+@@ -0,0 +1,10 @@
 +# This Source Code Form is subject to the terms of the Mozilla Public
 +# License, v. 2.0. If a copy of the MPL was not distributed with this
 +# file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -274,6 +418,7 @@ index 0000000..0d3ada9
 +        content/browser/kavacha-newtab/newtab.js                               (../../zen/kavacha-newtab/newtab.js)
 +        content/browser/kavacha-newtab/quotes.json                             (../../zen/kavacha-newtab/quotes.json)
 +        content/browser/kavacha-newtab/featured.json                           (../../zen/kavacha-newtab/featured.json)
++        content/browser/kavacha-newtab/favicon.png                             (../../zen/kavacha-newtab/favicon.png)
 diff --git a/src/zen/kavacha-newtab/newtab.css b/src/zen/kavacha-newtab/newtab.css
 new file mode 100644
 index 0000000..f5d369a

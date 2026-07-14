@@ -146,12 +146,16 @@ index f6ab628..591831e 100644
    }
  
    makeSureEmptyTabIsFirst() {
-@@ -2701,7 +2742,7 @@ class nsZenWorkspaces {
+@@ -2701,9 +2742,9 @@ class nsZenWorkspaces {
      if (gZenWorkspaces.privateWindowOrDisabled) {
        return;
      }
--    const workspaces = this.getWorkspaces();
-+    const workspaces = this.getWorkspaces().filter(w => !w.archived);
+-    const workspaces = this.getWorkspaces().filter(
+-      w => w.uuid !== this.activeWorkspace
+-    );
++    const workspaces = this.getWorkspaces().filter(
++      w => !w.archived && w.uuid !== this.activeWorkspace
++    );
      const ctxCommand = document.getElementById("cmd_zenCtxDeleteWorkspace");
      if (workspaces.length <= 1) {
        ctxCommand.setAttribute("disabled", "true");

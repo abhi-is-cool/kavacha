@@ -105,7 +105,12 @@ case "${1:-setup}" in
         if pgrep -f "zen-upstream/engine/obj-.*/dist/.*/MacOS/zen" > /dev/null 2>&1; then
             fail "Kavacha is already running — quit it fully (Cmd+Q) first, or new launches reuse the old process and ignore the rebuilt code."
         fi
-        (cd "$UPSTREAM_DIR" && npm start)
+        # -purgecaches: the profile's startup cache stores compiled chrome
+        # scripts keyed on the build ID, which incremental UI builds do NOT
+        # bump — without it, a relaunch after `bootstrap.sh ui` can run
+        # yesterday's cached JS against today's files (cost a debugging
+        # session on 2026-07-14).
+        (cd "$UPSTREAM_DIR" && npm start -- -purgecaches)
         ;;
     package) (cd "$UPSTREAM_DIR" && npm run package) ;;
     brand)  apply_branding ;;

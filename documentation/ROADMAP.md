@@ -80,15 +80,23 @@ split view, command palette, session store.
 
 - [ ] **Distinct default look — must not read as a Zen fork** (see
       [DIFFERENTIATION.md](DIFFERENTIATION.md) § Visual identity)
-  - [x] Kavacha gold accent by default (2026-07-12, `ui/defaults/kavacha-ux.js`
-        shipped via branding prefs)
+  - [x] ~~Kavacha gold accent by default~~ reverted 2026-07-13 (user decision:
+        no default accent — picking a color is the user's; `ui/defaults/kavacha-ux.js`)
   - [x] **Horizontal tabs by default** (patch `0010-horizontal-tabs.patch` +
         `zen.tabs.vertical=false` in branding prefs, 2026-07-13): functional —
         Marionette-verified tab rendering, click selection, URL bar navigation,
         content layout, and workspace switching. Zen's signature sidebar is
         gone from Kavacha's default look; vertical remains one pref away.
-        Polish remaining: active-tab emphasis, strip spacing, space-icon
-        placement (user visual pass pending)
+        Chrome-convention URL row landed 2026-07-13/14 after user visual passes:
+        nav buttons left of a full-width omnibox, traffic lights in the strip,
+        layout survives Zen's toolbar reshuffles (top-layer-popover urlbar and
+        UA-important flex quirks documented in the patch header). New tabs open
+        on the right (`zen.view.show-newtab-button-top=false`). Cmd+T keeps
+        Zen's centered floating search, now optional: Settings > Looks and Feel
+        toggle; when off, new tabs open the offline Kavacha dashboard —
+        gradient of the day, clock, greeting, daily quote (patch
+        `0011-kavacha-newtab-dashboard.patch`, 2026-07-14).
+        Polish remaining: active-tab emphasis, strip spacing
   - [ ] kavacha-midnight as default theme
   - [ ] Own welcome flow
 - [ ] Layout engine applies layout JSON live (default shipped: `customization/layout-engine/`)

@@ -1,0 +1,187 @@
+# Patch 0013 — Tab memory management (ROADMAP Phase 2; PLATFORM_PLAN.md).
+#
+# Discards background tabs untouched for longer than
+# `kavacha.tabs.unload-after-minutes` (default 30; 0 disables): the tab's
+# browser is torn down to free memory while the tab stays in the strip, and
+# Firefox restores it from flushed session state when next selected. This is
+# the timer-driven counterpart to Firefox's TabUnloader, which only fires
+# under OS memory pressure.
+#
+# KavachaTabMemory.sys.mjs is a process singleton (init from ZenStartup,
+# idempotent) running one nsITimer that sweeps every browser window each
+# minute. It reuses gBrowser.explicitUnloadTabs() — the same primitive Zen's
+# space archiving uses — which flushes tab state before discarding, so form
+# input and scroll position survive. Excludes the selected tab, pinned tabs,
+# Zen essentials, the empty-tab placeholder, and tabs playing audio / in
+# Picture-in-Picture / sharing screen or camera; skips private windows
+# entirely (their tabs aren't session-persisted, so a discard would be
+# unrecoverable). The default is also shipped in ui/defaults/kavacha-ux.js
+# so it's documented and adjustable; the module's code default matches.
+#
+# Marionette-verified: sweep discards loaded background tabs (pending +
+# discarded attributes), spares the selected tab, and skips already-pending
+# ones. Applies on top of 0012.
+diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
+index 71785b8..c904bd9 100644
+--- a/src/zen/common/modules/ZenStartup.mjs
++++ b/src/zen/common/modules/ZenStartup.mjs
+@@ -135,6 +135,11 @@ class ZenStartup {
+       ChromeUtils.importESModule(
+         "resource:///modules/KavachaNewTab.sys.mjs"
+       ).KavachaNewTab.init();
++      // Kavacha: discard long-inactive background tabs to free memory
++      // (process singleton; init is idempotent).
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaTabMemory.sys.mjs"
++      ).KavachaTabMemory.init();
+       this.isReady = true;
+       this.promiseInitializedResolve();
+       delete this.promiseInitializedResolve;
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+index 638ae76..8a566be 100644
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -4,6 +4,7 @@
+ 
+ EXTRA_JS_MODULES += [
+   "sys/KavachaNewTab.sys.mjs",
++  "sys/KavachaTabMemory.sys.mjs",
+   "sys/ZenActorsManager.sys.mjs",
+   "sys/ZenCustomizableUI.sys.mjs",
+   "sys/ZenUIMigration.sys.mjs",
+diff --git a/src/zen/common/sys/KavachaTabMemory.sys.mjs b/src/zen/common/sys/KavachaTabMemory.sys.mjs
+new file mode 100644
+index 0000000..fcb927f
+--- /dev/null
++++ b/src/zen/common/sys/KavachaTabMemory.sys.mjs
+@@ -0,0 +1,130 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha tab memory management (ROADMAP Phase 2; PLATFORM_PLAN.md — tabs as
++// temporary windows into projects). Background tabs untouched for longer than
++// `kavacha.tabs.unload-after-minutes` are DISCARDED: their browser is torn
++// down to free memory while the tab stays in the strip, and Firefox restores
++// it automatically (from flushed session state) when the user next selects it.
++//
++// This is the timer-driven counterpart to Firefox's TabUnloader, which only
++// fires under OS memory pressure. It reuses the same primitive Zen's space
++// archiving uses — gBrowser.explicitUnloadTabs() — which flushes tab state
++// before discarding, so form input and scroll position survive the round trip.
++//
++// Process singleton: every window's ZenStartup calls init(); only the first
++// wires the timer, which then sweeps all browser windows.
++
++const lazy = {};
++ChromeUtils.defineESModuleGetters(lazy, {
++  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
++});
++
++const kThresholdPref = "kavacha.tabs.unload-after-minutes";
++const kDefaultThresholdMinutes = 30;
++// A coarse sweep is fine — the threshold is measured in tens of minutes, so a
++// minute of slack on when a tab actually sleeps is imperceptible and keeps the
++// timer cheap.
++const kSweepIntervalMs = 60_000;
++
++export const KavachaTabMemory = {
++  _initialized: false,
++  _timer: null,
++
++  init() {
++    if (this._initialized) {
++      return;
++    }
++    this._initialized = true;
++    Services.prefs.addObserver(kThresholdPref, this);
++    this._reschedule();
++  },
++
++  observe() {
++    this._reschedule();
++  },
++
++  get _thresholdMinutes() {
++    return Services.prefs.getIntPref(kThresholdPref, kDefaultThresholdMinutes);
++  },
++
++  _reschedule() {
++    if (this._timer) {
++      this._timer.cancel();
++      this._timer = null;
++    }
++    if (this._thresholdMinutes <= 0) {
++      return; // 0 or negative disables auto-unloading entirely
++    }
++    this._timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
++    this._timer.initWithCallback(
++      () => this._sweep(),
++      kSweepIntervalMs,
++      Ci.nsITimer.TYPE_REPEATING_SLACK
++    );
++  },
++
++  async _sweep() {
++    const minutes = this._thresholdMinutes;
++    if (minutes <= 0) {
++      return;
++    }
++    const cutoff = Date.now() - minutes * 60_000;
++    for (const win of Services.wm.getEnumerator("navigator:browser")) {
++      if (win.closed || !win.gBrowser) {
++        continue;
++      }
++      // Private-window tabs aren't session-persisted, so discarding one would
++      // lose its state with no way to restore it — leave them resident.
++      if (lazy.PrivateBrowsingUtils.isWindowPrivate(win)) {
++        continue;
++      }
++      const candidates = [];
++      for (const tab of win.gBrowser.tabs) {
++        if (this._shouldUnload(tab, cutoff)) {
++          candidates.push(tab);
++        }
++      }
++      if (candidates.length) {
++        try {
++          // explicitUnloadTabs flushes each tab's state, switches away from
++          // any that are selected (none here — we exclude them), and discards.
++          await win.gBrowser.explicitUnloadTabs(candidates);
++        } catch (e) {
++          console.error("KavachaTabMemory: failed to unload tabs", e);
++        }
++      }
++    }
++  },
++
++  _shouldUnload(tab, cutoff) {
++    // Never touch the tab the user is looking at, or one they've pinned.
++    if (tab.selected || tab.pinned) {
++      return false;
++    }
++    // Already discarded — its browser is gone, nothing to reclaim.
++    if (tab.hasAttribute("pending")) {
++      return false;
++    }
++    // Zen essentials (pinned favourites) and the placeholder empty tab are
++    // structural, not disposable content.
++    if (
++      tab.hasAttribute("zen-essential") ||
++      tab.hasAttribute("zen-empty-tab")
++    ) {
++      return false;
++    }
++    // Anything actively doing something the user would notice being killed.
++    if (
++      tab.hasAttribute("soundplaying") ||
++      tab.hasAttribute("pictureinpicture") ||
++      tab.hasAttribute("sharing")
++    ) {
++      return false;
++    }
++    // lastAccessed is Infinity while a tab is the selected one in its window,
++    // and a real timestamp otherwise — so this also double-guards selection.
++    return tab.lastAccessed <= cutoff;
++  },
++};

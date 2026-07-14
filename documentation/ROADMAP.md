@@ -98,11 +98,16 @@ split view, command palette, session store.
       "New Space from Template" → Student / Developer / Private, each composing a
       dedicated container + themed gradient + search engine + settings overrides.
       Extension recommendations deferred until the marketplace can install them
-- [ ] Tab memory management (30 min inactive → save → unload → restore)
+- [x] Tab memory management (patch `0013-tab-memory-management.patch`, 2026-07-14):
+      background tabs untouched > `kavacha.tabs.unload-after-minutes` (default 30)
+      are discarded to free memory, kept in the strip, restored on click; the
+      timer-driven counterpart to Firefox's memory-pressure TabUnloader
 - [x] Workspace lifecycle: **archive/restore** (patch `0009-workspace-archiving.patch`,
       2026-07-12): archived spaces hidden from strip/navigation with tabs unloaded,
       all data kept + synced; restore via "Archived Spaces" submenu or after sync.
-      `description` metadata still to do
+      Optional space `description` added (patch `0014-workspace-description.patch`,
+      2026-07-14): free-text field in the Create a Space card, stored on the space
+      object; editing an existing space's description is a follow-up
 - [x] **Workspace notes** (patch `0008-workspace-notes.patch`, 2026-07-12):
       autosaving notes panel per space (actions menu + palette command); stored
       locally in profile `kavacha-notes.json` — never on the synced space object;

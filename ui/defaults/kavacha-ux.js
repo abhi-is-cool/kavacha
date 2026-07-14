@@ -24,3 +24,9 @@ pref("zen.tabs.vertical", false);
 // reads as "new tabs open on the left" in a top bar. Also moves the new-tab
 // button to follow the last tab. Zen exposes this in Settings > Looks & Feel.
 pref("zen.view.show-newtab-button-top", false);
+
+// Tab memory management (KavachaTabMemory.sys.mjs): discard background tabs
+// untouched for this many minutes, freeing their memory while keeping them in
+// the strip (Firefox restores them on click). 0 disables. The module reads
+// this pref live; the code default matches this value.
+pref("kavacha.tabs.unload-after-minutes", 30);

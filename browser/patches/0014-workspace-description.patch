@@ -1,0 +1,103 @@
+# Patch 0014 — Workspace description metadata (ROADMAP Phase 2).
+#
+# Adds an optional free-text description to a space, captured in the "Create a
+# Space" card (a textarea under the name field, "What's this space for?").
+# Stored directly on the workspace object like patch 0009's `archived` flag —
+# saveWorkspace() persists it through Zen's session store and it rides future
+# Kavacha E2E sync. Kept OFF the object entirely when blank so it never syncs
+# as an empty string.
+#
+# Create-only for now: the form always edits the freshly pre-created active
+# space (renaming existing spaces uses a separate inline path). Editing an
+# existing space's description is a follow-up (Workspace-Notes-style panel).
+#
+# Marionette-verified: field renders with the localized placeholder, persists
+# on the object and in the session cache, and blank input leaves no key.
+# Applies on top of 0013.
+diff --git a/locales/en-US/browser/browser/zen-workspaces.ftl b/locales/en-US/browser/browser/zen-workspaces.ftl
+index 77e792e..4f381be 100644
+--- a/locales/en-US/browser/browser/zen-workspaces.ftl
++++ b/locales/en-US/browser/browser/zen-workspaces.ftl
+@@ -137,6 +137,9 @@ zen-panel-ui-gradient-click-to-add = Click to add a color
+ zen-workspace-creation-name =
+     .placeholder = Space Name
+ 
++zen-workspace-creation-description =
++    .placeholder = What's this space for? (optional)
++
+ zen-move-tab-to-workspace-button =
+     .label = Move To
+     .tooltiptext = Move all tabs in this window to a Space
+diff --git a/src/zen/spaces/ZenSpaceCreation.mjs b/src/zen/spaces/ZenSpaceCreation.mjs
+index 52045f6..8ed56c8 100644
+--- a/src/zen/spaces/ZenSpaceCreation.mjs
++++ b/src/zen/spaces/ZenSpaceCreation.mjs
+@@ -40,6 +40,10 @@ class nsZenWorkspaceCreation extends MozXULElement {
+                   type="text"
+                   data-l10n-id="zen-workspace-creation-name" />
+               </hbox>
++              <html:textarea
++                class="zen-workspace-creation-description"
++                rows="2"
++                data-l10n-id="zen-workspace-creation-description" />
+               <hbox class="zen-workspace-creation-profile-wrapper">
+                 <label class="zen-workspace-creation-profile-label" data-l10n-id="zen-workspace-creation-profile" />
+                 <button class="zen-workspace-creation-profile" />
+@@ -76,6 +80,7 @@ class nsZenWorkspaceCreation extends MozXULElement {
+       this.querySelector(".zen-workspace-creation-title"),
+       this.querySelector(".zen-workspace-creation-label").parentElement,
+       this.querySelector(".zen-workspace-creation-name-wrapper"),
++      this.querySelector(".zen-workspace-creation-description"),
+       this.querySelector(".zen-workspace-creation-profile-wrapper"),
+       this.querySelector(".zen-workspace-creation-edit-theme-button"),
+       this.createButton.parentNode,
+@@ -94,6 +99,9 @@ class nsZenWorkspaceCreation extends MozXULElement {
+     this.initializeAttributeInheritance();
+ 
+     this.inputName = this.querySelector(".zen-workspace-creation-name");
++    this.inputDescription = this.querySelector(
++      ".zen-workspace-creation-description"
++    );
+     this.inputIcon = this.querySelector(".zen-workspace-creation-icon-label");
+     this.inputProfile = this.querySelector(".zen-workspace-creation-profile");
+     this.createButton = this.querySelector(
+@@ -250,6 +258,14 @@ class nsZenWorkspaceCreation extends MozXULElement {
+     workspace.name = this.inputName.value.trim();
+     workspace.icon = this.inputIcon.image || this.inputIcon.label || undefined;
+     workspace.containerTabId = this.currentProfile;
++    // Optional free-text description (Kavacha: workspaces as projects). Kept
++    // off the object entirely when blank so it never rides sync as "".
++    const description = this.inputDescription.value.trim();
++    if (description) {
++      workspace.description = description;
++    } else {
++      delete workspace.description;
++    }
+     await gZenWorkspaces.saveWorkspace(workspace);
+ 
+     await this.#cleanup();
+diff --git a/src/zen/spaces/create-workspace-form.css b/src/zen/spaces/create-workspace-form.css
+index 566e81c..3a98fe0 100644
+--- a/src/zen/spaces/create-workspace-form.css
++++ b/src/zen/spaces/create-workspace-form.css
+@@ -116,6 +116,20 @@ zen-workspace-creation {
+         }
+       }
+ 
++      & .zen-workspace-creation-description {
++        padding: 9px 8px;
++        border-radius: 8px !important;
++        margin: 0;
++        background-color: var(--input-bgcolor);
++        border: none;
++        outline: none;
++        resize: none;
++        width: 100%;
++        box-sizing: border-box;
++        font: inherit;
++        color: inherit;
++      }
++
+       & .zen-workspace-creation-profile-wrapper {
+         padding: 4px;
+         border-radius: 8px !important;

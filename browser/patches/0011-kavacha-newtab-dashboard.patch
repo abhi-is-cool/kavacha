@@ -1,0 +1,695 @@
+# Patch 0011 — Optional floating search + Kavacha dashboard new tab.
+#
+# Makes Zen's Cmd+T floating search a Settings toggle (Looks and Feel >
+# "Open new tabs with the floating search bar", bound to
+# zen.urlbar.replace-newtab, Zen's own pref — default stays true/Zen-like).
+# When turned OFF, new tabs open the Kavacha dashboard instead: a calm
+# Momentum-style page with a gradient of the day, a clock, a personal
+# greeting (first-run name prompt, click the name to change it), and a
+# daily quote from a bundled list.
+#
+# Privacy: the page is fully offline by design. No photos are fetched and
+# none are bundled (the Momentum catalog the user liked is not
+# redistributable) — backgrounds are generated four-stop gradients, twelve
+# palettes rotated deterministically by local date. No weather widget: the
+# original phones IP-geolocation + forecast APIs, which violates Kavacha
+# defaults (and its icons are emoji, which Kavacha UI does not use).
+#
+# Mechanics, for future maintenance:
+#   - AboutNewTab.newTabURL (resource:///modules/AboutNewTab.sys.mjs) is the
+#     supported hook for replacing about:newtab; resetNewTabURL() restores.
+#     KavachaNewTab.sys.mjs (process singleton, initialized from ZenStartup,
+#     idempotent) sets it from the pref and tracks pref flips live.
+#   - The page ships via jar (chrome://browser/content/kavacha-newtab/) and
+#     may load with the system principal, where localStorage is unavailable
+#     — newtab.js probes it and falls back to string prefs
+#     (kavacha.newtab.*). The name never leaves the profile either way.
+#   - New chrome package dir registers through zen-assets.jar.inc.mn, the
+#     module through src/zen/common/moz.build EXTRA_JS_MODULES.
+#   - Settings checkbox follows the zenLooksAndFeel.inc.xhtml pattern:
+#     preference= attr + id registration in zen-settings.js + ftl string in
+#     locales (update_en_US_packs.py syncs it into the engine).
+# Applies on top of 0010.
+diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+index b403bad..7eb3983 100644
+--- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
++++ b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+@@ -117,6 +117,9 @@ zen-vertical-tabs-newtab-on-tab-list =
+     .label = Show New Tab Button on Tab List
+ zen-vertical-tabs-newtab-top-button-up =
+     .label = Move the new tab button to the top
++kavacha-newtab-floating-search =
++    .label = Open new tabs with the floating search bar
++kavacha-newtab-floating-search-description = When turned off, new tabs open the Kavacha dashboard: a clock, a greeting, and a daily quote. Works entirely offline.
+ 
+ zen-vertical-tabs-expand-tabs-by-default = Expand Tabs by Default
+ zen-vertical-tabs-dont-expand-tabs-by-default = Don't Expand Tabs by Default
+diff --git a/src/browser/base/content/zen-assets.jar.inc.mn b/src/browser/base/content/zen-assets.jar.inc.mn
+index 07d61a8..41958e5 100644
+--- a/src/browser/base/content/zen-assets.jar.inc.mn
++++ b/src/browser/base/content/zen-assets.jar.inc.mn
+@@ -21,3 +21,4 @@
+ #include ../../../zen/boosts/jar.inc.mn
+ #include ../../../zen/live-folders/jar.inc.mn
+ #include ../../../zen/space-routing/jar.inc.mn
++#include ../../../zen/kavacha-newtab/jar.inc.mn
+diff --git a/src/browser/components/preferences/zen-settings.js b/src/browser/components/preferences/zen-settings.js
+index c048ecf..cc88702 100644
+--- a/src/browser/components/preferences/zen-settings.js
++++ b/src/browser/components/preferences/zen-settings.js
+@@ -1200,6 +1200,11 @@ Preferences.addAll([
+     type: "bool",
+     default: true,
+   },
++  {
++    id: "zen.urlbar.replace-newtab",
++    type: "bool",
++    default: true,
++  },
+   {
+     id: "media.videocontrols.picture-in-picture.enabled",
+     type: "bool",
+diff --git a/src/browser/components/preferences/zenLooksAndFeel.inc.xhtml b/src/browser/components/preferences/zenLooksAndFeel.inc.xhtml
+index 08b2c2e..441f651 100644
+--- a/src/browser/components/preferences/zenLooksAndFeel.inc.xhtml
++++ b/src/browser/components/preferences/zenLooksAndFeel.inc.xhtml
+@@ -40,6 +40,11 @@
+                 data-l10n-id="zen-vertical-tabs-newtab-top-button-up"
+                 preference="zen.view.show-newtab-button-top"/>
+     </vbox>
++    <checkbox id="kavachaNewtabFloatingSearch"
++          data-l10n-id="kavacha-newtab-floating-search"
++          preference="zen.urlbar.replace-newtab"/>
++    <description class="description-deemphasized indent"
++          data-l10n-id="kavacha-newtab-floating-search-description" />
+     <html:div data-l10n-id="preferences-web-appearance-footer">
+         <html:a id="web-appearance-manage-themes-link" class="text-link" data-l10n-name="themes-link" href="about:addons" target="_blank" />
+     </html:div>
+diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
+index 9876e0f..71785b8 100644
+--- a/src/zen/common/modules/ZenStartup.mjs
++++ b/src/zen/common/modules/ZenStartup.mjs
+@@ -130,6 +130,11 @@ class ZenStartup {
+           }
+         }
+       }
++      // Kavacha: when the floating search is off, new tabs open the
++      // bundled dashboard page (process singleton; init is idempotent).
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaNewTab.sys.mjs"
++      ).KavachaNewTab.init();
+       this.isReady = true;
+       this.promiseInitializedResolve();
+       delete this.promiseInitializedResolve;
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+index d904916..638ae76 100644
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -3,6 +3,7 @@
+ # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ 
+ EXTRA_JS_MODULES += [
++  "sys/KavachaNewTab.sys.mjs",
+   "sys/ZenActorsManager.sys.mjs",
+   "sys/ZenCustomizableUI.sys.mjs",
+   "sys/ZenUIMigration.sys.mjs",
+diff --git a/src/zen/common/sys/KavachaNewTab.sys.mjs b/src/zen/common/sys/KavachaNewTab.sys.mjs
+new file mode 100644
+index 0000000..bee17af
+--- /dev/null
++++ b/src/zen/common/sys/KavachaNewTab.sys.mjs
+@@ -0,0 +1,41 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha: route new tabs to the bundled dashboard page when Zen's floating
++// search bar is turned off (Settings > Looks and Feel). Process singleton —
++// windows call init() freely; only the first call wires anything.
++
++const lazy = {};
++ChromeUtils.defineESModuleGetters(lazy, {
++  AboutNewTab: "resource:///modules/AboutNewTab.sys.mjs",
++});
++
++const kFloatingSearchPref = "zen.urlbar.replace-newtab";
++const kDashboardURL = "chrome://browser/content/kavacha-newtab/index.html";
++
++export const KavachaNewTab = {
++  _initialized: false,
++
++  init() {
++    if (this._initialized) {
++      return;
++    }
++    this._initialized = true;
++    Services.prefs.addObserver(kFloatingSearchPref, this);
++    this._apply();
++  },
++
++  observe() {
++    this._apply();
++  },
++
++  _apply() {
++    if (Services.prefs.getBoolPref(kFloatingSearchPref, true)) {
++      // Floating search owns Cmd+T; leave about:newtab alone.
++      lazy.AboutNewTab.resetNewTabURL();
++    } else {
++      lazy.AboutNewTab.newTabURL = kDashboardURL;
++    }
++  },
++};
+diff --git a/src/zen/kavacha-newtab/index.html b/src/zen/kavacha-newtab/index.html
+new file mode 100644
+index 0000000..0af24f8
+--- /dev/null
++++ b/src/zen/kavacha-newtab/index.html
+@@ -0,0 +1,41 @@
++<!DOCTYPE html>
++<!-- This Source Code Form is subject to the terms of the Mozilla Public
++   - License, v. 2.0. If a copy of the MPL was not distributed with this
++   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
++<html lang="en">
++<head>
++  <meta charset="utf-8">
++  <title>New Tab</title>
++  <meta name="viewport" content="width=device-width, initial-scale=1">
++  <link rel="stylesheet" href="chrome://browser/content/kavacha-newtab/newtab.css">
++</head>
++<body>
++  <!-- Gradient-of-the-day background layer -->
++  <div id="bg" class="bg"></div>
++
++  <!-- First run: ask for a name -->
++  <div id="onboarding" class="onboarding hidden">
++    <form id="name-form" class="name-form">
++      <label for="name-input" class="name-label">What should we call you?</label>
++      <input id="name-input" class="name-input" type="text" autocomplete="off"
++             spellcheck="false" maxlength="40" placeholder="Type your name and press Enter">
++      <button id="name-skip" class="name-skip" type="button">Skip</button>
++    </form>
++  </div>
++
++  <!-- Dashboard -->
++  <main id="dash" class="dash hidden">
++    <div class="center">
++      <div id="clock" class="clock">--:--</div>
++      <h1 id="greeting" class="greeting"></h1>
++    </div>
++
++    <figure class="quote">
++      <blockquote id="quote-text"></blockquote>
++      <figcaption id="quote-author"></figcaption>
++    </figure>
++  </main>
++
++  <script src="chrome://browser/content/kavacha-newtab/newtab.js"></script>
++</body>
++</html>
+diff --git a/src/zen/kavacha-newtab/jar.inc.mn b/src/zen/kavacha-newtab/jar.inc.mn
+new file mode 100644
+index 0000000..bb983e5
+--- /dev/null
++++ b/src/zen/kavacha-newtab/jar.inc.mn
+@@ -0,0 +1,8 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++        content/browser/kavacha-newtab/index.html                              (../../zen/kavacha-newtab/index.html)
++        content/browser/kavacha-newtab/newtab.css                              (../../zen/kavacha-newtab/newtab.css)
++        content/browser/kavacha-newtab/newtab.js                               (../../zen/kavacha-newtab/newtab.js)
++        content/browser/kavacha-newtab/quotes.json                             (../../zen/kavacha-newtab/quotes.json)
+diff --git a/src/zen/kavacha-newtab/newtab.css b/src/zen/kavacha-newtab/newtab.css
+new file mode 100644
+index 0000000..044193a
+--- /dev/null
++++ b/src/zen/kavacha-newtab/newtab.css
+@@ -0,0 +1,209 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* Kavacha dashboard new tab — calm Momentum-style layout, fully offline:
++   gradient of the day, clock, greeting, bundled quote. No network, ever. */
++
++*,
++*::before,
++*::after {
++  box-sizing: border-box;
++  margin: 0;
++}
++
++html,
++body {
++  height: 100%;
++}
++
++body {
++  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
++    Helvetica, Arial, sans-serif;
++  color: #fff;
++  background: #1c1d22;
++  overflow: hidden;
++  -webkit-font-smoothing: antialiased;
++}
++
++.hidden {
++  display: none !important;
++}
++
++/* ---- gradient background ---- */
++.bg {
++  position: fixed;
++  inset: 0;
++  z-index: -1;
++  opacity: 0;
++  transition: opacity 0.8s ease;
++  /* set from JS: --g1..--g3 palette stops */
++  background:
++    radial-gradient(
++      ellipse 120% 80% at 70% 10%,
++      var(--g2, #2b3a55) 0%,
++      transparent 60%
++    ),
++    radial-gradient(
++      ellipse 100% 90% at 15% 95%,
++      var(--g3, #16324f) 0%,
++      transparent 55%
++    ),
++    linear-gradient(160deg, var(--g1, #1c2733) 0%, var(--g4, #0d1420) 100%);
++}
++
++.bg.loaded {
++  opacity: 1;
++}
++
++/* ---- onboarding ---- */
++.onboarding {
++  position: fixed;
++  inset: 0;
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  animation: fade 0.6s ease;
++}
++
++.name-form {
++  text-align: center;
++  width: min(90vw, 640px);
++}
++
++.name-label {
++  display: block;
++  font-size: clamp(1.6rem, 4vw, 3rem);
++  font-weight: 300;
++  margin-bottom: 1.2rem;
++  text-shadow: 0 1px 14px rgba(0, 0, 0, 0.4);
++}
++
++.name-input {
++  width: 100%;
++  background: transparent;
++  border: none;
++  border-bottom: 2px solid rgba(255, 255, 255, 0.55);
++  color: #fff;
++  text-align: center;
++  font-size: clamp(1.4rem, 3.5vw, 2.4rem);
++  font-weight: 300;
++  padding: 0.4rem 0.2rem;
++  outline: none;
++}
++
++.name-input::placeholder {
++  color: rgba(255, 255, 255, 0.5);
++  font-size: 1rem;
++}
++
++.name-skip {
++  margin-top: 1.6rem;
++  background: transparent;
++  border: none;
++  color: rgba(255, 255, 255, 0.6);
++  font-size: 0.95rem;
++  cursor: pointer;
++  padding: 0.4rem 1rem;
++}
++
++.name-skip:hover {
++  color: #fff;
++}
++
++/* ---- dashboard ---- */
++.dash {
++  position: fixed;
++  inset: 0;
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  justify-content: center;
++  padding: 4rem 2rem;
++  animation: fade 0.8s ease;
++}
++
++.center {
++  text-align: center;
++}
++
++.clock {
++  font-size: clamp(4rem, 13vw, 9rem);
++  font-weight: 200;
++  letter-spacing: 0.01em;
++  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.35);
++  font-variant-numeric: tabular-nums;
++}
++
++.greeting {
++  font-size: clamp(1.4rem, 4vw, 2.4rem);
++  font-weight: 300;
++  margin-top: 0.4rem;
++  text-shadow: 0 1px 16px rgba(0, 0, 0, 0.4);
++  cursor: text;
++}
++
++.greeting .name {
++  border-bottom: 1px dashed transparent;
++  transition: border-color 0.2s;
++}
++
++.greeting:hover .name {
++  border-bottom-color: rgba(255, 255, 255, 0.5);
++}
++
++/* ---- quote ---- */
++.quote {
++  position: fixed;
++  left: 50%;
++  bottom: 3.2rem;
++  transform: translateX(-50%);
++  width: min(90vw, 720px);
++  text-align: center;
++  text-shadow: 0 1px 14px rgba(0, 0, 0, 0.45);
++  animation: fade 1.2s ease;
++}
++
++.quote blockquote {
++  font-size: clamp(1rem, 2.2vw, 1.35rem);
++  font-weight: 300;
++  line-height: 1.5;
++  font-style: italic;
++}
++
++.quote figcaption {
++  margin-top: 0.6rem;
++  font-size: 0.95rem;
++  opacity: 0.85;
++  font-style: normal;
++}
++
++.quote figcaption::before {
++  content: "\2014\00a0"; /* em dash */
++}
++
++@keyframes fade {
++  from {
++    opacity: 0;
++  }
++
++  to {
++    opacity: 1;
++  }
++}
++
++@media (prefers-reduced-motion: reduce) {
++  .bg,
++  .onboarding,
++  .dash,
++  .quote {
++    transition: none;
++    animation: none;
++  }
++}
++
++@media (max-width: 640px) {
++  .quote {
++    display: none;
++  }
++}
+diff --git a/src/zen/kavacha-newtab/newtab.js b/src/zen/kavacha-newtab/newtab.js
+new file mode 100644
+index 0000000..29c0691
+--- /dev/null
++++ b/src/zen/kavacha-newtab/newtab.js
+@@ -0,0 +1,183 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++// Kavacha dashboard new tab. Everything is local: gradient of the day,
++// clock, greeting, and a quote from the bundled list. No network requests.
++
++"use strict";
++
++const $ = id => document.getElementById(id);
++
++// Local (YYYY-M-D) key so the day rolls over at local midnight, not UTC.
++const now = new Date();
++const dateKey = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
++
++// Small deterministic string hash for stable picks of the day.
++function hash(str) {
++  let h = 0;
++  for (let i = 0; i < str.length; i++) {
++    h = (h << 5) - h + str.charCodeAt(i);
++    h |= 0;
++  }
++  return Math.abs(h);
++}
++
++/* ---------------------------------------------------------------- storage
++   The page is served from chrome:// and may run with the system principal,
++   where DOM storage is unavailable — fall back to the pref service, which
++   privileged pages can reach. Either way the name never leaves the profile. */
++const store = (() => {
++  try {
++    const k = "__kavacha_probe__";
++    localStorage.setItem(k, "1");
++    localStorage.removeItem(k);
++    return {
++      get: k => localStorage.getItem(k),
++      set: (k, v) => localStorage.setItem(k, v),
++    };
++  } catch (e) {
++    // fall through
++  }
++  try {
++    const prefs = Services.prefs;
++    const P = "kavacha.newtab.";
++    return {
++      get: k => (prefs.prefHasUserValue(P + k) ? prefs.getStringPref(P + k) : null),
++      set: (k, v) => prefs.setStringPref(P + k, String(v)),
++    };
++  } catch (e) {
++    const mem = {};
++    return { get: k => mem[k] ?? null, set: (k, v) => (mem[k] = v) };
++  }
++})();
++
++/* ------------------------------------------------------------------- name */
++function firstName() {
++  const n = store.get("name") || "";
++  return n.trim().split(/\s+/)[0] || "";
++}
++
++function showOnboarding() {
++  $("dash").classList.add("hidden");
++  $("onboarding").classList.remove("hidden");
++  const input = $("name-input");
++  input.value = store.get("name") || "";
++  input.focus();
++  input.select();
++}
++
++function startDashboard() {
++  $("onboarding").classList.add("hidden");
++  $("dash").classList.remove("hidden");
++  tick();
++  renderGreeting();
++}
++
++/* --------------------------------------------------------------- greeting */
++function greetingWord(h) {
++  if (h < 12) {
++    return "Good Morning";
++  }
++  if (h < 18) {
++    return "Good Afternoon";
++  }
++  return "Good Evening";
++}
++
++function renderGreeting() {
++  const word = greetingWord(new Date().getHours());
++  const name = firstName();
++  const el = $("greeting");
++  el.textContent = "";
++  if (name) {
++    el.append(`${word}, `);
++    const span = document.createElement("span");
++    span.className = "name";
++    span.textContent = name;
++    el.append(span, ".");
++  } else {
++    el.append(`${word}.`);
++  }
++}
++
++/* ------------------------------------------------------------------ clock */
++function tick() {
++  const d = new Date();
++  let h = d.getHours();
++  const m = String(d.getMinutes()).padStart(2, "0");
++  h = h % 12 || 12;
++  $("clock").textContent = `${h}:${m}`;
++}
++setInterval(() => {
++  tick();
++  renderGreeting();
++}, 15000);
++
++/* ------------------------------------------------------------- background
++   Gradient of the day: four-stop palettes tuned for white text. Bundled
++   photos were considered and dropped — the Momentum catalog is not
++   redistributable — so the look is generated, weighs nothing, and never
++   needs the network. */
++const PALETTES = [
++  { g1: "#1c2733", g2: "#2b3a55", g3: "#16324f", g4: "#0d1420" }, // harbor night
++  { g1: "#2d1b3d", g2: "#5c2a5e", g3: "#31214f", g4: "#140d20" }, // dusk violet
++  { g1: "#0f2b26", g2: "#1e4d3a", g3: "#123a33", g4: "#081512" }, // deep forest
++  { g1: "#33261b", g2: "#7a4a2b", g3: "#4f3121", g4: "#170f0a" }, // ember
++  { g1: "#12303e", g2: "#20647a", g3: "#154254", g4: "#081820" }, // fjord
++  { g1: "#251f38", g2: "#3d3a6e", g3: "#2a2452", g4: "#0f0c1c" }, // late aurora
++  { g1: "#30222c", g2: "#6e3a52", g3: "#472a3e", g4: "#150d12" }, // plum dawn
++  { g1: "#1f2a20", g2: "#3f5c35", g3: "#2b4029", g4: "#0d130d" }, // meadow dark
++  { g1: "#222b36", g2: "#46607a", g3: "#2e4257", g4: "#0e141b" }, // north sea
++  { g1: "#2e2617", g2: "#6b5a25", g3: "#463c1c", g4: "#14100a" }, // golden hour
++  { g1: "#101f33", g2: "#274a7a", g3: "#1a3355", g4: "#070e18" }, // midnight blue
++  { g1: "#292020", g2: "#5e4340", g3: "#3d2c2a", g4: "#120d0d" }, // clay
++];
++
++function setupBackground() {
++  const p = PALETTES[hash(dateKey + "bg") % PALETTES.length];
++  const bg = $("bg");
++  for (const [k, v] of Object.entries(p)) {
++    bg.style.setProperty(`--${k}`, v);
++  }
++  bg.classList.add("loaded");
++}
++
++/* ------------------------------------------------------------------ quote */
++async function setupQuote() {
++  try {
++    const res = await fetch("chrome://browser/content/kavacha-newtab/quotes.json");
++    const list = await res.json();
++    const q = list[hash(dateKey + "q") % list.length];
++    $("quote-text").textContent = `"${q.text}"`;
++    $("quote-author").textContent = q.author || "Unknown";
++  } catch (e) {
++    // No quote, no problem.
++  }
++}
++
++/* ------------------------------------------------------------------- boot */
++$("name-form").addEventListener("submit", e => {
++  e.preventDefault();
++  const val = $("name-input").value.trim();
++  if (!val) {
++    return;
++  }
++  store.set("name", val);
++  startDashboard();
++});
++
++$("name-skip").addEventListener("click", () => {
++  store.set("name", " ");
++  startDashboard();
++});
++
++$("greeting").addEventListener("click", showOnboarding);
++
++setupBackground();
++setupQuote();
++if (store.get("name") !== null) {
++  startDashboard();
++} else {
++  showOnboarding();
++}
+diff --git a/src/zen/kavacha-newtab/quotes.json b/src/zen/kavacha-newtab/quotes.json
+new file mode 100644
+index 0000000..f88cedc
+--- /dev/null
++++ b/src/zen/kavacha-newtab/quotes.json
+@@ -0,0 +1,62 @@
++[
++  { "text": "The only way to do great work is to love what you do.", "author": "Steve Jobs" },
++  { "text": "Whether you think you can or you think you can't, you're right.", "author": "Henry Ford" },
++  { "text": "It always seems impossible until it's done.", "author": "Nelson Mandela" },
++  { "text": "Do what you can, with what you have, where you are.", "author": "Theodore Roosevelt" },
++  { "text": "The best way to predict the future is to create it.", "author": "Peter Drucker" },
++  { "text": "Well done is better than well said.", "author": "Benjamin Franklin" },
++  { "text": "What we think, we become.", "author": "Buddha" },
++  { "text": "The journey of a thousand miles begins with a single step.", "author": "Lao Tzu" },
++  { "text": "Quality is not an act, it is a habit.", "author": "Aristotle" },
++  { "text": "Simplicity is the ultimate sophistication.", "author": "Leonardo da Vinci" },
++  { "text": "Everything you can imagine is real.", "author": "Pablo Picasso" },
++  { "text": "It does not matter how slowly you go as long as you do not stop.", "author": "Confucius" },
++  { "text": "Act as if what you do makes a difference. It does.", "author": "William James" },
++  { "text": "The secret of getting ahead is getting started.", "author": "Mark Twain" },
++  { "text": "Happiness depends upon ourselves.", "author": "Aristotle" },
++  { "text": "Life is what happens when you're busy making other plans.", "author": "John Lennon" },
++  { "text": "You miss 100% of the shots you don't take.", "author": "Wayne Gretzky" },
++  { "text": "Turn your wounds into wisdom.", "author": "Oprah Winfrey" },
++  { "text": "The mind is everything. What you think you become.", "author": "Buddha" },
++  { "text": "An unexamined life is not worth living.", "author": "Socrates" },
++  { "text": "Change your thoughts and you change your world.", "author": "Norman Vincent Peale" },
++  { "text": "The future belongs to those who believe in the beauty of their dreams.", "author": "Eleanor Roosevelt" },
++  { "text": "Little by little, one travels far.", "author": "J.R.R. Tolkien" },
++  { "text": "If you want to lift yourself up, lift up someone else.", "author": "Booker T. Washington" },
++  { "text": "Nothing is impossible; the word itself says 'I'm possible.'", "author": "Audrey Hepburn" },
++  { "text": "Dream big and dare to fail.", "author": "Norman Vaughan" },
++  { "text": "Start where you are. Use what you have. Do what you can.", "author": "Arthur Ashe" },
++  { "text": "The best revenge is massive success.", "author": "Frank Sinatra" },
++  { "text": "Believe you can and you're halfway there.", "author": "Theodore Roosevelt" },
++  { "text": "In the middle of difficulty lies opportunity.", "author": "Albert Einstein" },
++  { "text": "What you get by achieving your goals is not as important as what you become.", "author": "Zig Ziglar" },
++  { "text": "Everything has beauty, but not everyone sees it.", "author": "Confucius" },
++  { "text": "Courage is grace under pressure.", "author": "Ernest Hemingway" },
++  { "text": "The only limit to our realization of tomorrow is our doubts of today.", "author": "Franklin D. Roosevelt" },
++  { "text": "Wherever you go, go with all your heart.", "author": "Confucius" },
++  { "text": "A ship in harbor is safe, but that is not what ships are built for.", "author": "John A. Shedd" },
++  { "text": "Keep your face always toward the sunshine, and shadows will fall behind you.", "author": "Walt Whitman" },
++  { "text": "Do one thing every day that scares you.", "author": "Eleanor Roosevelt" },
++  { "text": "Fall seven times, stand up eight.", "author": "Japanese Proverb" },
++  { "text": "The best time to plant a tree was 20 years ago. The second best time is now.", "author": "Chinese Proverb" },
++  { "text": "You are never too old to set another goal or to dream a new dream.", "author": "C.S. Lewis" },
++  { "text": "Perpetual optimism is a force multiplier.", "author": "Colin Powell" },
++  { "text": "The way to get started is to quit talking and begin doing.", "author": "Walt Disney" },
++  { "text": "Success is not final, failure is not fatal: it is the courage to continue that counts.", "author": "Winston Churchill" },
++  { "text": "Hardships often prepare ordinary people for an extraordinary destiny.", "author": "C.S. Lewis" },
++  { "text": "Your time is limited, so don't waste it living someone else's life.", "author": "Steve Jobs" },
++  { "text": "The obstacle is the way.", "author": "Marcus Aurelius" },
++  { "text": "Waste no more time arguing about what a good person should be. Be one.", "author": "Marcus Aurelius" },
++  { "text": "He who has a why to live can bear almost any how.", "author": "Friedrich Nietzsche" },
++  { "text": "What lies behind us and what lies before us are tiny matters compared to what lies within us.", "author": "Ralph Waldo Emerson" },
++  { "text": "Not all those who wander are lost.", "author": "J.R.R. Tolkien" },
++  { "text": "The only thing we have to fear is fear itself.", "author": "Franklin D. Roosevelt" },
++  { "text": "Genius is one percent inspiration and ninety-nine percent perspiration.", "author": "Thomas Edison" },
++  { "text": "I have not failed. I've just found 10,000 ways that won't work.", "author": "Thomas Edison" },
++  { "text": "Be the change that you wish to see in the world.", "author": "Mahatma Gandhi" },
++  { "text": "Well begun is half done.", "author": "Aristotle" },
++  { "text": "The harder I work, the luckier I get.", "author": "Samuel Goldwyn" },
++  { "text": "Patience is bitter, but its fruit is sweet.", "author": "Aristotle" },
++  { "text": "First say to yourself what you would be; and then do what you have to do.", "author": "Epictetus" },
++  { "text": "Energy and persistence conquer all things.", "author": "Benjamin Franklin" }
++]

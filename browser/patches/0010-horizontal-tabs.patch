@@ -82,6 +82,16 @@
 #     half the row; _updateEvent removes the attribute, CSS caps first paint
 #     with max-width:fit-content.
 # Known polish: disabled back/forward render faint on fresh sessions.
+# Interaction pass (2026-07-14, user reports):
+#   - Window dragging: empty areas of both bar rows are -moz-window-dragging
+#     drag regions (tabs/buttons/urlbar opt out) — nothing in Zen's vertical
+#     layout made the horizontal rows draggable.
+#   - "New Space" looked dead: the zen-workspace-creation pane is full-height
+#     sidebar UI and rendered clipped above the window inside the 44px strip
+#     (it also PRE-CREATES the space, so every attempt left a ghost). Floated
+#     as a centered card; the host needs display:flex column +
+#     height:fit-content or it collapses to a sliver. Cancel verified to
+#     remove the pre-created space.
 diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
 index 307fa0d..9876e0f 100644
 --- a/src/zen/common/modules/ZenStartup.mjs
@@ -203,10 +213,10 @@ index b7340b0..7d479df 100644
 +%include zen-tabs/kavacha-horizontal-tabs.inc.css
 diff --git a/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
 new file mode 100644
-index 0000000..7a81a40
+index 0000000..f1ae74a
 --- /dev/null
 +++ b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
-@@ -0,0 +1,365 @@
+@@ -0,0 +1,419 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -570,5 +580,59 @@ index 0000000..7a81a40
 +
 +  .tabbrowser-tab .tab-background {
 +    width: auto;
++  }
++
++  /* Window dragging: empty areas of both bar rows move the window, like
++     every horizontal-tab browser. Interactive pieces opt back out (tabs
++     keep their own drag-to-reorder; the native buttonbox manages itself). */
++  #titlebar,
++  #TabsToolbar,
++  #TabsToolbar > .toolbar-items,
++  #TabsToolbar-customization-target,
++  #zen-tabs-wrapper,
++  zen-workspace,
++  zen-workspace arrowscrollbox,
++  #nav-bar,
++  #nav-bar-customization-target {
++    -moz-window-dragging: drag;
++  }
++
++  .tabbrowser-tab,
++  toolbarbutton,
++  #urlbar,
++  #zen-sidebar-foot-buttons,
++  #zen-sidebar-top-buttons,
++  #TabsToolbar > .titlebar-buttonbox-container {
++    -moz-window-dragging: no-drag;
++  }
++
++  /* The space-creation pane is a full-height sidebar UI; inside the 44px
++     strip it renders clipped above the window (y < 0) and "New Space"
++     looks dead. Float it as a centered card instead. */
++  zen-workspace-creation {
++    position: fixed !important;
++    top: max(96px, 14vh);
++    left: 50%;
++    translate: -50% 0;
++    display: flex !important;
++    flex-direction: column !important;
++    width: min(460px, 90vw) !important;
++    /* the host doesn't size to its form content on its own */
++    height: fit-content !important;
++    min-height: fit-content !important;
++    max-width: none !important;
++    max-height: 70vh;
++    z-index: 1000;
++    padding: 20px !important;
++    overflow: auto;
++    background: var(--arrowpanel-background, light-dark(#fff, #2b2a33));
++    color: var(--arrowpanel-color, inherit);
++    border: 1px solid
++      var(
++        --arrowpanel-border-color,
++        color-mix(in srgb, currentColor 20%, transparent)
++      );
++    border-radius: 12px;
++    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
 +  }
 +}

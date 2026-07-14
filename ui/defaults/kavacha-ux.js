@@ -13,11 +13,10 @@
 // therefore win conflicts — libpref loads defaults reverse-alphabetically).
 pref("zen.tabs.vertical", false);
 
-// Conventional new-tab behavior (user feedback 2026-07-13): open a page with
-// the docked URL bar focused, not Zen's detached floating search box — the
-// float is positioned for the vertical-sidebar layout and lands in the wrong
-// place with the horizontal top bar.
-pref("zen.urlbar.replace-newtab", false);
+// Cmd+T opens Zen's centered floating search (Zen default, kept on purpose —
+// user decision 2026-07-14 after trying both): patch 0010 makes the float
+// center correctly in horizontal mode, so the earlier
+// zen.urlbar.replace-newtab=false workaround is retired.
 
 // New tabs open at the END of the strip (the right, in horizontal), like
 // other browsers. Zen's default (true) is "newest on top" for the vertical

@@ -70,9 +70,9 @@
 #     ResizeObserver on #urlbar-container and x/y from the DOM slot's static
 #     position. Never pin its geometry from CSS (resolves against the
 #     viewport and paints over the row) — size the CONTAINER instead.
-#   - zen.urlbar.replace-newtab=false ships as a Kavacha default
-#     (ui/defaults/kavacha-ux.js): the detached floating search box is
-#     positioned for the sidebar layout; new tab opens a page instead.
+#   - Cmd+T keeps Zen's centered floating search (zen.urlbar.replace-newtab
+#     stays at Zen's default true): the float is a top-layer popover too and
+#     centers itself once nothing pins the urlbar geometry — leave it alone.
 #   - Compact mode position:fixes the toolbox off-screen (sidebar hover
 #     reveal) = no UI at all in horizontal; neutralized in CSS until a real
 #     auto-hide top bar exists. The compact toggle still sits in the toolbar
@@ -203,10 +203,10 @@ index b7340b0..7d479df 100644
 +%include zen-tabs/kavacha-horizontal-tabs.inc.css
 diff --git a/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
 new file mode 100644
-index 0000000..1777ef4
+index 0000000..7a81a40
 --- /dev/null
 +++ b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
-@@ -0,0 +1,369 @@
+@@ -0,0 +1,365 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -322,13 +322,9 @@ index 0000000..1777ef4
 +     from the static position of its DOM slot, so with the container
 +     filling the row it aligns itself — don't override its geometry (a
 +     width/left/top pin resolves against the viewport and paints it over
-+     the nav buttons and traffic lights). Only Zen's detached-float state
-+     needs correcting: it centers mid-window, sized for the sidebar layout. */
-+  #nav-bar #urlbar[zen-floating-urlbar="true"] {
-+    top: calc(var(--kavacha-horizontal-strip-height, 44px) + 6px) !important;
-+    --urlbar-container-height: var(--urlbar-height) !important;
-+    font-size: inherit !important;
-+  }
++     the nav buttons and traffic lights). Zen's detached float
++     ([zen-floating-urlbar], Cmd+T) is likewise viewport-anchored and
++     centers itself (left 50% / --zen-urlbar-top) — leave it alone too. */
 +
 +  /* Compact mode slides #navigator-toolbox off-screen (position:fixed +
 +     negative left) for the vertical sidebar's hover reveal — with a top

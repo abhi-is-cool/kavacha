@@ -123,6 +123,43 @@ split view, command palette, session store.
       behavior, not lost depth. Same reload happens when the tab-unloader (0013)
       discards them, for the same reason
 
+## Phase 2.5 — Research Continuity: branching & time-travel — Y1
+
+Added 2026-07-15 to close a gap: the [End Goal](#end-goal--north-star-added-2026-07-14)
+names two capabilities the phased plan didn't yet cover — *"research can branch
+into multiple paths"* and *"a full time-travel system … to restore or replay any
+previous browser state."* Both **extend foundations already shipped** (workspaces,
+session store, verified session-restore depth, the command registry) and do **not**
+depend on the Phase 6 AI/graph, so they are buildable now — and their snapshots +
+branch relationships become early edges of the Phase 6 knowledge graph.
+
+- [ ] **Workspace state-history substrate** (shared foundation; **first task = its
+      own ADR**): a local, append-only store of point-in-time workspace snapshots
+      — tab set + order, per-tab session state (lean on SessionStore/TabStateCache,
+      don't duplicate it), notes reference, active-space metadata — keyed by space +
+      timestamp, with dedup + a retention policy so storage stays bounded.
+      Local-first; encrypted-at-rest option; rides Kavacha E2E sync (Phase 5) later.
+      Both features below read/write this. ADR must settle: snapshot shape &
+      granularity (per-space vs whole-window), what triggers a snapshot
+      (interval / meaningful-change / manual), retention/GC, and the sync stance.
+- [ ] **Research branching**: fork a space at its current state into a named
+      alternative path — a child space carrying a parent-branch pointer — then
+      switch between branches, compare, and keep or discard. Explore alternatives
+      without losing or polluting the main line. Builds on the substrate +
+      containers (ADR 0003). UI: "Branch this Space" (command + space menu) and a
+      branch tree in the space switcher. Metadata (`parentSpaceId`, `branchedAt`)
+      on the space object, following the shipped field-on-space pattern.
+- [ ] **Time-travel**: browse a space's snapshot timeline and either *restore*
+      (jump the space back to a past state) or *replay* (step through its
+      evolution) to revisit past lines of thought. Builds on the substrate +
+      session restore. Open design questions: restore semantics (replace current
+      state vs open-alongside as a branch), timeline UI surface, and how far back
+      retention keeps.
+- Ties to the north star: the observing agent's *"save this as a new branch of
+      your investigation?"* suggestion lands as a registered command (patch 0018)
+      that forks a branch; the snapshot history is raw material the knowledge graph
+      later reads.
+
 ## Phase 3 — Customization Studio & Marketplace (Months 4–6) — Y1
 
 - [x] **Distinct default look — must not read as a Zen fork** (see

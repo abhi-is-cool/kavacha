@@ -254,6 +254,28 @@ jobs:
           ls -la out
           [ -n "$(ls -A out)" ] || { echo "no release files found"; exit 1; }
 
+      # A platform whose build failed this run must not lose its last good
+      # binary: delete-and-recreate below would otherwise publish a release
+      # missing that platform (happened 2026-07-15 — macOS hit the 6h job
+      # ceiling and the nightly shipped Linux-only). Carry forward any prior
+      # asset we don't have a fresh replacement for.
+      - name: Carry forward assets from the previous nightly
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir -p prev
+          gh release download nightly --dir prev --pattern '*' --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          shopt -s nullglob
+          for f in prev/*; do
+            base="$(basename "$f")"
+            if [ ! -e "out/$base" ]; then
+              echo "carrying forward stale asset: $base"
+              cp "$f" "out/$base"
+            fi
+          done
+          ls -la out
+
       - name: Publish rolling prerelease
         env:
           GH_TOKEN: ${{ github.token }}

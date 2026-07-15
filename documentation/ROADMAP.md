@@ -208,7 +208,13 @@ branch relationships become early edges of the Phase 6 knowledge graph.
 
 - [x] Cookie intelligence base: Firefox Cookie Banner Blocker on by default
       (`cookiebanners.service.mode=1`)
-- [ ] Privacy Center dashboard (trackers blocked / fingerprints prevented / bandwidth saved)
+- [x] Privacy Center dashboard (ADR 0007 + patch `0021-privacy-center.patch`,
+      2026-07-15): "Privacy Center" pane in Settings + "Open Privacy Center"
+      palette command — all-time / 7-day / today blocked counts and per-category
+      breakdown read from Firefox's own protections.sqlite ledger (nothing new
+      collected), bandwidth saved as a labeled estimate (events x 35 KB), an
+      Active Protections list read live from prefs, and clear-statistics.
+      Later: per-site drilldown, blocked-today badge surfaces
 - [ ] Network-silence test in CI (fresh idle profile ⇒ zero telemetry requests)
 - [ ] Central permission manager
 - [ ] Brave Search default + bundled alternatives (DDG, Kagi, Startpage, Google)

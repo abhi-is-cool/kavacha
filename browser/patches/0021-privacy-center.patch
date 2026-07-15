@@ -1,0 +1,532 @@
+# Patch 0021 — Privacy Center: a Kavacha Settings pane over Firefox's own
+# blocking ledger (ROADMAP Phase 4; ADR 0007).
+#
+# WHAT: a "Privacy Center" pane in Settings (paneKavachaPrivacy) showing
+# what Kavacha's protections have blocked — all time / past 7 days / today
+# cards, a per-category weekly breakdown (trackers, tracking cookies,
+# fingerprinters, cryptominers, social), an ESTIMATED bandwidth-saved
+# figure (blocked events x 35 KB — Firefox counts events, never bytes;
+# the label says "estimated"), a "counting since" line, clear-statistics,
+# and an Active Protections list (ETP strict / TCP / fingerprinting
+# protection / query stripping / GPC / cookie-banner auto-reject) read
+# live from prefs so the pane is informative even at zero counts.
+#
+# DATA: pure reader over protections.sqlite via TrackingDBService
+# (sumAllEvents / getEarliestRecordedDate) and PrivacyMetricsService
+# (getWeeklyStats / getTodayStats). Nothing new is collected. NOTE:
+# PrivacyMetricsService is a MOZ_SRC_FILES module — import it via
+# moz-src:///browser/components/protections/..., NOT resource:///modules/
+# (the resource URI silently doesn't exist; same trap as patch 0011's
+# NewTabPagePreloading).
+#
+# WIRING: follows Zen's own pane recipe — nav button + #include in
+# preferences-xhtml.patch, register_module in preferences-js.patch, script
+# via jar-mn.patch. register_module's template-replacement special case is
+# extended from startsWith("paneZen") to also match "paneKavacha" (without
+# it the pane renders empty under the settings redesign). Palette command
+# "Open Privacy Center" (new PRIVACY domain) in KavachaCommandRegistry.
+#
+# Verified via Marionette 2026-07-15: seeded protections.sqlite with known
+# per-category counts (same INSERT the protections tests use), opened the
+# pane through the palette command, and read back exact card/breakdown
+# values, bandwidth math, "counting since", posture all-On, and
+# clear-statistics zeroing the ledger. Meta-patch edits validated with
+# git apply --check against pristine Firefox 152.0.6 files.
+diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+index 7039aa6..d60167c 100644
+--- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
++++ b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+@@ -367,3 +367,33 @@ zen-key-find-selection = Find Selection
+ kavacha-settings-workspaces-auto-assign-bookmarks =
+     .label = Add new bookmarks to the current Space only
+ kavacha-settings-workspaces-auto-assign-bookmarks-description = Bookmarks you save are shown only in the Space you saved them in. You can change a bookmark's Spaces anytime from its edit panel.
++
++pane-kavacha-privacy-title = Privacy Center
++category-kavacha-privacy =
++    .tooltiptext = { pane-kavacha-privacy-title }
++kavacha-privacy-center-title = Privacy Center
++kavacha-privacy-stats-header = Blocked on this device
++kavacha-privacy-stats-description = What Kavacha's protections have stopped. Counted locally and never leaves your device.
++kavacha-privacy-stats-since = Counting since { $date }.
++kavacha-privacy-card-alltime = All time
++kavacha-privacy-card-week = Past 7 days
++kavacha-privacy-card-today = Today
++kavacha-privacy-card-bandwidth = Bandwidth saved (estimated)
++kavacha-privacy-breakdown-header = Past 7 days by type
++kavacha-privacy-row-trackers = Trackers
++kavacha-privacy-row-cookies = Tracking cookies
++kavacha-privacy-row-fingerprinters = Fingerprinters
++kavacha-privacy-row-cryptominers = Cryptominers
++kavacha-privacy-row-social = Social media trackers
++kavacha-privacy-stats-paused = Statistics are paused because blocking history is turned off in this profile.
++kavacha-privacy-clear-stats = Clear statistics
++kavacha-privacy-posture-header = Active protections
++kavacha-privacy-posture-description = The defaults Kavacha ships with, read live from this profile.
++kavacha-privacy-posture-etp = Enhanced Tracking Protection (strict)
++kavacha-privacy-posture-tcp = Total Cookie Protection
++kavacha-privacy-posture-fpp = Fingerprinting protection
++kavacha-privacy-posture-qs = Link tracking-parameter stripping
++kavacha-privacy-posture-gpc = Global Privacy Control
++kavacha-privacy-posture-banners = Cookie banner auto-reject
++kavacha-privacy-on = On
++kavacha-privacy-off = Off
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index feaf021..60e49cd 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -46,3 +46,4 @@ kavacha-action-universal-search = Search Everything
+ kavacha-action-snapshot-space = Snapshot This Space
+ kavacha-action-sleep-tabs = Sleep Inactive Tabs Now
+ kavacha-action-toggle-newtab = Toggle New Tab Style (Dashboard / Search)
++kavacha-action-privacy-center = Open Privacy Center
+diff --git a/src/browser/components/preferences/jar-mn.patch b/src/browser/components/preferences/jar-mn.patch
+index da20fdc..b820c2d 100644
+--- a/src/browser/components/preferences/jar-mn.patch
++++ b/src/browser/components/preferences/jar-mn.patch
+@@ -2,11 +2,12 @@ diff --git a/browser/components/preferences/jar.mn b/browser/components/preferen
+ index aec7888f59eeb5dbffc62b861fe223159ac42586..a593f3015469c11c762ae01465964251a77ddb45 100644
+ --- a/browser/components/preferences/jar.mn
+ +++ b/browser/components/preferences/jar.mn
+-@@ -69,5 +69,7 @@ browser.jar:
++@@ -69,5 +69,8 @@ browser.jar:
+     content/browser/preferences/widgets/sync-engines-list.css          (widgets/sync-engine-list/sync-engines-list.css)
+     content/browser/preferences/widgets/update-information.mjs          (widgets/update-information/update-information.mjs)
+     content/browser/preferences/widgets/update-information.css          (widgets/update-information/update-information.css)
+ +
+ +   content/browser/preferences/zen-settings.js
+++   content/browser/preferences/kavacha-privacy.js
+     content/browser/preferences/widgets/update-state.mjs          (widgets/update-state/update-state.mjs)
+     content/browser/preferences/widgets/update-state.css          (widgets/update-state/update-state.css)
+diff --git a/src/browser/components/preferences/kavacha-privacy.js b/src/browser/components/preferences/kavacha-privacy.js
+new file mode 100644
+index 0000000..8cfa223
+--- /dev/null
++++ b/src/browser/components/preferences/kavacha-privacy.js
+@@ -0,0 +1,167 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++// Kavacha Privacy Center (ADR 0007; ROADMAP Phase 4). A pure reader over
++// Firefox's tracking-protection ledger — protections.sqlite via
++// TrackingDBService / PrivacyMetricsService — plus a live view of the
++// protections Kavacha ships enabled. Collects nothing itself; everything
++// shown is already on the device.
++
++"use strict";
++
++// NOTE: MOZ_SRC_FILES module (not EXTRA_JS_MODULES) — the resource:///modules/
++// URI does not exist for this file.
++const { PrivacyMetricsService } = ChromeUtils.importESModule(
++  "moz-src:///browser/components/protections/PrivacyMetricsService.sys.mjs"
++);
++
++// ADR 0007: Firefox counts blocked events but never measures bytes. This is
++// a deliberately conservative average tracker payload (script + beacons +
++// cookie round-trips); the UI labels the derived figure "estimated".
++const KAVACHA_BYTES_PER_BLOCKED_EVENT = 35 * 1024;
++
++var gKavachaPrivacyCenter = {
++  _initted: false,
++
++  init() {
++    if (this._initted) {
++      return;
++    }
++    this._initted = true;
++    document
++      .getElementById("kavachaPrivacyClearStats")
++      .addEventListener("command", () => this._clearStats());
++    this._refresh();
++  },
++
++  get _trackingDB() {
++    return Cc["@mozilla.org/tracking-db-service;1"].getService(
++      Ci.nsITrackingDBService
++    );
++  },
++
++  async _refresh() {
++    this._renderPosture();
++
++    const recording = Services.prefs.getBoolPref(
++      "browser.contentblocking.database.enabled",
++      true
++    );
++    document.getElementById("kavachaPrivacyPaused").hidden = recording;
++
++    try {
++      const [week, today, allTime, earliest] = await Promise.all([
++        PrivacyMetricsService.getWeeklyStats(),
++        PrivacyMetricsService.getTodayStats(),
++        this._trackingDB.sumAllEvents(),
++        this._trackingDB.getEarliestRecordedDate(),
++      ]);
++
++      const fmt = new Intl.NumberFormat();
++      this._setValue("kavachaPrivacyValueAllTime", fmt.format(allTime));
++      this._setValue("kavachaPrivacyValueWeek", fmt.format(week.total));
++      this._setValue("kavachaPrivacyValueToday", fmt.format(today.total));
++      this._setValue(
++        "kavachaPrivacyValueBandwidth",
++        this._formatBytes(allTime * KAVACHA_BYTES_PER_BLOCKED_EVENT)
++      );
++
++      this._setValue("kavachaPrivacyRowTrackers", fmt.format(week.trackers));
++      this._setValue("kavachaPrivacyRowCookies", fmt.format(week.cookies));
++      this._setValue(
++        "kavachaPrivacyRowFingerprinters",
++        fmt.format(week.fingerprinters)
++      );
++      this._setValue(
++        "kavachaPrivacyRowCryptominers",
++        fmt.format(week.cryptominers)
++      );
++      this._setValue("kavachaPrivacyRowSocial", fmt.format(week.socialTrackers));
++
++      const since = document.getElementById("kavachaPrivacyStatsSince");
++      if (earliest) {
++        document.l10n.setAttributes(since, "kavacha-privacy-stats-since", {
++          date: new Intl.DateTimeFormat(undefined, {
++            dateStyle: "medium",
++          }).format(new Date(earliest)),
++        });
++        since.hidden = false;
++      } else {
++        since.hidden = true;
++      }
++    } catch (e) {
++      console.error("KavachaPrivacyCenter: failed to read blocking stats", e);
++    }
++  },
++
++  _renderPosture() {
++    const prefs = Services.prefs;
++    const posture = [
++      [
++        "kavachaPostureEtp",
++        prefs.getStringPref("browser.contentblocking.category", "") ===
++          "strict",
++      ],
++      [
++        "kavachaPostureTcp",
++        prefs.getIntPref("network.cookie.cookieBehavior", 0) === 5,
++      ],
++      [
++        "kavachaPostureFpp",
++        prefs.getBoolPref("privacy.fingerprintingProtection", false),
++      ],
++      [
++        "kavachaPostureQs",
++        prefs.getBoolPref("privacy.query_stripping.enabled", false),
++      ],
++      [
++        "kavachaPostureGpc",
++        prefs.getBoolPref("privacy.globalprivacycontrol.enabled", false),
++      ],
++      [
++        "kavachaPostureBanners",
++        prefs.getIntPref("cookiebanners.service.mode", 0) >= 1,
++      ],
++    ];
++    for (const [id, on] of posture) {
++      const el = document.getElementById(id);
++      document.l10n.setAttributes(
++        el,
++        on ? "kavacha-privacy-on" : "kavacha-privacy-off"
++      );
++      el.classList.toggle("on", on);
++    }
++  },
++
++  async _clearStats() {
++    try {
++      await this._trackingDB.clearAll();
++    } catch (e) {
++      console.error("KavachaPrivacyCenter: clearAll failed", e);
++    }
++    this._refresh();
++  },
++
++  _setValue(id, text) {
++    document.getElementById(id).textContent = text;
++  },
++
++  _formatBytes(bytes) {
++    // Intl.NumberFormat's unit style handles the locale-correct "1.2 GB".
++    const units = ["byte", "kilobyte", "megabyte", "gigabyte", "terabyte"];
++    let i = 0;
++    while (bytes >= 1024 && i < units.length - 1) {
++      bytes /= 1024;
++      i++;
++    }
++    return new Intl.NumberFormat(undefined, {
++      style: "unit",
++      unit: units[i],
++      // CLDR's short form for the bare byte unit is the unabbreviated word,
++      // so plain counts read better long ("0 bytes", "1 byte").
++      unitDisplay: i === 0 ? "long" : "short",
++      maximumFractionDigits: 1,
++    }).format(bytes);
++  },
++};
+diff --git a/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml b/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml
+new file mode 100644
+index 0000000..c4268e7
+--- /dev/null
++++ b/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml
+@@ -0,0 +1,97 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++<script type="text/javascript" src="chrome://browser/content/preferences/kavacha-privacy.js"/>
++<html:template id="template-paneKavachaPrivacy">
++
++<hbox id="kavachaPrivacyCategory"
++      class="subcategory"
++      hidden="true"
++      data-category="paneKavachaPrivacy">
++<html:h1 data-l10n-id="kavacha-privacy-center-title"/>
++</hbox>
++
++<groupbox id="kavachaPrivacyStatsGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
++  <label><html:h2 data-l10n-id="kavacha-privacy-stats-header"/></label>
++  <description class="description-deemphasized" data-l10n-id="kavacha-privacy-stats-description"/>
++  <description class="description-deemphasized" id="kavachaPrivacyStatsSince" hidden="true"/>
++  <html:div id="kavachaPrivacyCards">
++    <html:div class="kavacha-privacy-card">
++      <html:span class="kavacha-privacy-card-value" id="kavachaPrivacyValueAllTime">&#8212;</html:span>
++      <html:span class="kavacha-privacy-card-caption" data-l10n-id="kavacha-privacy-card-alltime"/>
++    </html:div>
++    <html:div class="kavacha-privacy-card">
++      <html:span class="kavacha-privacy-card-value" id="kavachaPrivacyValueWeek">&#8212;</html:span>
++      <html:span class="kavacha-privacy-card-caption" data-l10n-id="kavacha-privacy-card-week"/>
++    </html:div>
++    <html:div class="kavacha-privacy-card">
++      <html:span class="kavacha-privacy-card-value" id="kavachaPrivacyValueToday">&#8212;</html:span>
++      <html:span class="kavacha-privacy-card-caption" data-l10n-id="kavacha-privacy-card-today"/>
++    </html:div>
++    <html:div class="kavacha-privacy-card">
++      <html:span class="kavacha-privacy-card-value" id="kavachaPrivacyValueBandwidth">&#8212;</html:span>
++      <html:span class="kavacha-privacy-card-caption" data-l10n-id="kavacha-privacy-card-bandwidth"/>
++    </html:div>
++  </html:div>
++  <label><html:h3 data-l10n-id="kavacha-privacy-breakdown-header"/></label>
++  <vbox id="kavachaPrivacyBreakdown">
++    <hbox class="kavacha-privacy-row" align="center">
++      <label data-l10n-id="kavacha-privacy-row-trackers"/>
++      <html:span class="kavacha-privacy-row-value" id="kavachaPrivacyRowTrackers">0</html:span>
++    </hbox>
++    <hbox class="kavacha-privacy-row" align="center">
++      <label data-l10n-id="kavacha-privacy-row-cookies"/>
++      <html:span class="kavacha-privacy-row-value" id="kavachaPrivacyRowCookies">0</html:span>
++    </hbox>
++    <hbox class="kavacha-privacy-row" align="center">
++      <label data-l10n-id="kavacha-privacy-row-fingerprinters"/>
++      <html:span class="kavacha-privacy-row-value" id="kavachaPrivacyRowFingerprinters">0</html:span>
++    </hbox>
++    <hbox class="kavacha-privacy-row" align="center">
++      <label data-l10n-id="kavacha-privacy-row-cryptominers"/>
++      <html:span class="kavacha-privacy-row-value" id="kavachaPrivacyRowCryptominers">0</html:span>
++    </hbox>
++    <hbox class="kavacha-privacy-row" align="center">
++      <label data-l10n-id="kavacha-privacy-row-social"/>
++      <html:span class="kavacha-privacy-row-value" id="kavachaPrivacyRowSocial">0</html:span>
++    </hbox>
++  </vbox>
++  <description id="kavachaPrivacyPaused" class="description-deemphasized" data-l10n-id="kavacha-privacy-stats-paused" hidden="true"/>
++  <hbox pack="start">
++    <button id="kavachaPrivacyClearStats" data-l10n-id="kavacha-privacy-clear-stats"/>
++  </hbox>
++</groupbox>
++
++<groupbox id="kavachaPrivacyPostureGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
++  <label><html:h2 data-l10n-id="kavacha-privacy-posture-header"/></label>
++  <description class="description-deemphasized" data-l10n-id="kavacha-privacy-posture-description"/>
++  <vbox id="kavachaPrivacyPostureList">
++    <hbox class="kavacha-privacy-row" align="center">
++      <label data-l10n-id="kavacha-privacy-posture-etp"/>
++      <html:span class="kavacha-privacy-posture-status" id="kavachaPostureEtp"/>
++    </hbox>
++    <hbox class="kavacha-privacy-row" align="center">
++      <label data-l10n-id="kavacha-privacy-posture-tcp"/>
++      <html:span class="kavacha-privacy-posture-status" id="kavachaPostureTcp"/>
++    </hbox>
++    <hbox class="kavacha-privacy-row" align="center">
++      <label data-l10n-id="kavacha-privacy-posture-fpp"/>
++      <html:span class="kavacha-privacy-posture-status" id="kavachaPostureFpp"/>
++    </hbox>
++    <hbox class="kavacha-privacy-row" align="center">
++      <label data-l10n-id="kavacha-privacy-posture-qs"/>
++      <html:span class="kavacha-privacy-posture-status" id="kavachaPostureQs"/>
++    </hbox>
++    <hbox class="kavacha-privacy-row" align="center">
++      <label data-l10n-id="kavacha-privacy-posture-gpc"/>
++      <html:span class="kavacha-privacy-posture-status" id="kavachaPostureGpc"/>
++    </hbox>
++    <hbox class="kavacha-privacy-row" align="center">
++      <label data-l10n-id="kavacha-privacy-posture-banners"/>
++      <html:span class="kavacha-privacy-posture-status" id="kavachaPostureBanners"/>
++    </hbox>
++  </vbox>
++</groupbox>
++
++</html:template>
+diff --git a/src/browser/components/preferences/preferences-js.patch b/src/browser/components/preferences/preferences-js.patch
+index 4aa64e8..f14cc38 100644
+--- a/src/browser/components/preferences/preferences-js.patch
++++ b/src/browser/components/preferences/preferences-js.patch
+@@ -24,11 +24,11 @@ index 57add34d876fb885275f1147209c6fbeee367a7c..be0ab43b299317c0022a5e719f47a070
+        this._initted = true;
+        let template = document.getElementById("template-" + categoryName);
+ -      if (template && !srdSectionPrefs.all) {
+-+      if (template && (!srdSectionPrefs.all || categoryName.startsWith("paneZen"))) {
+++      if (template && (!srdSectionPrefs.all || categoryName.startsWith("paneZen") || categoryName.startsWith("paneKavacha"))) {
+          // Replace the template element with the nodes inside of it.
+          template.replaceWith(template.content);
+  
+-@@ -522,6 +525,10 @@ function init_all() {
++@@ -522,6 +525,11 @@ function init_all() {
+    register_module("paneSearch", gSearchPane);
+    register_module("panePrivacy", gPrivacyPane);
+    register_module("paneContainers", gContainersPane);
+@@ -36,6 +36,7 @@ index 57add34d876fb885275f1147209c6fbeee367a7c..be0ab43b299317c0022a5e719f47a070
+ +  register_module("paneZenTabManagement", gZenWorkspacesSettings);
+ +  register_module("paneZenCKS", gZenCKSSettings);
+ +  register_module("paneZenMarketplace", gZenMarketplaceManager);
+++  register_module("paneKavachaPrivacy", gKavachaPrivacyCenter);
+  
+    // Restore the cached Firefox Labs nav button visibility so it shows
+    // immediately when recipes are expected to be available, before
+diff --git a/src/browser/components/preferences/preferences-xhtml.patch b/src/browser/components/preferences/preferences-xhtml.patch
+index dccd50e..6e7240f 100644
+--- a/src/browser/components/preferences/preferences-xhtml.patch
++++ b/src/browser/components/preferences/preferences-xhtml.patch
+@@ -11,7 +11,7 @@ index 9760a4a35b0b3bd21edec07a70c10bccc23e4a09..9f22146c259ea5b45005be660bfcb9ea
+    <link rel="localization" href="branding/brand.ftl"/>
+    <link rel="localization" href="browser/browser.ftl"/>
+      <!-- Used by fontbuilder.js -->
+-@@ -121,6 +123,26 @@
++@@ -121,6 +123,31 @@
+          iconsrc="chrome://browser/skin/preferences/category-general.svg"
+          data-l10n-id="pane-general-title">
+        </html:moz-page-nav-button>
+@@ -34,11 +34,16 @@ index 9760a4a35b0b3bd21edec07a70c10bccc23e4a09..9f22146c259ea5b45005be660bfcb9ea
+ +        view="paneZenMarketplace"
+ +        iconsrc="chrome://mozapps/skin/extensions/category-themes.svg"
+ +        data-l10n-id="pane-zen-marketplace-title">
+++      </html:moz-page-nav-button>
+++      <html:moz-page-nav-button id="category-kavacha-privacy"
+++        view="paneKavachaPrivacy"
+++        iconsrc="chrome://browser/skin/zen-icons/tracking-protection.svg"
+++        data-l10n-id="pane-kavacha-privacy-title">
+ +      </html:moz-page-nav-button>
+        <html:moz-page-nav-button id="category-sync"
+          hidden="true"
+          view="paneSync"
+-@@ -253,6 +275,10 @@
++@@ -253,6 +280,11 @@
+  #include containers.inc.xhtml
+  #include sync.inc.xhtml
+  #include moreFromMozilla.inc.xhtml
+@@ -46,6 +51,7 @@ index 9760a4a35b0b3bd21edec07a70c10bccc23e4a09..9f22146c259ea5b45005be660bfcb9ea
+ +#include zenKeyboardShortcuts.inc.xhtml
+ +#include zenTabsManagement.inc.xhtml
+ +#include zenMarketplace.inc.xhtml
+++#include kavachaPrivacyCenter.inc.xhtml
+          </vbox>
+        </vbox>
+      </vbox>
+diff --git a/src/browser/themes/shared/preferences/zen-preferences.css b/src/browser/themes/shared/preferences/zen-preferences.css
+index fe659af..3d0e0e3 100644
+--- a/src/browser/themes/shared/preferences/zen-preferences.css
++++ b/src/browser/themes/shared/preferences/zen-preferences.css
+@@ -507,3 +507,60 @@ html|setting-group:is([data-subcategory="layout"], [groupid="support"], [groupid
+     display: none !important;
+   }
+ }
++
++/* Kavacha Privacy Center */
++#kavachaPrivacyCards {
++  display: grid;
++  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
++  gap: 12px;
++  margin-block: 16px 20px;
++}
++
++.kavacha-privacy-card {
++  display: flex;
++  flex-direction: column;
++  gap: 4px;
++  padding: 14px 16px;
++  border: 1px solid var(--zen-colors-border);
++  border-radius: 8px;
++  background: var(--zen-colors-tertiary);
++}
++
++.kavacha-privacy-card-value {
++  font-size: 1.7em;
++  font-weight: 600;
++}
++
++.kavacha-privacy-card-caption {
++  opacity: 0.7;
++  font-size: 0.95em;
++}
++
++.kavacha-privacy-row {
++  justify-content: space-between;
++  padding-block: 7px;
++  border-bottom: 1px solid var(--zen-colors-border);
++}
++
++.kavacha-privacy-row:last-child {
++  border-bottom: none;
++}
++
++.kavacha-privacy-row-value {
++  font-weight: 600;
++  font-variant-numeric: tabular-nums;
++}
++
++.kavacha-privacy-posture-status {
++  font-weight: 600;
++  opacity: 0.6;
++}
++
++.kavacha-privacy-posture-status.on {
++  color: light-dark(#1c7d40, #6fd08c);
++  opacity: 1;
++}
++
++#kavachaPrivacyClearStats {
++  margin-top: 12px;
++}
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+index 72b439d..d59581f 100644
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -19,6 +19,7 @@ export const KavachaCommandDomain = {
+   ORGANIZATION: "organization",
+   PRODUCTIVITY: "productivity",
+   APPEARANCE: "appearance",
++  PRIVACY: "privacy",
+ };
+ 
+ const kNotPrivate = window => !window.gZenWorkspaces?.privateWindowOrDisabled;
+@@ -128,6 +129,14 @@ const BUILTIN = [
+     icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
+     domain: KavachaCommandDomain.APPEARANCE,
+   },
++
++  // -- Privacy ---------------------------------------------------------------
++  {
++    l10nId: "kavacha-action-privacy-center",
++    command: window => window.openPreferences("paneKavachaPrivacy"),
++    icon: "chrome://browser/skin/zen-icons/tracking-protection.svg",
++    domain: KavachaCommandDomain.PRIVACY,
++  },
+ ];
+ 
+ const _registered = [];

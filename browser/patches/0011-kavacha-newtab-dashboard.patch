@@ -423,7 +423,7 @@ index 0000000..f281f04
 +        content/browser/kavacha-newtab/favicon.png                             (../../zen/kavacha-newtab/favicon.png)
 diff --git a/src/zen/kavacha-newtab/newtab.css b/src/zen/kavacha-newtab/newtab.css
 new file mode 100644
-index 0000000..f5d369a
+index 0000000..6624015
 --- /dev/null
 +++ b/src/zen/kavacha-newtab/newtab.css
 @@ -0,0 +1,257 @@
@@ -551,7 +551,7 @@ index 0000000..f5d369a
 +.name-label {
 +  display: block;
 +  font-size: clamp(1.6rem, 4vw, 3rem);
-+  font-weight: 300;
++  font-weight: 600;
 +  margin-bottom: 1.2rem;
 +  text-shadow: 0 1px 14px rgba(0, 0, 0, 0.4);
 +}
@@ -564,7 +564,7 @@ index 0000000..f5d369a
 +  color: #fff;
 +  text-align: center;
 +  font-size: clamp(1.4rem, 3.5vw, 2.4rem);
-+  font-weight: 300;
++  font-weight: 600;
 +  padding: 0.4rem 0.2rem;
 +  outline: none;
 +}
@@ -606,7 +606,7 @@ index 0000000..f5d369a
 +
 +.clock {
 +  font-size: clamp(4rem, 13vw, 9rem);
-+  font-weight: 200;
++  font-weight: 600;
 +  letter-spacing: 0.01em;
 +  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.35);
 +  font-variant-numeric: tabular-nums;
@@ -614,7 +614,7 @@ index 0000000..f5d369a
 +
 +.greeting {
 +  font-size: clamp(1.4rem, 4vw, 2.4rem);
-+  font-weight: 300;
++  font-weight: 600;
 +  margin-top: 0.4rem;
 +  text-shadow: 0 1px 16px rgba(0, 0, 0, 0.4);
 +  cursor: text;
@@ -643,7 +643,7 @@ index 0000000..f5d369a
 +
 +.quote blockquote {
 +  font-size: clamp(1rem, 2.2vw, 1.35rem);
-+  font-weight: 300;
++  font-weight: 500;
 +  line-height: 1.5;
 +  font-style: italic;
 +}

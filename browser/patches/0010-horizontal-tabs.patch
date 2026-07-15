@@ -213,10 +213,10 @@ index b7340b0..7d479df 100644
 +%include zen-tabs/kavacha-horizontal-tabs.inc.css
 diff --git a/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
 new file mode 100644
-index 0000000..1c05fa1
+index 0000000..bb5c4bd
 --- /dev/null
 +++ b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
-@@ -0,0 +1,441 @@
+@@ -0,0 +1,445 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -325,6 +325,10 @@ index 0000000..1c05fa1
 +    width: auto !important;
 +    max-width: none !important;
 +    min-width: 0;
++    /* Air between the back/forward/reload cluster and the search bar
++       (user request 2026-07-15). Inline-end too, so the bar doesn't butt
++       against the extensions/menu cluster on the right. */
++    margin-inline: 10px 8px;
 +  }
 +
 +  /* The urlbar is a top-layer POPOVER: Firefox syncs its width to

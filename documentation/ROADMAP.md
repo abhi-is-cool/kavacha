@@ -112,7 +112,11 @@ split view, command palette, session store.
       autosaving notes panel per space (actions menu + palette command); stored
       locally in profile `kavacha-notes.json` — never on the synced space object;
       rides Kavacha E2E sync in Phase 5. Markdown rendering: later enhancement
-- [ ] Verify session-restore depth (scroll positions, page state) across restarts
+- [x] Verify session-restore depth (2026-07-14, verified in real use): tabs restore
+      at their scroll positions and page state across restart; collaborative SPAs
+      (Google Docs/Sheets, Figma, Notion) reload-and-resync by design — correct
+      behavior, not lost depth. Same reload happens when the tab-unloader (0013)
+      discards them, for the same reason
 
 ## Phase 3 — Customization Studio & Marketplace (Months 4–6) — Y1
 

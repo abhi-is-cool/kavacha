@@ -1,0 +1,436 @@
+# Patch 0015 — Per-workspace bookmarks + history attribution (ADR 0005).
+#
+# Completes ROADMAP Phase 2's isolation item per ADR 0005: bookmarks
+# isolate, history attributes, passwords stay global (user decision).
+#
+# BOOKMARKS: Zen already ships the whole isolation mechanism — a
+# zen_bookmarks_workspaces side table, star-panel Workspaces checkboxes,
+# change-tracking for sync, and toolbar/menu filtering via
+# isBookmarkInAnotherWorkspace(). Kavacha adds the missing convenience:
+# with kavacha.workspaces.auto-assign-bookmarks on (Settings > Tab
+# Management > workspaces group; default OFF), a user-created bookmark is
+# assigned to the active space automatically. The write path mirrors
+# PlacesUIUtils.updateBookmarkWorkspaces exactly (same table + changes row
+# + moz_meta timestamp + workspace-bookmarks-updated notification), so
+# Zen's cache refresh, filtering, and sync treat it like a manual
+# assignment. Sync-/import-/restore-created bookmarks are never
+# auto-assigned (source check), nor are tag "bookmarks" or bookmarks made
+# from private windows.
+#
+# HISTORY: attribution, deliberately NOT isolation (hiding rows in a
+# shared, synced places.sqlite would be privacy theater). A new
+# kavacha_history_workspaces side table records (url, visit_time,
+# workspace_uuid) per top-level http(s) navigation. Attribution happens at
+# the TAB layer — a per-window tabs-progress listener reads the navigating
+# tab's zen-workspace-id — because Places visit events carry no tab
+# reference; this stays correct for background-tab loads. Private windows,
+# same-document navigations, and space-less tabs (essentials) are skipped.
+# Rows are batched (5s / 100 entries) and flushed on quit.
+#
+# First surface: universal search history results carry the badge of the
+# space they were last visited in (the 0012 result contract already
+# renders workspaceId badges).
+#
+# Marionette-verified: visits record with the correct space and resolve
+# via latestWorkspaceForUrls; pref-off creates no assignment; pref-on
+# assigns to the active space, the bookmark stays visible there and Zen's
+# own filter hides it after switching spaces; history results in Search
+# Everything show their space badge. Applies on top of 0014.
+diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+index 7eb3983..7039aa6 100644
+--- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
++++ b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+@@ -363,3 +363,7 @@ zen-close-all-unpinned-tabs-shortcut = Close All Unpinned Tabs
+ zen-new-unsynced-window-shortcut = New Blank Window
+ zen-duplicate-tab-shortcut = Duplicate Tab
+ zen-key-find-selection = Find Selection
++
++kavacha-settings-workspaces-auto-assign-bookmarks =
++    .label = Add new bookmarks to the current Space only
++kavacha-settings-workspaces-auto-assign-bookmarks-description = Bookmarks you save are shown only in the Space you saved them in. You can change a bookmark's Spaces anytime from its edit panel.
+diff --git a/src/browser/components/preferences/zen-settings.js b/src/browser/components/preferences/zen-settings.js
+index cc88702..6a55a82 100644
+--- a/src/browser/components/preferences/zen-settings.js
++++ b/src/browser/components/preferences/zen-settings.js
+@@ -1160,6 +1160,11 @@ Preferences.addAll([
+     type: "string",
+     default: "switch",
+   },
++  {
++    id: "kavacha.workspaces.auto-assign-bookmarks",
++    type: "bool",
++    default: false,
++  },
+   {
+     id: "zen.workspaces.force-container-workspace",
+     type: "bool",
+diff --git a/src/browser/components/preferences/zenTabsManagement.inc.xhtml b/src/browser/components/preferences/zenTabsManagement.inc.xhtml
+index 2cf7c9c..e3327b8 100644
+--- a/src/browser/components/preferences/zenTabsManagement.inc.xhtml
++++ b/src/browser/components/preferences/zenTabsManagement.inc.xhtml
+@@ -29,6 +29,11 @@
+       <checkbox id="zenWorkspacesForceContainerTabsToWorkspace"
+             data-l10n-id="zen-settings-workspaces-force-container-tabs-to-workspace"
+             preference="zen.workspaces.force-container-workspace"/>
++      <checkbox id="kavachaWorkspacesAutoAssignBookmarks"
++            data-l10n-id="kavacha-settings-workspaces-auto-assign-bookmarks"
++            preference="kavacha.workspaces.auto-assign-bookmarks"/>
++      <description class="description-deemphasized indent"
++            data-l10n-id="kavacha-settings-workspaces-auto-assign-bookmarks-description"/>
+       <checkbox id="zenTabsCloseOnBackWithNoHistory"
+             data-l10n-id="zen-tabs-close-on-back-with-no-history"
+             preference="zen.tabs.close-on-back-with-no-history"/>
+diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
+index c904bd9..b452177 100644
+--- a/src/zen/common/modules/ZenStartup.mjs
++++ b/src/zen/common/modules/ZenStartup.mjs
+@@ -140,6 +140,11 @@ class ZenStartup {
+       ChromeUtils.importESModule(
+         "resource:///modules/KavachaTabMemory.sys.mjs"
+       ).KavachaTabMemory.init();
++      // Kavacha: per-space history attribution + bookmark auto-assign
++      // (ADR 0005; singleton, but each window registers its tab listener).
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaPlacesAttribution.sys.mjs"
++      ).KavachaPlacesAttribution.init(window);
+       this.isReady = true;
+       this.promiseInitializedResolve();
+       delete this.promiseInitializedResolve;
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+index 8a566be..6b1ab18 100644
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -4,6 +4,7 @@
+ 
+ EXTRA_JS_MODULES += [
+   "sys/KavachaNewTab.sys.mjs",
++  "sys/KavachaPlacesAttribution.sys.mjs",
+   "sys/KavachaTabMemory.sys.mjs",
+   "sys/ZenActorsManager.sys.mjs",
+   "sys/ZenCustomizableUI.sys.mjs",
+diff --git a/src/zen/common/sys/KavachaPlacesAttribution.sys.mjs b/src/zen/common/sys/KavachaPlacesAttribution.sys.mjs
+new file mode 100644
+index 0000000..595c109
+--- /dev/null
++++ b/src/zen/common/sys/KavachaPlacesAttribution.sys.mjs
+@@ -0,0 +1,272 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha per-workspace Places attribution (ADR 0005; ROADMAP Phase 2).
++//
++// Two responsibilities, both riding side tables in places.sqlite so Places'
++// own schema is never touched (ADR 0001):
++//
++// 1. HISTORY ATTRIBUTION — record which space each top-level navigation
++//    happened in (`kavacha_history_workspaces`: url, visit_time,
++//    workspace_uuid). Attribution happens at the TAB layer via a per-window
++//    tabs-progress listener reading the navigating tab's zen-workspace-id;
++//    Places visit events carry no tab reference, so this is the only way to
++//    stay correct for background-tab loads. This is organization, not a
++//    privacy boundary — the visits themselves still live in Places.
++//
++// 2. BOOKMARK AUTO-ASSIGNMENT — when `kavacha.workspaces.auto-assign-
++//    bookmarks` is on, a user-created bookmark is assigned to the active
++//    space through Zen's own `zen_bookmarks_workspaces` machinery (same SQL
++//    + change-tracking + notification as the star panel's Workspaces row,
++//    so sync and the toolbar filter see no difference).
++//
++// Process singleton: every window's ZenStartup calls init(window); the
++// first call wires the process-wide pieces, every call wires that window.
++
++const lazy = {};
++ChromeUtils.defineESModuleGetters(lazy, {
++  PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
++  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
++});
++
++const kAutoAssignPref = "kavacha.workspaces.auto-assign-bookmarks";
++// Batch visit rows so a burst of navigations costs one transaction, not N.
++const kFlushDelayMs = 5000;
++const kMaxQueued = 100;
++
++export const KavachaPlacesAttribution = {
++  _initialized: false,
++  _tableReady: null,
++  _queue: [],
++  _flushTimer: null,
++
++  init(win) {
++    if (!this._initialized) {
++      this._initialized = true;
++      this._tableReady = this._ensureTable();
++      lazy.PlacesUtils.observers.addListener(
++        ["bookmark-added"],
++        this._onBookmarkAdded.bind(this)
++      );
++      Services.obs.addObserver(this, "quit-application-granted");
++    }
++    this._initWindow(win);
++  },
++
++  observe() {
++    // Flush pending rows before shutdown so the last few navigations stick.
++    this._flush();
++  },
++
++  /* -------------------------------------------------------------- storage */
++
++  async _ensureTable() {
++    await lazy.PlacesUtils.withConnectionWrapper(
++      "KavachaPlacesAttribution.init",
++      async db => {
++        await db.execute(`
++          CREATE TABLE IF NOT EXISTS kavacha_history_workspaces (
++            id INTEGER PRIMARY KEY,
++            url TEXT NOT NULL,
++            visit_time INTEGER NOT NULL,
++            workspace_uuid TEXT NOT NULL
++          )
++        `);
++        await db.execute(`
++          CREATE INDEX IF NOT EXISTS idx_kavacha_history_workspaces_url
++            ON kavacha_history_workspaces(url, visit_time)
++        `);
++        await db.execute(`
++          CREATE INDEX IF NOT EXISTS idx_kavacha_history_workspaces_space
++            ON kavacha_history_workspaces(workspace_uuid, visit_time)
++        `);
++      }
++    );
++  },
++
++  /* --------------------------------------------------- history attribution */
++
++  _initWindow(win) {
++    if (!win?.gBrowser || win.__kavachaAttributionWired) {
++      return;
++    }
++    win.__kavachaAttributionWired = true;
++    if (lazy.PrivateBrowsingUtils.isWindowPrivate(win)) {
++      return; // never record private browsing
++    }
++    const self = this;
++    win.gBrowser.addTabsProgressListener({
++      onLocationChange(browser, webProgress, request, location, flags) {
++        if (
++          !webProgress.isTopLevel ||
++          flags & Ci.nsIWebProgressListener.LOCATION_CHANGE_SAME_DOCUMENT
++        ) {
++          return;
++        }
++        if (!/^https?$/.test(location.scheme)) {
++          return;
++        }
++        const tab = win.gBrowser.getTabForBrowser(browser);
++        // Essentials are cross-space by design — no single space to credit.
++        const workspaceId = tab?.getAttribute("zen-workspace-id");
++        if (!workspaceId || tab.hasAttribute("zen-essential")) {
++          return;
++        }
++        self._record(location.spec, workspaceId);
++      },
++    });
++  },
++
++  _record(url, workspaceId) {
++    this._queue.push({ url, time: Date.now(), workspaceId });
++    if (this._queue.length >= kMaxQueued) {
++      this._flush();
++      return;
++    }
++    if (!this._flushTimer) {
++      this._flushTimer = Cc["@mozilla.org/timer;1"].createInstance(
++        Ci.nsITimer
++      );
++      this._flushTimer.initWithCallback(
++        () => this._flush(),
++        kFlushDelayMs,
++        Ci.nsITimer.TYPE_ONE_SHOT
++      );
++    }
++  },
++
++  async _flush() {
++    if (this._flushTimer) {
++      this._flushTimer.cancel();
++      this._flushTimer = null;
++    }
++    const rows = this._queue.splice(0);
++    if (!rows.length) {
++      return;
++    }
++    try {
++      await this._tableReady;
++      await lazy.PlacesUtils.withConnectionWrapper(
++        "KavachaPlacesAttribution.flush",
++        async db => {
++          await db.executeTransaction(async () => {
++            for (const row of rows) {
++              await db.execute(
++                `INSERT INTO kavacha_history_workspaces
++                   (url, visit_time, workspace_uuid)
++                 VALUES (:url, :time, :workspaceId)`,
++                row
++              );
++            }
++          });
++        }
++      );
++    } catch (e) {
++      console.error("KavachaPlacesAttribution: flush failed", e);
++    }
++  },
++
++  /**
++   * Latest-visit workspace for each of the given URLs (universal search
++   * badges). Returns Map<url, workspaceUuid>; URLs never attributed are
++   * absent.
++   */
++  async latestWorkspaceForUrls(urls) {
++    const result = new Map();
++    if (!urls.length) {
++      return result;
++    }
++    await this._tableReady;
++    // Flush first so just-visited pages resolve too.
++    await this._flush();
++    try {
++      const placeholders = urls.map(() => "?").join(",");
++      const rows = await lazy.PlacesUtils.withConnectionWrapper(
++        "KavachaPlacesAttribution.lookup",
++        db =>
++          db.execute(
++            `SELECT url, workspace_uuid, MAX(visit_time)
++               FROM kavacha_history_workspaces
++              WHERE url IN (${placeholders})
++              GROUP BY url`,
++            urls
++          )
++      );
++      for (const row of rows) {
++        result.set(
++          row.getResultByName("url"),
++          row.getResultByName("workspace_uuid")
++        );
++      }
++    } catch (e) {
++      console.error("KavachaPlacesAttribution: lookup failed", e);
++    }
++    return result;
++  },
++
++  /* ------------------------------------------------ bookmark auto-assign */
++
++  async _onBookmarkAdded(events) {
++    if (!Services.prefs.getBoolPref(kAutoAssignPref, false)) {
++      return;
++    }
++    for (const event of events) {
++      if (
++        event.itemType !== lazy.PlacesUtils.bookmarks.TYPE_BOOKMARK ||
++        event.isTagging ||
++        // Only user-created bookmarks: sync/import/restore must never be
++        // silently scoped to whatever space happens to be active.
++        event.source !== lazy.PlacesUtils.bookmarks.SOURCES.DEFAULT
++      ) {
++        continue;
++      }
++      const win = Services.wm.getMostRecentWindow("navigator:browser");
++      const workspaceId = win?.gZenWorkspaces?.activeWorkspace;
++      if (!workspaceId || lazy.PrivateBrowsingUtils.isWindowPrivate(win)) {
++        continue;
++      }
++      try {
++        await this._assignBookmark(event.guid, workspaceId);
++      } catch (e) {
++        console.error("KavachaPlacesAttribution: auto-assign failed", e);
++      }
++    }
++  },
++
++  // Mirrors PlacesUIUtils.updateBookmarkWorkspaces' add path exactly (same
++  // table, change-tracking row, and moz_meta timestamp) so Zen's sync and
++  // cache-refresh observer treat auto-assignments like star-panel ones.
++  async _assignBookmark(bookmarkGuid, workspaceUuid) {
++    const now = Date.now();
++    await lazy.PlacesUtils.withConnectionWrapper(
++      "KavachaPlacesAttribution.assignBookmark",
++      async db => {
++        await db.executeTransaction(async () => {
++          await db.execute(
++            `INSERT OR IGNORE INTO zen_bookmarks_workspaces
++               (bookmark_guid, workspace_uuid, created_at, updated_at)
++             VALUES (:bookmarkGuid, :workspaceUuid, :now, :now)`,
++            { bookmarkGuid, workspaceUuid, now }
++          );
++          await db.execute(
++            `INSERT OR REPLACE INTO zen_bookmarks_workspaces_changes
++               (bookmark_guid, workspace_uuid, change_type, timestamp)
++             VALUES (:bookmarkGuid, :workspaceUuid, 'added', :timestamp)`,
++            { bookmarkGuid, workspaceUuid, timestamp: Math.floor(now / 1000) }
++          );
++          await db.execute(
++            `INSERT OR REPLACE INTO moz_meta (key, value)
++             VALUES ('zen_bookmarks_workspaces_last_change', :now)`,
++            { now }
++          );
++        });
++      }
++    );
++    Services.obs.notifyObservers(
++      null,
++      "workspace-bookmarks-updated",
++      JSON.stringify({ bookmarkGuid, workspaces: [workspaceUuid] })
++    );
++  },
++};
+diff --git a/src/zen/kavacha-search/KavachaUniversalSearch.mjs b/src/zen/kavacha-search/KavachaUniversalSearch.mjs
+index 1874bc5..d4995d6 100644
+--- a/src/zen/kavacha-search/KavachaUniversalSearch.mjs
++++ b/src/zen/kavacha-search/KavachaUniversalSearch.mjs
+@@ -139,6 +139,7 @@ class nsKavachaUniversalSearch {
+           group: type,
+           title: node.title || node.uri,
+           detail: this.#prettyUrl(node.uri),
++          url: node.uri,
+           workspaceId: null,
+           score: this.#score(q, node.title || "", node.uri) + i * 0.1,
+           action: () => {
+@@ -153,6 +154,26 @@ class nsKavachaUniversalSearch {
+     return out;
+   }
+ 
++  // History results carry the space they were last visited in (ADR 0005
++  // attribution table) so the badge renderer can label them.
++  async #searchHistoryWithBadges(q) {
++    const results = this.#searchPlaces(q, "history");
++    try {
++      const { KavachaPlacesAttribution } = ChromeUtils.importESModule(
++        "resource:///modules/KavachaPlacesAttribution.sys.mjs"
++      );
++      const spaceByUrl = await KavachaPlacesAttribution.latestWorkspaceForUrls(
++        results.map(r => r.url).filter(Boolean)
++      );
++      for (const r of results) {
++        r.workspaceId = spaceByUrl.get(r.url) || null;
++      }
++    } catch (e) {
++      console.error("KavachaUniversalSearch: attribution lookup failed", e);
++    }
++    return results;
++  }
++
+   async #searchNotes(q) {
+     if (gZenWorkspaces.privateWindowOrDisabled) {
+       return [];
+@@ -236,7 +257,7 @@ class nsKavachaUniversalSearch {
+       Promise.resolve().then(() => this.#searchTabs(q)),
+       this.#searchNotes(q),
+       Promise.resolve().then(() => this.#searchPlaces(q, "bookmarks")),
+-      Promise.resolve().then(() => this.#searchPlaces(q, "history")),
++      this.#searchHistoryWithBadges(q),
+       this.#searchDownloads(q),
+     ]);
+     if (token !== this.#queryToken) {

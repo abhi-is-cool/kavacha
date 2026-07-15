@@ -92,7 +92,12 @@ split view, command palette, session store.
         curated allowlist — website color scheme, autoplay, notification
         prompts, password saving, search suggestions — with baseline restore;
         "Workspace Settings" submenu
-- [ ] Per-workspace isolation options: bookmarks, history, password vault
+- [x] Per-workspace isolation options (ADR 0005 + patch
+      `0015-workspace-places-attribution.patch`, 2026-07-14): bookmarks isolate
+      via Zen's inherited side-table machinery plus a Kavacha auto-assign-to-
+      current-Space option; history gets per-space ATTRIBUTION (side table,
+      tab-layer recording, badges in universal search) — organization, not a
+      privacy boundary, by design; passwords stay global (user decision)
 - [ ] Per-workspace AI settings (schema shipped; wiring in Phase 6)
 - [x] Workspace templates (patch `0006-workspace-templates.patch`, 2026-07-12):
       "New Space from Template" → Student / Developer / Private, each composing a

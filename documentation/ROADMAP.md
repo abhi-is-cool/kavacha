@@ -133,15 +133,14 @@ session store, verified session-restore depth, the command registry) and do **no
 depend on the Phase 6 AI/graph, so they are buildable now — and their snapshots +
 branch relationships become early edges of the Phase 6 knowledge graph.
 
-- [ ] **Workspace state-history substrate** (shared foundation; **first task = its
-      own ADR**): a local, append-only store of point-in-time workspace snapshots
-      — tab set + order, per-tab session state (lean on SessionStore/TabStateCache,
-      don't duplicate it), notes reference, active-space metadata — keyed by space +
-      timestamp, with dedup + a retention policy so storage stays bounded.
-      Local-first; encrypted-at-rest option; rides Kavacha E2E sync (Phase 5) later.
-      Both features below read/write this. ADR must settle: snapshot shape &
-      granularity (per-space vs whole-window), what triggers a snapshot
-      (interval / meaningful-change / manual), retention/GC, and the sync stance.
+- [x] **Workspace state-history substrate** (ADR 0006 + patch
+      `0019-workspace-state-history.patch`, 2026-07-15): kavacha-snapshots.sqlite
+      stores per-space snapshots — tabs as SessionStore state strings, active
+      index, space metadata, an embedded copy of the note. Triggers: space
+      switch (outgoing), archive, quit, "Snapshot This Space" palette command.
+      Structural-hash dedup; count+age retention (100 / 90d prefs); local-only
+      until Phase 5 sync. snapshot()/listSnapshots()/getSnapshot() is the API
+      branching and time-travel consume
 - [ ] **Research branching**: fork a space at its current state into a named
       alternative path — a child space carrying a parent-branch pointer — then
       switch between branches, compare, and keep or discard. Explore alternatives

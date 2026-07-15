@@ -1,0 +1,407 @@
+# Patch 0019 — Workspace state-history substrate (ADR 0006; Phase 2.5).
+#
+# The foundation research branching and time-travel consume: an append-only
+# local store of point-in-time workspace snapshots, and raw material for the
+# Phase 6 knowledge graph. KavachaSpaceHistory.sys.mjs owns
+# kavacha-snapshots.sqlite in the profile (own file — snapshots are bulky
+# and append-only wants indexed pruning; not a places side table).
+#
+# A snapshot captures ONE space: tabs as SessionStore.getTabState() strings
+# (the exact serialization session restore round-trips — fidelity is what
+# restart/unloader testing verified; TabStateFlusher runs first so
+# scroll/form state is current), the active tab index, space identity
+# metadata, and a COPY of the space's note (what you were thinking is the
+# point; references would rot). Essentials excluded; pinned flagged.
+#
+# Triggers: space switch (outgoing space, fire-and-forget at the
+# changeWorkspace chokepoint), archive (captured before tabs unload), quit
+# (best-effort, no flush), and a "Snapshot This Space" palette command
+# (registry, patch 0018). No interval timer — switch+quit bound staleness
+# and a timer mostly makes dedup-discarded noise.
+#
+# Dedup: structural hash (ordered tab URLs + active index + note); volatile
+# tab-state fields deliberately excluded or dedup would never fire.
+# Retention: per-space count cap + age cap
+# (kavacha.history.max-snapshots-per-space=100 /
+#  kavacha.history.retention-days=90, GC after each write).
+# Sync: local-only until Phase 5, same stance as notes.
+#
+# STAGING NOTE: the ZenSpaceManager hunks were generated surgically against
+# the current upstream tip (the local dev checkout lags it) — whole-file
+# copies would have reverted upstream's newest workspace fixes.
+#
+# Marionette-verified: manual snapshot inserts; identical structure dedups
+# to null; structure change inserts again; space switch auto-snapshots the
+# outgoing space (reason=switch); payload reads back versioned with
+# parseable tab state; retention prunes to the cap; the palette shows
+# "Snapshot This Space". Applies on top of 0018.
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index 14a1f3d..0266c4b 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -41,5 +41,6 @@ kavacha-action-new-space-privacy = New Space from Template: Private
+ kavacha-action-workspace-notes = Workspace Notes
+ kavacha-action-archive-space = Archive Current Space
+ kavacha-action-universal-search = Search Everything
++kavacha-action-snapshot-space = Snapshot This Space
+ kavacha-action-sleep-tabs = Sleep Inactive Tabs Now
+ kavacha-action-toggle-newtab = Toggle New Tab Style (Dashboard / Search)
+diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
+index b452177..a036366 100644
+--- a/src/zen/common/modules/ZenStartup.mjs
++++ b/src/zen/common/modules/ZenStartup.mjs
+@@ -145,6 +145,11 @@ class ZenStartup {
+       ChromeUtils.importESModule(
+         "resource:///modules/KavachaPlacesAttribution.sys.mjs"
+       ).KavachaPlacesAttribution.init(window);
++      // Kavacha: workspace state-history substrate (ADR 0006; snapshots
++      // for branching + time-travel; singleton, idempotent).
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaSpaceHistory.sys.mjs"
++      ).KavachaSpaceHistory.init();
+       this.isReady = true;
+       this.promiseInitializedResolve();
+       delete this.promiseInitializedResolve;
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+index 8e70b63..21cf36b 100644
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -6,6 +6,7 @@ EXTRA_JS_MODULES += [
+   "sys/KavachaCommandRegistry.sys.mjs",
+   "sys/KavachaNewTab.sys.mjs",
+   "sys/KavachaPlacesAttribution.sys.mjs",
++  "sys/KavachaSpaceHistory.sys.mjs",
+   "sys/KavachaTabMemory.sys.mjs",
+   "sys/ZenActorsManager.sys.mjs",
+   "sys/ZenCustomizableUI.sys.mjs",
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+index 28478a6..7a54a63 100644
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -78,6 +78,20 @@ const BUILTIN = [
+     domain: KavachaCommandDomain.PRODUCTIVITY,
+     isAvailable: kNotPrivate,
+   },
++  {
++    l10nId: "kavacha-action-snapshot-space",
++    command: window =>
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaSpaceHistory.sys.mjs"
++      ).KavachaSpaceHistory.snapshotSpace(
++        window,
++        window.gZenWorkspaces.activeWorkspace,
++        "manual"
++      ),
++    icon: "chrome://browser/skin/zen-icons/camera.svg",
++    domain: KavachaCommandDomain.PRODUCTIVITY,
++    isAvailable: kNotPrivate,
++  },
+   {
+     l10nId: "kavacha-action-sleep-tabs",
+     command: () =>
+diff --git a/src/zen/common/sys/KavachaSpaceHistory.sys.mjs b/src/zen/common/sys/KavachaSpaceHistory.sys.mjs
+new file mode 100644
+index 0000000..55988c0
+--- /dev/null
++++ b/src/zen/common/sys/KavachaSpaceHistory.sys.mjs
+@@ -0,0 +1,264 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha workspace state-history substrate (ADR 0006; ROADMAP Phase 2.5).
++//
++// An append-only, local-only store of point-in-time workspace snapshots —
++// the foundation research branching and time-travel consume, and raw
++// material for the Phase 6 knowledge graph. A snapshot captures one space:
++// its tabs as SessionStore tab-state strings (the exact serialization
++// session restore round-trips, so fidelity is what restart testing
++// verified), the active tab index, and a copy of the space's note.
++//
++// Triggers (wired elsewhere): space switch (outgoing space), archive, quit,
++// and the "Snapshot this Space" palette command. Structural dedup skips a
++// snapshot when ordered tab URLs + active index + note match the previous
++// one; count+age retention bounds the store.
++//
++// Process singleton; init from ZenStartup is idempotent.
++
++const lazy = {};
++ChromeUtils.defineESModuleGetters(lazy, {
++  SessionStore: "resource:///modules/sessionstore/SessionStore.sys.mjs",
++  Sqlite: "resource://gre/modules/Sqlite.sys.mjs",
++  TabStateFlusher: "resource:///modules/sessionstore/TabStateFlusher.sys.mjs",
++  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
++});
++
++const kMaxPerSpacePref = "kavacha.history.max-snapshots-per-space";
++const kRetentionDaysPref = "kavacha.history.retention-days";
++const kPayloadVersion = 1;
++
++function structureHash(str) {
++  let h = 5381;
++  for (let i = 0; i < str.length; i++) {
++    h = ((h << 5) + h + str.charCodeAt(i)) | 0;
++  }
++  return String(h >>> 0);
++}
++
++export const KavachaSpaceHistory = {
++  _initialized: false,
++  _dbPromise: null,
++
++  init() {
++    if (this._initialized) {
++      return;
++    }
++    this._initialized = true;
++    Services.obs.addObserver(this, "quit-application-granted");
++  },
++
++  observe(subject, topic) {
++    if (topic === "quit-application-granted") {
++      // Best-effort: capture each window's active space on the way out.
++      for (const win of Services.wm.getEnumerator("navigator:browser")) {
++        const uuid = win.gZenWorkspaces?.activeWorkspace;
++        if (uuid) {
++          this.snapshotSpace(win, uuid, "quit", { flush: false });
++        }
++      }
++    }
++  },
++
++  /* -------------------------------------------------------------- storage */
++
++  _getDb() {
++    if (!this._dbPromise) {
++      this._dbPromise = (async () => {
++        const db = await lazy.Sqlite.openConnection({
++          path: PathUtils.join(PathUtils.profileDir, "kavacha-snapshots.sqlite"),
++        });
++        await db.execute(`
++          CREATE TABLE IF NOT EXISTS snapshots (
++            id INTEGER PRIMARY KEY,
++            space_uuid TEXT NOT NULL,
++            created_at INTEGER NOT NULL,
++            reason TEXT NOT NULL,
++            structure_hash TEXT NOT NULL,
++            tab_count INTEGER NOT NULL,
++            payload TEXT NOT NULL
++          )
++        `);
++        await db.execute(`
++          CREATE INDEX IF NOT EXISTS idx_snapshots_space
++            ON snapshots(space_uuid, created_at)
++        `);
++        lazy.Sqlite.shutdown.addBlocker(
++          "KavachaSpaceHistory: close db",
++          () => db.close()
++        );
++        return db;
++      })();
++    }
++    return this._dbPromise;
++  },
++
++  /* -------------------------------------------------------------- capture */
++
++  /**
++   * Snapshot one space as it exists in `win` right now. Fire-and-forget
++   * safe: never throws, resolves to the new snapshot id, or null when
++   * skipped (dedup, empty space, private window).
++   */
++  async snapshotSpace(win, spaceUuid, reason, { flush = true } = {}) {
++    try {
++      if (
++        !win?.gBrowser ||
++        win.closed ||
++        lazy.PrivateBrowsingUtils.isWindowPrivate(win)
++      ) {
++        return null;
++      }
++      const tabs = win.gBrowser.tabs.filter(
++        tab =>
++          tab.getAttribute("zen-workspace-id") === spaceUuid &&
++          !tab.hasAttribute("zen-essential") &&
++          !tab.hasAttribute("zen-empty-tab") &&
++          !tab.closing
++      );
++      if (!tabs.length) {
++        return null;
++      }
++      if (flush) {
++        // Scroll/form state lives in the content process until flushed.
++        await Promise.all(
++          tabs.map(tab =>
++            lazy.TabStateFlusher.flush(tab.linkedBrowser).catch(() => {})
++          )
++        );
++      }
++
++      const captured = [];
++      for (const tab of tabs) {
++        try {
++          const state = lazy.SessionStore.getTabState(tab);
++          const parsed = JSON.parse(state);
++          const entry = parsed.entries?.[(parsed.index || 1) - 1];
++          captured.push({
++            state,
++            pinned: !!tab.pinned,
++            url: entry?.url || "about:blank",
++          });
++        } catch (e) {
++          // A tab mid-teardown or unrestorable; skip it, keep the rest.
++        }
++      }
++      if (!captured.length) {
++        return null;
++      }
++      const activeIndex = tabs.indexOf(win.gBrowser.selectedTab);
++
++      let note = "";
++      try {
++        const notes = await win.gZenWorkspaces.kavachaGetAllNotes();
++        note = notes[spaceUuid]?.content || "";
++      } catch (e) {
++        // notes unavailable (private/disabled) — snapshot without
++      }
++      const space = win.gZenWorkspaces.getWorkspaceFromId(spaceUuid);
++
++      const hash = structureHash(
++        JSON.stringify({
++          urls: captured.map(t => t.url),
++          activeIndex,
++          note,
++        })
++      );
++
++      const db = await this._getDb();
++      const last = await db.execute(
++        `SELECT structure_hash FROM snapshots
++          WHERE space_uuid = :spaceUuid
++          ORDER BY created_at DESC LIMIT 1`,
++        { spaceUuid }
++      );
++      if (last.length && last[0].getResultByName("structure_hash") === hash) {
++        return null; // nothing structural changed since the previous snapshot
++      }
++
++      const payload = JSON.stringify({
++        version: kPayloadVersion,
++        spaceName: space?.name || "",
++        spaceIcon: space?.icon || null,
++        containerTabId: space?.containerTabId ?? 0,
++        activeIndex,
++        note,
++        tabs: captured,
++      });
++      const now = Date.now();
++      await db.execute(
++        `INSERT INTO snapshots
++           (space_uuid, created_at, reason, structure_hash, tab_count, payload)
++         VALUES (:spaceUuid, :now, :reason, :hash, :tabCount, :payload)`,
++        { spaceUuid, now, reason, hash, tabCount: captured.length, payload }
++      );
++      const idRow = await db.execute(
++        "SELECT last_insert_rowid() AS id"
++      );
++      await this._gc(db, spaceUuid);
++      return idRow[0].getResultByName("id");
++    } catch (e) {
++      console.error("KavachaSpaceHistory: snapshot failed", e);
++      return null;
++    }
++  },
++
++  async _gc(db, spaceUuid) {
++    const maxPerSpace = Services.prefs.getIntPref(kMaxPerSpacePref, 100);
++    const retentionDays = Services.prefs.getIntPref(kRetentionDaysPref, 90);
++    await db.execute(
++      `DELETE FROM snapshots
++        WHERE space_uuid = :spaceUuid
++          AND id NOT IN (
++            SELECT id FROM snapshots WHERE space_uuid = :spaceUuid
++             ORDER BY created_at DESC LIMIT :maxPerSpace
++          )`,
++      { spaceUuid, maxPerSpace }
++    );
++    const cutoff = Date.now() - retentionDays * 86_400_000;
++    await db.execute("DELETE FROM snapshots WHERE created_at < :cutoff", {
++      cutoff,
++    });
++  },
++
++  /* ---------------------------------------------------------------- query */
++
++  /** Newest-first snapshot metadata for one space (no payloads). */
++  async listSnapshots(spaceUuid) {
++    const db = await this._getDb();
++    const rows = await db.execute(
++      `SELECT id, created_at, reason, tab_count FROM snapshots
++        WHERE space_uuid = :spaceUuid ORDER BY created_at DESC`,
++      { spaceUuid }
++    );
++    return rows.map(r => ({
++      id: r.getResultByName("id"),
++      createdAt: r.getResultByName("created_at"),
++      reason: r.getResultByName("reason"),
++      tabCount: r.getResultByName("tab_count"),
++    }));
++  },
++
++  /** One full snapshot: metadata + parsed payload; null if unknown id. */
++  async getSnapshot(id) {
++    const db = await this._getDb();
++    const rows = await db.execute(
++      `SELECT space_uuid, created_at, reason, payload
++         FROM snapshots WHERE id = :id`,
++      { id }
++    );
++    if (!rows.length) {
++      return null;
++    }
++    const r = rows[0];
++    return {
++      id,
++      spaceUuid: r.getResultByName("space_uuid"),
++      createdAt: r.getResultByName("created_at"),
++      reason: r.getResultByName("reason"),
++      payload: JSON.parse(r.getResultByName("payload")),
++    };
++  },
++};
+diff --git a/src/zen/spaces/ZenSpaceManager.mjs b/src/zen/spaces/ZenSpaceManager.mjs
+index cce5eac..136c5f5 100644
+--- a/src/zen/spaces/ZenSpaceManager.mjs
++++ b/src/zen/spaces/ZenSpaceManager.mjs
+@@ -1940,6 +1940,19 @@ class nsZenWorkspaces {
+     if (!this.workspaceEnabled) {
+       return workspace;
+     }
++    // Kavacha state-history (ADR 0006): snapshot the OUTGOING space at the
++    // switch chokepoint — fire-and-forget so the switch animation never
++    // waits on capture or the database.
++    try {
++      const outgoing = this.activeWorkspace;
++      if (outgoing && outgoing !== workspace?.uuid) {
++        ChromeUtils.importESModule(
++          "resource:///modules/KavachaSpaceHistory.sys.mjs"
++        ).KavachaSpaceHistory.snapshotSpace(window, outgoing, "switch");
++      }
++    } catch (e) {
++      console.error("gZenWorkspaces: history snapshot failed", e);
++    }
+     this.#currentSpaceSwitchContext.animations.forEach(animation => {
+       animation.complete();
+     });
+@@ -3690,6 +3703,11 @@ class nsZenWorkspaces {
+     if (!workspace || workspace.archived || visible.length <= 1) {
+       return;
+     }
++    // Kavacha state-history (ADR 0006): an archive is exactly the state the
++    // user may want back weeks later — capture it before tabs unload.
++    await ChromeUtils.importESModule(
++      "resource:///modules/KavachaSpaceHistory.sys.mjs"
++    ).KavachaSpaceHistory.snapshotSpace(window, workspace.uuid, "archive");
+     if (this.isWorkspaceActive(workspace)) {
+       const next = visible.find(w => w.uuid !== workspace.uuid);
+       await this.changeWorkspace(next);

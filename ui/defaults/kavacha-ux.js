@@ -36,3 +36,7 @@ pref("kavacha.tabs.unload-after-minutes", 30);
 // zen-theme.css. The welcome flow offers light/auto; no accent is set here
 // (user decision 2026-07-13 — the welcome flow asks).
 pref("zen.view.window.scheme", 0);
+
+// Workspace state-history (ADR 0006): per-space snapshot retention bounds.
+pref("kavacha.history.max-snapshots-per-space", 100);
+pref("kavacha.history.retention-days", 90);

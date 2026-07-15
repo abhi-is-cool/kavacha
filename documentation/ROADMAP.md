@@ -125,7 +125,7 @@ split view, command palette, session store.
 
 ## Phase 3 — Customization Studio & Marketplace (Months 4–6) — Y1
 
-- [ ] **Distinct default look — must not read as a Zen fork** (see
+- [x] **Distinct default look — must not read as a Zen fork** (see
       [DIFFERENTIATION.md](DIFFERENTIATION.md) § Visual identity)
   - [x] ~~Kavacha gold accent by default~~ reverted 2026-07-13 (user decision:
         no default accent — picking a color is the user's; `ui/defaults/kavacha-ux.js`)

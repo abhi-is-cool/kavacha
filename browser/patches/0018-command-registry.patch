@@ -1,0 +1,329 @@
+# Patch 0018 — Kavacha command registry (ROADMAP Phase 3; PLATFORM_PLAN.md).
+#
+# Turns the ad-hoc Kavacha entries patch 0007 bolted onto Zen's palette into
+# a real registry: KavachaCommandRegistry.sys.mjs owns the Kavacha commands
+# (tagged by domain — navigation / organization / productivity / appearance)
+# and exposes register()/all(), the surface plugins and late-initializing
+# features extend. ZenUBGlobalActions spreads all() into its action list and
+# binds an onRegister() sink so runtime registrations land in the live
+# palette (globalActions is mutated in place, which the provider reads).
+#
+# The six 0007 commands (template spaces, notes, archive, search) move into
+# the registry unchanged; two new commands expose already-shipped features
+# that had no palette entry:
+#   - "Sleep Inactive Tabs Now" — KavachaTabMemory.sleepBackgroundTabsNow()
+#     (new; _sweep() gained an optional forced-cutoff arg so a manual sweep
+#     discards every eligible background tab regardless of the time
+#     threshold; the repeating timer still calls _sweep() with no arg).
+#   - "Toggle New Tab Style (Dashboard / Search)" — flips
+#     zen.urlbar.replace-newtab; KavachaNewTab re-points about:newtab live.
+# Restore-archived-space is intentionally omitted: it needs a picker (which
+# of several archived spaces?) and has no clean single-call opener — stays
+# reachable via the Archived Spaces menu. Domain-grouped display in the
+# palette is a later enhancement; domain is metadata for now.
+#
+# Marionette-verified: 8 commands across 4 domains reach the palette with
+# localized labels; runtime register() grows the live palette; sleep-tabs
+# discards background tabs and spares the active one; toggle-newtab flips
+# the pref and re-points about:newtab. Applies on top of 0017.
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index 7c20fc7..14a1f3d 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -41,3 +41,5 @@ kavacha-action-new-space-privacy = New Space from Template: Private
+ kavacha-action-workspace-notes = Workspace Notes
+ kavacha-action-archive-space = Archive Current Space
+ kavacha-action-universal-search = Search Everything
++kavacha-action-sleep-tabs = Sleep Inactive Tabs Now
++kavacha-action-toggle-newtab = Toggle New Tab Style (Dashboard / Search)
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+index 6b1ab18..8e70b63 100644
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -3,6 +3,7 @@
+ # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ 
+ EXTRA_JS_MODULES += [
++  "sys/KavachaCommandRegistry.sys.mjs",
+   "sys/KavachaNewTab.sys.mjs",
+   "sys/KavachaPlacesAttribution.sys.mjs",
+   "sys/KavachaTabMemory.sys.mjs",
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+new file mode 100644
+index 0000000..28478a6
+--- /dev/null
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -0,0 +1,137 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha command registry (ROADMAP Phase 3; PLATFORM_PLAN.md § "Command
++// registry"). Every Kavacha feature exposes itself here as a Cmd+K command,
++// organized by domain, and it is the surface plugins will extend.
++//
++// The palette (ZenUBGlobalActions) spreads all() into its action list at
++// import and binds a live sink so register() calls made at runtime — by
++// late-initializing features or future plugins — appear immediately.
++//
++// A command is: { l10nId, command(window)|"commandId", icon, domain,
++// isAvailable?(window) }. Domain is metadata (grouped display is a later
++// palette enhancement); the l10nId keys browser/zen-command-palette.ftl.
++
++export const KavachaCommandDomain = {
++  NAVIGATION: "navigation",
++  ORGANIZATION: "organization",
++  PRODUCTIVITY: "productivity",
++  APPEARANCE: "appearance",
++};
++
++const kNotPrivate = window => !window.gZenWorkspaces?.privateWindowOrDisabled;
++const kHasBackgroundSpaces = window =>
++  kNotPrivate(window) &&
++  window.gZenWorkspaces?.getWorkspaces?.().filter(w => !w.archived).length > 1;
++
++// Built-in Kavacha commands. Ordered by domain for readability; the palette
++// fuzzy-matches by label so on-screen order comes from match score.
++const BUILTIN = [
++  // -- Navigation ----------------------------------------------------------
++  {
++    l10nId: "kavacha-action-universal-search",
++    command: window => window.gKavachaUniversalSearch.open(),
++    icon: "chrome://browser/skin/zen-icons/search-glass.svg",
++    domain: KavachaCommandDomain.NAVIGATION,
++  },
++
++  // -- Organization --------------------------------------------------------
++  {
++    l10nId: "kavacha-action-new-space-student",
++    command: window =>
++      window.gZenWorkspaces.createWorkspaceFromTemplate("student"),
++    icon: "chrome://browser/skin/zen-icons/selectable/school.svg",
++    domain: KavachaCommandDomain.ORGANIZATION,
++    isAvailable: kNotPrivate,
++  },
++  {
++    l10nId: "kavacha-action-new-space-developer",
++    command: window =>
++      window.gZenWorkspaces.createWorkspaceFromTemplate("developer"),
++    icon: "chrome://browser/skin/zen-icons/selectable/code.svg",
++    domain: KavachaCommandDomain.ORGANIZATION,
++    isAvailable: kNotPrivate,
++  },
++  {
++    l10nId: "kavacha-action-new-space-privacy",
++    command: window =>
++      window.gZenWorkspaces.createWorkspaceFromTemplate("privacy"),
++    icon: "chrome://browser/skin/zen-icons/selectable/lock-closed.svg",
++    domain: KavachaCommandDomain.ORGANIZATION,
++    isAvailable: kNotPrivate,
++  },
++  {
++    l10nId: "kavacha-action-archive-space",
++    command: window => window.gZenWorkspaces.archiveWorkspace(),
++    icon: "chrome://browser/skin/zen-icons/selectable/inbox.svg",
++    domain: KavachaCommandDomain.ORGANIZATION,
++    isAvailable: kHasBackgroundSpaces,
++  },
++
++  // -- Productivity --------------------------------------------------------
++  {
++    l10nId: "kavacha-action-workspace-notes",
++    command: window => window.gZenWorkspaces.openWorkspaceNotes(),
++    icon: "chrome://browser/skin/zen-icons/selectable/page.svg",
++    domain: KavachaCommandDomain.PRODUCTIVITY,
++    isAvailable: kNotPrivate,
++  },
++  {
++    l10nId: "kavacha-action-sleep-tabs",
++    command: () =>
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaTabMemory.sys.mjs"
++      ).KavachaTabMemory.sleepBackgroundTabsNow(),
++    icon: "chrome://browser/skin/zen-icons/selectable/clock.svg",
++    domain: KavachaCommandDomain.PRODUCTIVITY,
++  },
++
++  // -- Appearance ----------------------------------------------------------
++  {
++    l10nId: "kavacha-action-toggle-newtab",
++    // Flip between the floating search and the Kavacha dashboard; KavachaNewTab
++    // observes the pref and re-points about:newtab live.
++    command: () => {
++      const on = Services.prefs.getBoolPref("zen.urlbar.replace-newtab", true);
++      Services.prefs.setBoolPref("zen.urlbar.replace-newtab", !on);
++    },
++    icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++    domain: KavachaCommandDomain.APPEARANCE,
++  },
++];
++
++const _registered = [];
++const _sinks = [];
++
++export const KavachaCommandRegistry = {
++  domains: KavachaCommandDomain,
++
++  /**
++   * Register a command at runtime (late features, plugins). Returns an
++   * unregister function. Live palettes pick it up via the bound sink.
++   */
++  register(command) {
++    _registered.push(command);
++    for (const sink of _sinks) {
++      sink(command);
++    }
++    return () => {
++      const i = _registered.indexOf(command);
++      if (i >= 0) {
++        _registered.splice(i, 1);
++      }
++    };
++  },
++
++  /** All commands, built-ins first, in registration order. */
++  all() {
++    return [...BUILTIN, ..._registered];
++  },
++
++  /** ZenUBGlobalActions binds a sink so runtime registrations reach it. */
++  onRegister(sink) {
++    _sinks.push(sink);
++  },
++};
+diff --git a/src/zen/common/sys/KavachaTabMemory.sys.mjs b/src/zen/common/sys/KavachaTabMemory.sys.mjs
+index fcb927f..d116bf3 100644
+--- a/src/zen/common/sys/KavachaTabMemory.sys.mjs
++++ b/src/zen/common/sys/KavachaTabMemory.sys.mjs
+@@ -65,12 +65,20 @@ export const KavachaTabMemory = {
+     );
+   },
+ 
+-  async _sweep() {
++  // Manual "sleep now" (command palette): discard every eligible background
++  // tab immediately, ignoring the inactivity threshold — cutoff = now, so
++  // any tab not currently selected qualifies. Frees memory on demand.
++  async sleepBackgroundTabsNow() {
++    await this._sweep(Date.now());
++  },
++
++  async _sweep(forcedCutoff) {
+     const minutes = this._thresholdMinutes;
+-    if (minutes <= 0) {
++    if (forcedCutoff === undefined && minutes <= 0) {
+       return;
+     }
+-    const cutoff = Date.now() - minutes * 60_000;
++    const cutoff =
++      forcedCutoff !== undefined ? forcedCutoff : Date.now() - minutes * 60_000;
+     for (const win of Services.wm.getEnumerator("navigator:browser")) {
+       if (win.closed || !win.gBrowser) {
+         continue;
+diff --git a/src/zen/urlbar/ZenUBGlobalActions.sys.mjs b/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
+index bf855fb..23ee2a8 100644
+--- a/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
++++ b/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
+@@ -3,6 +3,7 @@
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+ import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
++import { KavachaCommandRegistry } from "resource:///modules/KavachaCommandRegistry.sys.mjs";
+ 
+ const lazy = {};
+ 
+@@ -257,68 +258,35 @@ const globalActionsTemplate = [
+       return isNotEmptyTab(window);
+     },
+   },
+-  // Kavacha: workspace-template commands (command registry, PLATFORM_PLAN.md).
+-  {
+-    l10nId: "kavacha-action-new-space-student",
+-    command: window =>
+-      window.gZenWorkspaces.createWorkspaceFromTemplate("student"),
+-    icon: "chrome://browser/skin/zen-icons/selectable/school.svg",
+-    isAvailable: window => !window.gZenWorkspaces?.privateWindowOrDisabled,
+-  },
+-  {
+-    l10nId: "kavacha-action-new-space-developer",
+-    command: window =>
+-      window.gZenWorkspaces.createWorkspaceFromTemplate("developer"),
+-    icon: "chrome://browser/skin/zen-icons/selectable/code.svg",
+-    isAvailable: window => !window.gZenWorkspaces?.privateWindowOrDisabled,
+-  },
+-  {
+-    l10nId: "kavacha-action-new-space-privacy",
+-    command: window =>
+-      window.gZenWorkspaces.createWorkspaceFromTemplate("privacy"),
+-    icon: "chrome://browser/skin/zen-icons/selectable/lock-closed.svg",
+-    isAvailable: window => !window.gZenWorkspaces?.privateWindowOrDisabled,
+-  },
+-  {
+-    l10nId: "kavacha-action-workspace-notes",
+-    command: window => window.gZenWorkspaces.openWorkspaceNotes(),
+-    icon: "chrome://browser/skin/zen-icons/selectable/page.svg",
+-    isAvailable: window => !window.gZenWorkspaces?.privateWindowOrDisabled,
+-  },
+-  {
+-    l10nId: "kavacha-action-universal-search",
+-    command: window => window.gKavachaUniversalSearch.open(),
+-    icon: "chrome://browser/skin/zen-icons/search-glass.svg",
+-  },
+-  {
+-    l10nId: "kavacha-action-archive-space",
+-    command: window => window.gZenWorkspaces.archiveWorkspace(),
+-    icon: "chrome://browser/skin/zen-icons/selectable/inbox.svg",
++  // Kavacha commands live in the command registry (the surface plugins
++  // extend); spread them in so they share the palette's matching + payload.
++  ...KavachaCommandRegistry.all(),
++];
++
++function wrapAction(action) {
++  return {
+     isAvailable: window => {
+-      const spaces = window.gZenWorkspaces;
+       return (
+-        !spaces?.privateWindowOrDisabled &&
+-        spaces.getWorkspaces().filter(w => !w.archived).length > 1
++        window.document
++          .getElementById(action.command)
++          ?.getAttribute("disabled") !== "true"
+       );
+     },
+-  },
+-];
++    commandId:
++      typeof action.command === "string"
++        ? action.command
++        : `zen:global-action-${action.l10nId.replace("zen-action-", "")}`,
++    extraPayload: {},
++    ...action,
++    get label() {
++      return lazy.l10n.formatValueSync(action.l10nId);
++    },
++  };
++}
+ 
+-export const globalActions = globalActionsTemplate.map(action => ({
+-  isAvailable: window => {
+-    return (
+-      window.document
+-        .getElementById(action.command)
+-        ?.getAttribute("disabled") !== "true"
+-    );
+-  },
+-  commandId:
+-    typeof action.command === "string"
+-      ? action.command
+-      : `zen:global-action-${action.l10nId.replace("zen-action-", "")}`,
+-  extraPayload: {},
+-  ...action,
+-  get label() {
+-    return lazy.l10n.formatValueSync(action.l10nId);
+-  },
+-}));
++export const globalActions = globalActionsTemplate.map(wrapAction);
++
++// Runtime registrations (late features, plugins) land in the live palette.
++KavachaCommandRegistry.onRegister(command => {
++  globalActions.push(wrapAction(command));
++});

@@ -1,0 +1,88 @@
+# Patch 0016 — Kavacha Midnight as the default look (ROADMAP Phase 3).
+#
+# The canonical token source is customization/themes/kavacha-midnight/
+# (colors.json); this patch mirrors its surface tokens into a chrome CSS
+# layer %-included at the END of zen-theme.css so the overrides win the
+# cascade at equal specificity. Strategy: override only the BASE tokens Zen
+# derives everything from (--zen-branding-dark + the few directly-defined
+# surfaces) — hovers, inputs, borders and gradients all re-derive through
+# Zen's color-mix chains, so the whole chrome takes the midnight cast from
+# a handful of declarations.
+#
+# Deliberately NOT set: --zen-primary-color / zen.theme.accent-color (user
+# decision 2026-07-13: no default accent — the welcome flow asks, patch
+# 0017). supports:["dark"], so every override sits in the dark half of
+# light-dark() and light mode stays stock. Dark is the default scheme via
+# zen.view.window.scheme=0 in ui/defaults/kavacha-ux.js (branding prefs).
+#
+# Marionette-verified: --zen-branding-dark resolves to #14111f on a fresh
+# profile with the baked defaults. Applies on top of 0015.
+diff --git a/src/zen/common/styles/zen-theme.css b/src/zen/common/styles/zen-theme.css
+index c357354..dad9455 100644
+--- a/src/zen/common/styles/zen-theme.css
++++ b/src/zen/common/styles/zen-theme.css
+@@ -343,3 +343,5 @@
+ }
+ 
+ %include zen-buttons.css
++
++%include ../../kavacha-theme/kavacha-midnight.inc.css
+diff --git a/src/zen/kavacha-theme/kavacha-midnight.inc.css b/src/zen/kavacha-theme/kavacha-midnight.inc.css
+new file mode 100644
+index 0000000..c65cf54
+--- /dev/null
++++ b/src/zen/kavacha-theme/kavacha-midnight.inc.css
+@@ -0,0 +1,53 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* ==========================================================================
++   Kavacha Midnight — the default Kavacha look (ROADMAP Phase 3;
++   customization/themes/kavacha-midnight is the canonical token source).
++
++   %include'd at the END of zen-theme.css so these declarations win the
++   cascade over Zen's defaults at equal specificity. Strategy: override only
++   the BASE surface tokens Zen derives everything from — hovers, inputs,
++   borders and gradients all re-derive through Zen's color-mix chains, so
++   the whole chrome takes the midnight cast from a handful of lines.
++
++   Deliberately NOT set: --zen-primary-color (the accent). User decision
++   2026-07-13: no default accent — the welcome flow asks. Midnight themes
++   surfaces only; supports: ["dark"], so every override sits in the dark
++   half of light-dark() and light mode stays stock.
++   ========================================================================== */
++
++:host(:is(.anonymous-content-host, notification-message)),
++:root {
++  /* Token mirror of customization/themes/kavacha-midnight/colors.json
++     (accent tokens intentionally omitted — see header). */
++  --kavacha-surface: #14111f;
++  --kavacha-surface-elevated: #1d1930;
++  --kavacha-surface-sunken: #0e0b18;
++  --kavacha-border: #2e2846;
++  --kavacha-text-primary: #edeaf7;
++  --kavacha-text-secondary: #a79fc4;
++
++  /* The base every --zen-colors-* mix derives from. */
++  --zen-branding-dark: var(--kavacha-surface);
++
++  /* Surfaces Zen defines directly rather than deriving. */
++  --zen-main-browser-background: light-dark(
++    rgb(235, 235, 235),
++    var(--kavacha-surface)
++  );
++  --zen-dialog-background: light-dark(#fafbff, var(--kavacha-surface-elevated));
++  --zen-urlbar-background: light-dark(
++    color-mix(in srgb, var(--zen-primary-color) 3%, #f4f4f4 97%),
++    color-mix(
++      in srgb,
++      var(--zen-primary-color) 4%,
++      var(--kavacha-surface-elevated) 96%
++    )
++  );
++  --zen-colors-border: light-dark(
++    color-mix(in srgb, var(--zen-colors-secondary) 50%, transparent),
++    color-mix(in srgb, var(--zen-colors-secondary) 20%, var(--kavacha-border))
++  );
++}

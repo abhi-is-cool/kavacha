@@ -1,0 +1,455 @@
+# Patch 0017 — Kavacha welcome flow (ROADMAP Phase 3: own welcome flow).
+#
+# Reuses Zen's excellent welcome framework (page sequencing, sidebar
+# titles/buttons, spring animations, l10n) and replaces the PAGES:
+#   kept    — import + set-default-browser; default search engine (both
+#             vendor-neutral and genuinely useful)
+#   removed — Zen's essentials picker (Zen-branded site list) and the
+#             per-space gradient picker; the "zen basics" folder and
+#             essential-pinning in finish() went with them
+#   added   — Choose your look (Midnight default / Light / Auto ->
+#             zen.view.window.scheme, applies live behind the card);
+#             Pick your color (swatch grid -> zen.theme.accent-color;
+#             system-accent swatch clears it; live preview via inline
+#             --zen-primary-color; this is where the no-default-accent
+#             decision becomes the user's choice); How should new tabs
+#             open? (centered floating search vs Kavacha dashboard ->
+#             zen.urlbar.replace-newtab)
+# Title becomes "Welcome to / your personal internet"; the finish
+# animation mark is the Kavacha branding logo instead of Zen's icon.
+#
+# Testing note: brand-new profiles restart once during first startup
+# (add-on/langpack init), which consumes zen.welcome-screen.seen in the
+# throwaway first session — pin it false in user.js when testing.
+#
+# Marionette-verified on a fresh profile: welcome shows naturally, all
+# five pages advance, accent + scheme + newtab prefs persist, finish
+# removes the overlay and restores chrome. Applies on top of 0016.
+diff --git a/locales/en-US/browser/browser/zen-welcome.ftl b/locales/en-US/browser/browser/zen-welcome.ftl
+index 1967595..884792b 100644
+--- a/locales/en-US/browser/browser/zen-welcome.ftl
++++ b/locales/en-US/browser/browser/zen-welcome.ftl
+@@ -3,7 +3,7 @@
+ # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ 
+ zen-welcome-title-line1 = Welcome to
+-zen-welcome-title-line2 = a calmer internet
++zen-welcome-title-line2 = your personal internet
+ 
+ zen-welcome-import-title = A Fresh Start, Same Bookmarks
+ zen-welcome-import-description-1 = Your bookmarks, history, and passwords are like a trail of breadcrumbs through the internet—don’t leave them behind!
+@@ -31,3 +31,19 @@ zen-welcome-default-search-description = Choose your default search engine. You
+ zen-welcome-skip-button = Skip
+ 
+ zen-welcome-finished = Your Zen has been set up correctly!
++
++## Kavacha welcome pages
++
++kavacha-welcome-appearance-title = Choose your look
++kavacha-welcome-appearance-description = Kavacha Midnight is the default. Change it anytime in Settings.
++kavacha-welcome-appearance-midnight = Midnight
++kavacha-welcome-appearance-light = Light
++kavacha-welcome-appearance-auto = Match my system
++kavacha-welcome-color-title = Pick your color
++kavacha-welcome-color-description = Kavacha ships without an accent color — this one is yours to choose.
++kavacha-welcome-color-system =
++    .title = Use the system accent color
++kavacha-welcome-newtab-title = How should new tabs open?
++kavacha-welcome-newtab-description = Both stay out of your way. You can switch anytime in Settings.
++kavacha-welcome-newtab-floating = A centered search bar, ready to type
++kavacha-welcome-newtab-dashboard = A quiet dashboard: clock, greeting, and a daily photo
+diff --git a/src/zen/welcome/ZenWelcome.mjs b/src/zen/welcome/ZenWelcome.mjs
+index d57446c..e33fb67 100644
+--- a/src/zen/welcome/ZenWelcome.mjs
++++ b/src/zen/welcome/ZenWelcome.mjs
+@@ -3,7 +3,6 @@
+ // file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ 
+ {
+-  let _tabsToPinEssentials = [];
+   let lazy = {};
+ 
+   ChromeUtils.defineESModuleGetters(lazy, {
+@@ -247,7 +246,6 @@
+       );
+       document.getElementById("zen-welcome-page-content").remove();
+       await this.animHeart();
+-      await this.#pinRemainingTabs();
+       await animate("#zen-welcome-pages", { opacity: [1, 0] });
+       document.getElementById("zen-welcome").remove();
+       document.documentElement.removeAttribute("zen-welcome-stage");
+@@ -268,21 +266,6 @@
+       gZenUIManager.showToast("zen-welcome-finished");
+     }
+ 
+-    async #pinRemainingTabs() {
+-      for (const tab of _tabsToPinEssentials) {
+-        tab.removeAttribute("pending"); // Make it appear loaded
+-        gZenPinnedTabManager.addToEssentials(tab);
+-      }
+-      let tabsToGroup = [];
+-      if (!gBrowser.selectedTab.hasAttribute("zen-empty-tab")) {
+-        tabsToGroup.push(gBrowser.selectedTab);
+-      }
+-      gZenFolders.createFolder(tabsToGroup, {
+-        renameFolder: false,
+-        label: "zen basics",
+-      });
+-    }
+-
+     async animHeart() {
+       const heart = document.createElement("div");
+       heart.id = "zen-welcome-heart";
+@@ -507,16 +490,12 @@
+         },
+       },
+       {
++        // Kavacha: appearance. Midnight (dark) is the default look; the
++        // choice writes zen.view.window.scheme immediately so it previews
++        // live behind the welcome card.
+         text: [
+-          {
+-            id: "zen-welcome-initial-essentials-title",
+-          },
+-          {
+-            id: "zen-welcome-initial-essentials-description-1",
+-          },
+-          {
+-            id: "zen-welcome-initial-essentials-description-2",
+-          },
++          { id: "kavacha-welcome-appearance-title" },
++          { id: "kavacha-welcome-appearance-description" },
+         ],
+         buttons: [
+           {
+@@ -528,136 +507,103 @@
+         ],
+         fadeIn() {
+           const xul = `
+-            <hbox id="zen-welcome-initial-essentials-browser">
+-              <vbox id="zen-welcome-initial-essentials-browser-sidebar">
+-                <hbox id="zen-welcome-initial-essentials-browser-sidebar-win-buttons">
+-                  <html:div></html:div>
+-                  <html:div></html:div>
+-                  <html:div></html:div>
+-                </hbox>
+-                <html:div id="zen-welcome-initial-essentials-browser-sidebar-essentials">
+-                  <html:div class="tabbrowser-tab" fadein="" data-url="https://obsidian.md" style="--zen-essential-tab-icon: url('chrome://browser/content/zen-images/favicons/obsidian.svg');">
+-                    <stack class="tab-stack">
+-                      <html:div class="tab-background"></html:div>
+-                    </stack>
+-                  </html:div>
+-                  <html:div class="tabbrowser-tab" fadein="" data-url="https://discord.com" style="--zen-essential-tab-icon: url('chrome://browser/content/zen-images/favicons/discord.svg');">
+-                    <stack class="tab-stack">
+-                      <html:div class="tab-background"></html:div>
+-                    </stack>
+-                  </html:div>
+-                  <html:div class="tabbrowser-tab" fadein="" data-url="https://trello.com" style="--zen-essential-tab-icon: url('chrome://browser/content/zen-images/favicons/trello.svg');">
+-                    <stack class="tab-stack">
+-                      <html:div class="tab-background"></html:div>
+-                    </stack>
+-                  </html:div>
+-                  <html:div class="tabbrowser-tab" fadein="" data-url="https://slack.com" style="--zen-essential-tab-icon: url('chrome://browser/content/zen-images/favicons/slack.svg');">
+-                    <stack class="tab-stack">
+-                      <html:div class="tab-background"></html:div>
+-                    </stack>
+-                  </html:div>
+-                  <html:div class="tabbrowser-tab" fadein="" data-url="https://github.com" style="--zen-essential-tab-icon: url('chrome://browser/content/zen-images/favicons/github.svg');">
+-                    <stack class="tab-stack">
+-                      <html:div class="tab-background"></html:div>
+-                    </stack>
+-                  </html:div>
+-                  <html:div class="tabbrowser-tab" fadein="" data-url="https://app.tuta.com/" style="--zen-essential-tab-icon: url('chrome://browser/content/zen-images/favicons/tuta.svg');">
+-                    <stack class="tab-stack">
+-                      <html:div class="tab-background"></html:div>
+-                    </stack>
+-                  </html:div>
+-                  <html:div class="tabbrowser-tab" fadein="" data-url="https://notion.com" style="--zen-essential-tab-icon: url('chrome://browser/content/zen-images/favicons/notion.svg');">
+-                    <stack class="tab-stack">
+-                      <html:div class="tab-background"></html:div>
+-                    </stack>
+-                  </html:div>
+-                  <html:div class="tabbrowser-tab" fadein="" data-url="https://calendar.google.com" style="--zen-essential-tab-icon: url('chrome://browser/content/zen-images/favicons/calendar.svg');">
+-                    <stack class="tab-stack">
+-                      <html:div class="tab-background"></html:div>
+-                    </stack>
+-                  </html:div>
+-                  <html:div class="tabbrowser-tab" fadein="" data-url="https://figma.com" style="--zen-essential-tab-icon: url('chrome://browser/content/zen-images/favicons/figma.svg');">
+-                    <stack class="tab-stack">
+-                      <html:div class="tab-background"></html:div>
+-                    </stack>
+-                  </html:div>
+-                  <html:div class="extra-tab"></html:div>
+-                  <html:div class="extra-tab"></html:div>
+-                </html:div>
+-              </vbox>
+-            </hbox>
++            <html:label for="kavacha-welcome-appearance-midnight">
++              <html:input checked="true" type="radio" id="kavacha-welcome-appearance-midnight" name="kavacha-welcome-appearance" value="0"></html:input>
++              <html:span data-l10n-id="kavacha-welcome-appearance-midnight"></html:span>
++            </html:label>
++            <html:label for="kavacha-welcome-appearance-light">
++              <html:input type="radio" id="kavacha-welcome-appearance-light" name="kavacha-welcome-appearance" value="1"></html:input>
++              <html:span data-l10n-id="kavacha-welcome-appearance-light"></html:span>
++            </html:label>
++            <html:label for="kavacha-welcome-appearance-auto">
++              <html:input type="radio" id="kavacha-welcome-appearance-auto" name="kavacha-welcome-appearance" value="2"></html:input>
++              <html:span data-l10n-id="kavacha-welcome-appearance-auto"></html:span>
++            </html:label>
+           `;
+           const fragment = window.MozXULElement.parseXULToFragment(xul);
+-          document
+-            .getElementById("zen-welcome-page-content")
+-            .appendChild(fragment);
+-          document
+-            .getElementById(
+-              "zen-welcome-initial-essentials-browser-sidebar-essentials"
+-            )
+-            .addEventListener("click", async event => {
+-              const tab = event.target.closest(".tabbrowser-tab");
+-              if (!tab) {
+-                return;
+-              }
+-              tab.toggleAttribute("visuallyselected");
+-            });
++          const content = document.getElementById("zen-welcome-page-content");
++          content.appendChild(fragment);
++          content.addEventListener("change", event => {
++            const value = parseInt(event.target.value, 10);
++            if (!isNaN(value)) {
++              Services.prefs.setIntPref("zen.view.window.scheme", value);
++            }
++          });
+         },
+-        async fadeOut() {
+-          const selectedTabs = document
+-            .getElementById(
+-              "zen-welcome-initial-essentials-browser-sidebar-essentials"
+-            )
+-            .querySelectorAll(".tabbrowser-tab[visuallyselected]");
+-
+-          if (selectedTabs.length) {
+-            await PlacesUtils.history.insertMany(
+-              [...selectedTabs].map(tab => ({
+-                url: tab.getAttribute("data-url"),
+-                visits: [
+-                  {
+-                    transition: PlacesUtils.history.TRANSITIONS.TYPED,
+-                  },
+-                ],
+-              }))
+-            );
+-          }
+-
+-          const { TabStateCache } = ChromeUtils.importESModule(
+-            "resource:///modules/sessionstore/TabStateCache.sys.mjs"
+-          );
+-          for (const tab of selectedTabs) {
+-            const url = tab.getAttribute("data-url");
+-            const createdTab = window.gBrowser.addTrustedTab(url, {
+-              inBackground: true,
+-              createLazyBrowser: true,
+-            });
+-            let essentialIconUrl = tab.style.getPropertyValue(
+-              "--zen-essential-tab-icon"
++        async fadeOut() {},
++      },
++      {
++        // Kavacha: accent color. Shipped with none (user decision
++        // 2026-07-13) — this is where it becomes the user's.
++        text: [
++          { id: "kavacha-welcome-color-title" },
++          { id: "kavacha-welcome-color-description" },
++        ],
++        buttons: [
++          {
++            l10n: "zen-generic-next",
++            onclick: async () => {
++              return true;
++            },
++          },
++        ],
++        fadeIn() {
++          const kSwatches = [
++            "#8B7BD8",
++            "#4AA3DF",
++            "#5FBF77",
++            "#E8A33D",
++            "#F76F53",
++            "#E05C5C",
++            "#E285B2",
++            "#8A939F",
++          ];
++          const content = document.getElementById("zen-welcome-page-content");
++          const row = document.createElement("div");
++          row.id = "kavacha-welcome-colors";
++          const select = swatch => {
++            for (const el of row.children) {
++              el.toggleAttribute("selected", el === swatch);
++            }
++          };
++          const system = document.createElement("button");
++          system.className = "kavacha-welcome-swatch";
++          system.style.background = "AccentColor";
++          document.l10n.setAttributes(system, "kavacha-welcome-color-system");
++          system.toggleAttribute("selected", true);
++          system.addEventListener("click", () => {
++            Services.prefs.clearUserPref("zen.theme.accent-color");
++            document.documentElement.style.removeProperty(
++              "--zen-primary-color"
+             );
+-            // Remove url() from the icon URL
+-            essentialIconUrl = essentialIconUrl
+-              .replace(/url\(['"]?/, "")
+-              .replace(/['"]?\)/, "");
+-            essentialIconUrl = await getIconData(essentialIconUrl);
+-            // Update the persistent tab state cache with |tabData| information.
+-            TabStateCache.update(createdTab.linkedBrowser.permanentKey, {
+-              history: { entries: [{ url }], index: 0 },
+-              image: essentialIconUrl,
++            select(system);
++          });
++          row.appendChild(system);
++          for (const color of kSwatches) {
++            const swatch = document.createElement("button");
++            swatch.className = "kavacha-welcome-swatch";
++            swatch.style.background = color;
++            swatch.addEventListener("click", () => {
++              Services.prefs.setStringPref("zen.theme.accent-color", color);
++              // Live preview even if nothing observes the pref mid-welcome.
++              document.documentElement.style.setProperty(
++                "--zen-primary-color",
++                color
++              );
++              select(swatch);
+             });
+-            gBrowser.setIcon(createdTab, essentialIconUrl);
+-            _tabsToPinEssentials.push(createdTab);
++            row.appendChild(swatch);
+           }
++          content.appendChild(row);
+         },
++        async fadeOut() {},
+       },
+       {
++        // Kavacha: new-tab behavior — Zen's centered floating search or the
++        // Kavacha dashboard (clock, greeting, daily photo).
+         text: [
+-          {
+-            id: "zen-welcome-workspace-colors-title",
+-          },
+-          {
+-            id: "zen-welcome-workspace-colors-description",
+-          },
++          { id: "kavacha-welcome-newtab-title" },
++          { id: "kavacha-welcome-newtab-description" },
+         ],
+         buttons: [
+           {
+@@ -668,36 +614,26 @@
+           },
+         ],
+         fadeIn() {
+-          const anchor = document.createElement("div");
+-          anchor.id = "zen-welcome-workspace-colors-anchor";
++          const xul = `
++            <html:label for="kavacha-welcome-newtab-floating">
++              <html:input checked="true" type="radio" id="kavacha-welcome-newtab-floating" name="kavacha-welcome-newtab"></html:input>
++              <html:span data-l10n-id="kavacha-welcome-newtab-floating"></html:span>
++            </html:label>
++            <html:label for="kavacha-welcome-newtab-dashboard">
++              <html:input type="radio" id="kavacha-welcome-newtab-dashboard" name="kavacha-welcome-newtab"></html:input>
++              <html:span data-l10n-id="kavacha-welcome-newtab-dashboard"></html:span>
++            </html:label>
++          `;
++          const fragment = window.MozXULElement.parseXULToFragment(xul);
+           document
+             .getElementById("zen-welcome-page-content")
+-            .appendChild(anchor);
+-          gZenThemePicker.panel.setAttribute("noautohide", "true");
+-          gZenThemePicker.panel.setAttribute("consumeoutsideclicks", "false");
+-          gZenThemePicker.panel.setAttribute("nonnative", "");
+-          gZenThemePicker.panel.addEventListener(
+-            "popupshowing",
+-            () => {
+-              const panelRect = gZenThemePicker.panel.getBoundingClientRect();
+-              // 20 is the shadow width * 2
+-              anchor.style.height = panelRect.height - 20 + "px";
+-              anchor.style.width = panelRect.width - 20 + "px";
+-            },
+-            { once: true }
+-          );
+-          PanelMultiView.openPopup(gZenThemePicker.panel, anchor, {
+-            position: "overlap",
+-          });
++            .appendChild(fragment);
+         },
+-        dontFadeOut: true,
+         async fadeOut() {
+-          gZenThemePicker.panel.removeAttribute("noautohide");
+-          gZenThemePicker.panel.removeAttribute("consumeoutsideclicks");
+-          gZenThemePicker.panel.removeAttribute("nonnative");
+-          await animate(gZenThemePicker.panel, { opacity: [1, 0] });
+-          gZenThemePicker.panel.hidePopup();
+-          gZenThemePicker.panel.removeAttribute("style");
++          const dashboard = document.getElementById(
++            "kavacha-welcome-newtab-dashboard"
++          ).checked;
++          Services.prefs.setBoolPref("zen.urlbar.replace-newtab", !dashboard);
+         },
+       },
+       {
+diff --git a/src/zen/welcome/zen-welcome.css b/src/zen/welcome/zen-welcome.css
+index 54d2c7f..ca71e18 100644
+--- a/src/zen/welcome/zen-welcome.css
++++ b/src/zen/welcome/zen-welcome.css
+@@ -101,8 +101,8 @@
+       color: currentColor;
+       fill: currentColor;
+       -moz-context-properties: fill, fill-opacity;
+-      background-image: url(chrome://browser/skin/zen-icons/essential-add.svg);
+-      background-size: 15%;
++      background-image: url(chrome://branding/content/about-logo.png);
++      background-size: 22%;
+       background-repeat: no-repeat;
+       background-position: center;
+     }
+@@ -299,3 +299,38 @@
+     }
+   }
+ }
++
++/* == Kavacha welcome additions ============================================ */
++
++#kavacha-welcome-colors {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 14px;
++  align-items: center;
++  justify-content: center;
++  max-width: 320px;
++  margin: auto;
++}
++
++.kavacha-welcome-swatch {
++  width: 46px;
++  height: 46px;
++  min-width: 46px;
++  border-radius: 50%;
++  border: 2px solid transparent;
++  outline: 2px solid transparent;
++  outline-offset: 3px;
++  padding: 0;
++  cursor: pointer;
++  transition:
++    transform 120ms ease,
++    outline-color 120ms ease;
++}
++
++.kavacha-welcome-swatch:hover {
++  transform: scale(1.12);
++}
++
++.kavacha-welcome-swatch[selected] {
++  outline-color: light-dark(rgba(0, 0, 0, 0.6), rgba(255, 255, 255, 0.7));
++}

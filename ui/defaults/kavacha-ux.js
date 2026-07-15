@@ -30,3 +30,9 @@ pref("zen.view.show-newtab-button-top", false);
 // the strip (Firefox restores them on click). 0 disables. The module reads
 // this pref live; the code default matches this value.
 pref("kavacha.tabs.unload-after-minutes", 30);
+
+// Kavacha Midnight is the default look: dark chrome (zen.view.window.scheme
+// 0=dark 1=light 2=auto) over the midnight surface palette %-included into
+// zen-theme.css. The welcome flow offers light/auto; no accent is set here
+// (user decision 2026-07-13 — the welcome flow asks).
+pref("zen.view.window.scheme", 0);

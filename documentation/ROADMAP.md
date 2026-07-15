@@ -144,8 +144,17 @@ split view, command palette, session store.
         gradient of the day, clock, greeting, daily quote (patch
         `0011-kavacha-newtab-dashboard.patch`, 2026-07-14).
         Polish remaining: active-tab emphasis, strip spacing
-  - [ ] kavacha-midnight as default theme
-  - [ ] Own welcome flow
+  - [x] kavacha-midnight as default theme (patch `0016-kavacha-midnight-theme.patch`,
+        2026-07-14): surface tokens from customization/themes/kavacha-midnight
+        override Zen's base variables (everything else re-derives via Zen's
+        color-mix chains); dark scheme default via branding prefs; accent still
+        deliberately unset — the welcome flow asks
+  - [x] Own welcome flow (patch `0017-kavacha-welcome.patch`, 2026-07-14):
+        Zen's welcome framework with Kavacha pages — import + search kept,
+        Zen-branded pages removed, added Choose your look (Midnight/Light/Auto),
+        Pick your color (the no-default-accent decision becomes the user's),
+        and new-tab style (floating search vs dashboard). Title: "Welcome to /
+        your personal internet"
 - [ ] Layout engine applies layout JSON live (default shipped: `customization/layout-engine/`)
 - [ ] Theme engine loads theme packages (reference theme shipped: `kavacha-midnight`)
 - [ ] **Visual Browser Builder** (`about:studio`): redesign the browser without CSS —

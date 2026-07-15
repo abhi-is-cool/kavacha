@@ -141,19 +141,18 @@ branch relationships become early edges of the Phase 6 knowledge graph.
       Structural-hash dedup; count+age retention (100 / 90d prefs); local-only
       until Phase 5 sync. snapshot()/listSnapshots()/getSnapshot() is the API
       branching and time-travel consume
-- [ ] **Research branching**: fork a space at its current state into a named
-      alternative path — a child space carrying a parent-branch pointer — then
-      switch between branches, compare, and keep or discard. Explore alternatives
-      without losing or polluting the main line. Builds on the substrate +
-      containers (ADR 0003). UI: "Branch this Space" (command + space menu) and a
-      branch tree in the space switcher. Metadata (`parentSpaceId`, `branchedAt`)
-      on the space object, following the shipped field-on-space pattern.
-- [ ] **Time-travel**: browse a space's snapshot timeline and either *restore*
-      (jump the space back to a past state) or *replay* (step through its
-      evolution) to revisit past lines of thought. Builds on the substrate +
-      session restore. Open design questions: restore semantics (replace current
-      state vs open-alongside as a branch), timeline UI surface, and how far back
-      retention keeps.
+- [x] **Research branching** (patch `0020-research-branching-time-travel.patch`,
+      2026-07-15): "Branch This Space" (palette) forks the active space — or any
+      snapshot — into "Parent / branch": parent pointer + snapshot id +
+      branchedAt on the space object, same container, note copied, tabs rebuilt
+      lazily from captured SessionStore state (activation restores the real
+      page). Follow-ups: branch tree in the switcher, pinned fidelity,
+      compare/discard flows
+- [x] **Time-travel** (same patch): "Space Timeline" (palette) lists the active
+      space's snapshots (when / tabs / trigger); "Restore as branch" forks any
+      of them. Restore semantics decided: NON-destructive — restoring never
+      overwrites the present; branching is the single mechanism under both
+      features. Step-through replay is a follow-up
 - Ties to the north star: the observing agent's *"save this as a new branch of
       your investigation?"* suggestion lands as a registered command (patch 0018)
       that forks a branch; the snapshot history is raw material the knowledge graph

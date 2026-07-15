@@ -35,17 +35,10 @@
 # outgoing space (reason=switch); payload reads back versioned with
 # parseable tab state; retention prunes to the cap; the palette shows
 # "Snapshot This Space". Applies on top of 0018.
-diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
-index 14a1f3d..0266c4b 100644
---- a/locales/en-US/browser/browser/zen-command-palette.ftl
-+++ b/locales/en-US/browser/browser/zen-command-palette.ftl
-@@ -41,5 +41,6 @@ kavacha-action-new-space-privacy = New Space from Template: Private
- kavacha-action-workspace-notes = Workspace Notes
- kavacha-action-archive-space = Archive Current Space
- kavacha-action-universal-search = Search Everything
-+kavacha-action-snapshot-space = Snapshot This Space
- kavacha-action-sleep-tabs = Sleep Inactive Tabs Now
- kavacha-action-toggle-newtab = Toggle New Tab Style (Dashboard / Search)
+# Capture hygiene (2026-07-15): about:blank and dashboard-newtab tabs are
+# skipped at capture — placeholder pages carry no work state and only
+# added noise to timelines and branches (a 34-tab snapshot was mostly
+# dashboards). Regenerated against upstream fcda16b.
 diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
 index b452177..a036366 100644
 --- a/src/zen/common/modules/ZenStartup.mjs
@@ -74,37 +67,12 @@ index 8e70b63..21cf36b 100644
    "sys/KavachaTabMemory.sys.mjs",
    "sys/ZenActorsManager.sys.mjs",
    "sys/ZenCustomizableUI.sys.mjs",
-diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
-index 28478a6..7a54a63 100644
---- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
-+++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
-@@ -78,6 +78,20 @@ const BUILTIN = [
-     domain: KavachaCommandDomain.PRODUCTIVITY,
-     isAvailable: kNotPrivate,
-   },
-+  {
-+    l10nId: "kavacha-action-snapshot-space",
-+    command: window =>
-+      ChromeUtils.importESModule(
-+        "resource:///modules/KavachaSpaceHistory.sys.mjs"
-+      ).KavachaSpaceHistory.snapshotSpace(
-+        window,
-+        window.gZenWorkspaces.activeWorkspace,
-+        "manual"
-+      ),
-+    icon: "chrome://browser/skin/zen-icons/camera.svg",
-+    domain: KavachaCommandDomain.PRODUCTIVITY,
-+    isAvailable: kNotPrivate,
-+  },
-   {
-     l10nId: "kavacha-action-sleep-tabs",
-     command: () =>
 diff --git a/src/zen/common/sys/KavachaSpaceHistory.sys.mjs b/src/zen/common/sys/KavachaSpaceHistory.sys.mjs
 new file mode 100644
-index 0000000..55988c0
+index 0000000..0ac7ff3
 --- /dev/null
 +++ b/src/zen/common/sys/KavachaSpaceHistory.sys.mjs
-@@ -0,0 +1,264 @@
+@@ -0,0 +1,273 @@
 +// This Source Code Form is subject to the terms of the Mozilla Public
 +// License, v. 2.0. If a copy of the MPL was not distributed with this
 +// file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -243,10 +211,19 @@ index 0000000..55988c0
 +          const state = lazy.SessionStore.getTabState(tab);
 +          const parsed = JSON.parse(state);
 +          const entry = parsed.entries?.[(parsed.index || 1) - 1];
++          const url = entry?.url || "about:blank";
++          // Placeholder pages carry no work state — snapshotting them only
++          // adds noise to timelines and branches.
++          if (
++            url === "about:blank" ||
++            url.startsWith("chrome://browser/content/kavacha-newtab/")
++          ) {
++            continue;
++          }
 +          captured.push({
 +            state,
 +            pinned: !!tab.pinned,
-+            url: entry?.url || "about:blank",
++            url,
 +          });
 +        } catch (e) {
 +          // A tab mid-teardown or unrestorable; skip it, keep the rest.

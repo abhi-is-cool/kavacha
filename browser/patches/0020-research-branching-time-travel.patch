@@ -1,0 +1,329 @@
+# Patch 0020 — Research branching + time-travel timeline (ROADMAP Phase 2.5;
+# consumes ADR 0006 / patch 0019).
+#
+# BRANCHING: gZenWorkspaces.kavachaBranchSpace(snapshotId?) forks a space
+# into a named alternative path — "Parent / branch". No snapshot id =
+# branch NOW (snapshots first; dedup returning null falls back to the
+# latest stored snapshot, which then IS the current state). The child space
+# carries parentSpaceId / branchedFromSnapshotId / branchedAt on the space
+# object (field-on-space pattern), inherits the parent's container, gets a
+# COPY of the note (kavachaSetNote — same single-owner JSONFile as the
+# notes panel), and rebuilds the snapshot's tabs.
+#
+# TIME-TRAVEL: kavachaOpenSpaceTimeline() lists the active space's
+# snapshots (when / tab count / trigger) in a panel; "Restore as branch"
+# forks that snapshot. Restore is deliberately NON-destructive — one
+# mechanism (branching) serves both features and the present is never
+# overwritten. Step-through replay is a follow-up. Both are palette
+# commands ("Branch This Space", "Space Timeline") via the 0018 registry.
+#
+# Tab-rebuild mechanics, learned the hard way (all three bit during
+# verification):
+#   - addTrustedTab(url, {createLazyBrowser}) with the REAL url — blank
+#     tabs get eaten by dedup and label the strip uselessly;
+#   - the new tab lands in the ACTIVE space's container already, so
+#     moveTabsToWorkspace early-continues before setting zen-workspace-id —
+#     set the attribute explicitly or the tab is invisible to every filter;
+#   - TabStateCache.update() takes per-datum fields ({history:{entries,
+#     index}, scroll, formdata, image}), NOT getTabState's flat JSON —
+#     the flat shape caches nothing and activation restores about:blank.
+#   - the branch's strip element materializes async after the switch; wait
+#     for workspaceElement(uuid).tabsContainer before parenting tabs.
+# Pinned fidelity is a follow-up (everything restores unpinned); the branch
+# keeps the starter New Tab a fresh space gets — harmless.
+#
+# Marionette-verified end to end: branch carries name/parent-pointer/tabs
+# (lazy, correct labels)/note; activating a lazy branch tab restores the
+# real page (url + title); timeline lists the parent's snapshots; Restore
+# as branch creates a populated space. Applies on top of 0019.
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index 14a1f3d..feaf021 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -39,7 +39,10 @@ kavacha-action-new-space-student = New Space from Template: Student
+ kavacha-action-new-space-developer = New Space from Template: Developer
+ kavacha-action-new-space-privacy = New Space from Template: Private
+ kavacha-action-workspace-notes = Workspace Notes
++kavacha-action-branch-space = Branch This Space
++kavacha-action-space-timeline = Space Timeline
+ kavacha-action-archive-space = Archive Current Space
+ kavacha-action-universal-search = Search Everything
++kavacha-action-snapshot-space = Snapshot This Space
+ kavacha-action-sleep-tabs = Sleep Inactive Tabs Now
+ kavacha-action-toggle-newtab = Toggle New Tab Style (Dashboard / Search)
+diff --git a/locales/en-US/browser/browser/zen-workspaces.ftl b/locales/en-US/browser/browser/zen-workspaces.ftl
+index 4f381be..e1306dd 100644
+--- a/locales/en-US/browser/browser/zen-workspaces.ftl
++++ b/locales/en-US/browser/browser/zen-workspaces.ftl
+@@ -176,3 +176,9 @@ kavacha-search-group-notes = Workspace Notes
+ kavacha-search-group-bookmarks = Bookmarks
+ kavacha-search-group-history = History
+ kavacha-search-group-downloads = Downloads
++
++kavacha-timeline-title =
++    .value = Timeline — { $name }
++kavacha-timeline-empty =
++    .value = No snapshots yet. They are taken when you switch away, archive, quit, or run "Snapshot This Space".
++kavacha-timeline-restore = Restore as branch
+diff --git a/src/browser/base/content/zen-panels/popups.inc b/src/browser/base/content/zen-panels/popups.inc
+index 0fd1f99..da25e16 100644
+--- a/src/browser/base/content/zen-panels/popups.inc
++++ b/src/browser/base/content/zen-panels/popups.inc
+@@ -116,6 +116,14 @@
+   </vbox>
+ </panel>
+ 
++<panel id="kavacha-timeline-panel" type="arrow" orient="vertical">
++  <vbox style="width: 400px; padding: 10px; gap: 8px;">
++    <label id="kavacha-timeline-title" style="font-weight: 600;"/>
++    <label id="kavacha-timeline-empty" data-l10n-id="kavacha-timeline-empty" hidden="true" style="opacity: 0.7;"/>
++    <vbox id="kavacha-timeline-list" style="overflow: auto; max-height: 340px; gap: 4px;"/>
++  </vbox>
++</panel>
++
+ <panel id="kavacha-notes-panel" type="arrow" orient="vertical">
+   <vbox style="width: 360px; padding: 10px; gap: 8px;">
+     <label id="kavacha-notes-title" style="font-weight: 600;"/>
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+index 28478a6..72b439d 100644
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -62,6 +62,20 @@ const BUILTIN = [
+     domain: KavachaCommandDomain.ORGANIZATION,
+     isAvailable: kNotPrivate,
+   },
++  {
++    l10nId: "kavacha-action-space-timeline",
++    command: window => window.gZenWorkspaces.kavachaOpenSpaceTimeline(),
++    icon: "chrome://browser/skin/zen-icons/history.svg",
++    domain: KavachaCommandDomain.NAVIGATION,
++    isAvailable: kNotPrivate,
++  },
++  {
++    l10nId: "kavacha-action-branch-space",
++    command: window => window.gZenWorkspaces.kavachaBranchSpace(),
++    icon: "chrome://browser/skin/zen-icons/duplicate-tab.svg",
++    domain: KavachaCommandDomain.ORGANIZATION,
++    isAvailable: kNotPrivate,
++  },
+   {
+     l10nId: "kavacha-action-archive-space",
+     command: window => window.gZenWorkspaces.archiveWorkspace(),
+@@ -78,6 +92,20 @@ const BUILTIN = [
+     domain: KavachaCommandDomain.PRODUCTIVITY,
+     isAvailable: kNotPrivate,
+   },
++  {
++    l10nId: "kavacha-action-snapshot-space",
++    command: window =>
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaSpaceHistory.sys.mjs"
++      ).KavachaSpaceHistory.snapshotSpace(
++        window,
++        window.gZenWorkspaces.activeWorkspace,
++        "manual"
++      ),
++    icon: "chrome://browser/skin/zen-icons/camera.svg",
++    domain: KavachaCommandDomain.PRODUCTIVITY,
++    isAvailable: kNotPrivate,
++  },
+   {
+     l10nId: "kavacha-action-sleep-tabs",
+     command: () =>
+diff --git a/src/zen/spaces/ZenSpaceManager.mjs b/src/zen/spaces/ZenSpaceManager.mjs
+index 136c5f5..3eb56d2 100644
+--- a/src/zen/spaces/ZenSpaceManager.mjs
++++ b/src/zen/spaces/ZenSpaceManager.mjs
+@@ -3671,6 +3671,192 @@ class nsZenWorkspaces {
+     return file.data.notes;
+   }
+ 
++  // Branching copies the parent's note into the child through the same
++  // single-owner file (ADR 0006: the note is part of the line of thought).
++  async kavachaSetNote(uuid, content) {
++    const file = await this.#ensureNotesFile();
++    if (content?.trim()) {
++      file.data.notes[uuid] = {
++        content,
++        updatedAt: new Date().toISOString(),
++      };
++    } else {
++      delete file.data.notes[uuid];
++    }
++    file.saveSoon();
++  }
++
++  // ==========================================================================
++  // Kavacha: research branching (ROADMAP Phase 2.5; consumes ADR 0006).
++  // Fork a space into a named alternative path: snapshot it (or start from a
++  // given snapshot id), create a child space carrying parent metadata, and
++  // rebuild the snapshot's tabs in it from their SessionStore state.
++  // ==========================================================================
++  async kavachaBranchSpace(snapshotId = null) {
++    if (this.privateWindowOrDisabled) {
++      return null;
++    }
++    const { KavachaSpaceHistory } = ChromeUtils.importESModule(
++      "resource:///modules/KavachaSpaceHistory.sys.mjs"
++    );
++    let snapshot = null;
++    if (snapshotId == null) {
++      const uuid = this.activeWorkspace;
++      // Snapshot the branch point; dedup returning null means the latest
++      // stored snapshot already IS the current state — use it.
++      const newId = await KavachaSpaceHistory.snapshotSpace(
++        window,
++        uuid,
++        "branch"
++      );
++      const id =
++        newId ?? (await KavachaSpaceHistory.listSnapshots(uuid))[0]?.id;
++      snapshot = id != null ? await KavachaSpaceHistory.getSnapshot(id) : null;
++    } else {
++      snapshot = await KavachaSpaceHistory.getSnapshot(snapshotId);
++    }
++    if (!snapshot) {
++      return null;
++    }
++    const payload = snapshot.payload;
++    const parent = this.getWorkspaceFromId(snapshot.spaceUuid);
++    const branchName = `${payload.spaceName || parent?.name || "Space"} / branch`;
++    const workspace = await this.createAndSaveWorkspace(
++      branchName,
++      payload.spaceIcon || parent?.icon,
++      false,
++      payload.containerTabId ?? 0,
++      {
++        beforeChangeCallback: async workspaceData => {
++          workspaceData.parentSpaceId = snapshot.spaceUuid;
++          workspaceData.branchedFromSnapshotId = snapshot.id;
++          workspaceData.branchedAt = Date.now();
++        },
++      }
++    );
++    if (!workspace) {
++      return null;
++    }
++    // The branch's strip element materializes asynchronously after the
++    // switch; moveTabsToWorkspace silently skips tabs when the target
++    // container doesn't exist yet — wait for it (worst case ~3s).
++    for (
++      let i = 0;
++      i < 60 && !this.workspaceElement(workspace.uuid)?.tabsContainer;
++      i++
++    ) {
++      await new Promise(resolve => setTimeout(resolve, 50));
++    }
++    // Rebuild the snapshot's tabs in the branch (now the active space) as
++    // LAZY tabs: real URL up front (readable strip, no blank-tab dedup),
++    // full captured state seeded through TabStateCache so activation
++    // restores scroll/form/history — the same mechanism Zen's welcome uses
++    // for its preset tabs. Pinned fidelity is a follow-up: everything
++    // restores as a normal tab.
++    const { TabStateCache } = ChromeUtils.importESModule(
++      "resource:///modules/sessionstore/TabStateCache.sys.mjs"
++    );
++    for (const t of payload.tabs) {
++      try {
++        const tab = gBrowser.addTrustedTab(t.url || "about:blank", {
++          createLazyBrowser: true,
++          inBackground: true,
++        });
++        // New tabs land in the ACTIVE space's container already, which makes
++        // moveTabsToWorkspace early-continue before it ever sets the
++        // attribute — set it explicitly or the tab is invisible to every
++        // workspace filter.
++        tab.setAttribute("zen-workspace-id", workspace.uuid);
++        // TabStateCache holds per-datum fields (history nested), not
++        // getTabState's flat JSON — reshape or activation restores blank.
++        const st = JSON.parse(t.state);
++        const cached = {
++          history: { entries: st.entries, index: st.index },
++        };
++        if (st.scroll) {
++          cached.scroll = st.scroll;
++        }
++        if (st.formdata) {
++          cached.formdata = st.formdata;
++        }
++        if (st.image) {
++          cached.image = st.image;
++        }
++        TabStateCache.update(tab.linkedBrowser.permanentKey, cached);
++        this.moveTabToWorkspace(tab, workspace.uuid);
++      } catch (e) {
++        console.error("kavachaBranchSpace: tab restore failed", e);
++      }
++    }
++    if (payload.note) {
++      await this.kavachaSetNote(workspace.uuid, payload.note);
++    }
++    gZenUIManager.updateTabsToolbar();
++    return workspace;
++  }
++
++  // ==========================================================================
++  // Kavacha: time-travel timeline (ROADMAP Phase 2.5; consumes ADR 0006).
++  // Browse the active space's snapshots and restore any of them — restore is
++  // deliberately NON-destructive: it forks the snapshot as a branch
++  // (kavachaBranchSpace), so the current line of work is never overwritten.
++  // Step-through replay is a follow-up.
++  // ==========================================================================
++  async kavachaOpenSpaceTimeline() {
++    if (this.privateWindowOrDisabled) {
++      return;
++    }
++    const workspace = this.getActiveWorkspaceFromCache();
++    if (!workspace) {
++      return;
++    }
++    const { KavachaSpaceHistory } = ChromeUtils.importESModule(
++      "resource:///modules/KavachaSpaceHistory.sys.mjs"
++    );
++    const snapshots = await KavachaSpaceHistory.listSnapshots(workspace.uuid);
++
++    const panel = document.getElementById("kavacha-timeline-panel");
++    document.l10n.setAttributes(
++      document.getElementById("kavacha-timeline-title"),
++      "kavacha-timeline-title",
++      { name: workspace.name }
++    );
++    document.getElementById("kavacha-timeline-empty").hidden =
++      !!snapshots.length;
++
++    const list = document.getElementById("kavacha-timeline-list");
++    list.textContent = "";
++    const fmt = new Intl.DateTimeFormat(undefined, {
++      dateStyle: "medium",
++      timeStyle: "short",
++    });
++    const restoreLabel = await document.l10n.formatValue(
++      "kavacha-timeline-restore"
++    );
++    for (const snap of snapshots) {
++      const row = document.createXULElement("hbox");
++      row.setAttribute("align", "center");
++      row.style.gap = "8px";
++      const label = document.createXULElement("label");
++      label.setAttribute("flex", "1");
++      label.style.opacity = "0.9";
++      label.value = `${fmt.format(new Date(snap.createdAt))} · ${snap.tabCount} tabs · ${snap.reason}`;
++      const btn = document.createXULElement("button");
++      btn.setAttribute("label", restoreLabel);
++      btn.addEventListener("command", () => {
++        panel.hidePopup();
++        this.kavachaBranchSpace(snap.id).catch(e =>
++          console.error("kavachaOpenSpaceTimeline: restore failed", e)
++        );
++      });
++      row.append(label, btn);
++      list.append(row);
++    }
++
++    const anchor = this.workspaceIcons || gURLBar.textbox;
++    panel.openPopup(anchor, "after_start", 0, 0, false, false);
++  }
++
+   #flushWorkspaceNotes() {
+     const panel = document.getElementById("kavacha-notes-panel");
+     const uuid = panel.getAttribute("data-workspace-id");

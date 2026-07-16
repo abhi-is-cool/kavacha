@@ -114,9 +114,15 @@ log "Privacy + UX defaults appended to branding prefs ($(cat "$REPO_ROOT/privacy
 # import/update, so the fix survives engine re-imports.
 # ---------------------------------------------------------------------------
 MOZBUILD="$REPO_ROOT/browser/zen-upstream/engine/build/moz.build"
-if grep -q "updates.zen-browser.app" "$MOZBUILD"; then
+# The default-host line drifts across upstream pins: Zen used to hardcode
+# "updates.zen-browser.app"; Firefox 152 ships "aus5.mozilla.org" plus a
+# CONFIG override on the following line. Rewrite whichever quoted default is
+# present to Kavacha's host. The CONFIG override line carries no string
+# literal, so it is left untouched. (# delimiter so the alternation's | isn't
+# read as the sed separator.)
+if grep -qE '"(updates\.zen-browser\.app|aus5\.mozilla\.org)"' "$MOZBUILD"; then
     # -i.bak form works on both BSD (macOS) and GNU (Linux) sed
-    sed -i.kavacha-bak 's|updates\.zen-browser\.app|updates.kavacha.app|' "$MOZBUILD"
+    sed -i.kavacha-bak -E 's#"(updates\.zen-browser\.app|aus5\.mozilla\.org)"#"updates.kavacha.app"#' "$MOZBUILD"
     rm -f "$MOZBUILD.kavacha-bak"
 fi
 grep -q 'MOZ_APPUPDATE_HOST"\] = "updates.kavacha.app"' "$MOZBUILD" \

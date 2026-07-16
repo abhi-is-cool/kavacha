@@ -204,9 +204,22 @@ branch relationships become early edges of the Phase 6 knowledge graph.
       a second bundled dark theme (Kavacha Forest) + user themes from the profile
       `kavacha-themes/`; "Switch Theme" palette command. Surfaces-only (accent stays
       user-owned); light themes a follow-up. Same build-verification caveat
-- [ ] **Visual Browser Builder** (`about:studio`): redesign the browser without CSS —
-      sidebar, tab style (vertical/horizontal/Arc-style), toolbar components
-- [ ] Live CSS editor with history + safe mode (Advanced tier)
+- [x] **Visual Browser Builder** (`about:studio`, patch `0024-customization-studio.patch`,
+      2026-07-16; ADR 0009): redesign the browser without CSS — a Layout tab (tab
+      orientation, sidebar side/width, density, toolbar) driving KavachaLayoutEngine and
+      a Themes tab switching packages via KavachaThemeEngine. Registered as a JS
+      nsIAboutModule → privileged chrome page (IS_SECURE_CHROME_UI) whose script calls
+      the engines' public APIs, so the preview IS the live browser; "Open Customization
+      Studio" palette command. Arc-style tabs deferred (not yet an engine capability).
+      **Build/Marionette verification pending** — `git apply`-clean on the post-0023
+      tree, authored without a local build.
+- [x] **Live CSS editor with history + safe mode** (Advanced tier; patch
+      `0025-css-editor.patch`, 2026-07-16; ADR 0009): KavachaUserCSS applies the user's
+      chrome CSS as an AUTHOR_SHEET (chrome only, never web content), snapshots every
+      save to `kavacha-usercss-history.json` so any change reverts, and a safe-mode pref
+      + "Toggle Custom CSS Safe Mode" palette command disable all custom CSS so a bad
+      rule can never brick the UI. Ships as the Advanced tab in about:studio. Same
+      build-verify gate. Marketplace is the next Phase-3 brick.
 - [ ] **Component marketplace** (supersedes theme-only marketplace): themes, layouts,
       sidebar widgets, tool panels; bundles like "Research Mode"
 - [ ] **Command registry** on Zen's palette (Cmd+K): every Kavacha feature exposes

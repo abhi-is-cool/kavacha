@@ -24,7 +24,10 @@ elements. [default-layout.json](layout-engine/default-layout.json) is the shippe
 default (left sidebar, 250 px, horizontal tabs, compact — matching Kavacha's
 horizontal default look). The runtime engine that applies this document live now
 ships as `KavachaLayoutEngine` (patch 0022); the theme engine ships as
-`KavachaThemeEngine` (patch 0023). The visual Studio GUI over both is still to come.
+`KavachaThemeEngine` (patch 0023). The visual Studio GUI over both ships as
+**`about:studio`** (patch 0024; ADR 0009) — a privileged chrome page whose
+Layout and Themes tabs call those engines' public APIs, so every control updates
+the live browser. Open it with the "Open Customization Studio" palette command.
 
 ## `themes/`
 
@@ -46,8 +49,13 @@ dark theme.
 statically validated against the schemas; `style.css` is reviewed/sandboxed — theme CSS
 must never gain script execution or touch web content.
 
-## `css-editor/`
+## Advanced tier — live CSS editor
 
-In-browser editor for the Advanced tier: syntax highlighting, live apply, per-change
-history so any customization can be reverted. A broken rule must never brick the UI —
-the editor keeps a safe-mode toggle that disables all custom CSS.
+Ships as the **Advanced** tab of `about:studio`, backed by `KavachaUserCSS`
+(patch 0025; ADR 0009). It is userChrome.css made safe: the user's chrome CSS is
+applied live as a chrome-only `AUTHOR_SHEET` (never web content, never script),
+every Apply snapshots the previous text to profile `kavacha-usercss-history.json`
+so any change reverts, and a safe-mode pref — reachable as the "Toggle Custom CSS
+Safe Mode" palette command even if the chrome is unusable — disables all custom
+CSS so a broken rule can never brick the UI. The XUL `@namespace` preamble is
+added for you. Syntax highlighting is a later enhancement.

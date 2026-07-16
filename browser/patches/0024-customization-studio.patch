@@ -1,0 +1,881 @@
+# Patch 0024 — Kavacha Customization Studio (about:studio): the Visual Browser
+# Builder (ROADMAP Phase 3 "Visual Browser Builder"; ADR 0009).
+#
+# WHAT: registers about:studio as a JS nsIAboutModule (KavachaAboutStudio.sys.mjs
+# + components.conf) that resolves to a privileged chrome page
+# (chrome://browser/content/kavacha-studio/studio.html). The page redesigns the
+# browser WITHOUT CSS: a Layout tab (tab orientation, sidebar side/width,
+# density, toolbar) driving KavachaLayoutEngine (patch 0022), and a Themes tab
+# listing + switching theme packages via KavachaThemeEngine (patch 0023). Every
+# control writes through those engines' public APIs, which already apply live to
+# every window — so the "preview" is the real browser. Palette: "Open
+# Customization Studio".
+#
+# WHY A JS ABOUT-MODULE (not a Gecko C++ redirector edit): about:studio needs a
+# stable typed URL and parent-process chrome privileges (IS_SECURE_CHROME_UI,
+# like about:preferences) so studio.js can call the chrome singletons directly.
+# The modern JS nsIAboutModule pattern (mirrors
+# engine/browser/components/newtab/AboutNewTabRedirector.sys.mjs) gives both
+# without touching engine C++ (MASTER_PLAN Principle 1). A new
+# src/zen/kavacha-studio/ overlay dir carries the module, its components.conf,
+# the page assets (jar.inc.mn), and moz.build — wired via src/zen/moz.build DIRS
+# and zen-assets.jar.inc.mn.
+#
+# NOT BUILD-VERIFIED: authored against the post-0023 tree; hunks reconstructed
+# there. Run `git -C browser/zen-upstream apply --check` + a Marionette pass
+# (open about:studio, toggle each control, confirm chrome updates, switch theme)
+# before marking the ROADMAP item verified. Adds src/zen/kavacha-studio/*;
+# touches src/zen/moz.build, zen-assets.jar.inc.mn, zen-command-palette.ftl,
+# KavachaCommandRegistry.sys.mjs. Applies on top of 0023.
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index 3650875..33ef46a 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -52,3 +52,4 @@ kavacha-action-cycle-sidebar = Cycle Sidebar Position (Left / Right / Hidden)
+ kavacha-action-cycle-density = Cycle Interface Density
+ kavacha-action-reload-layout = Reload Layout from File
+ kavacha-action-switch-theme = Switch Theme
++kavacha-action-open-studio = Open Customization Studio
+diff --git a/src/browser/base/content/zen-assets.jar.inc.mn b/src/browser/base/content/zen-assets.jar.inc.mn
+index 3fe26e2..9ed35ff 100644
+--- a/src/browser/base/content/zen-assets.jar.inc.mn
++++ b/src/browser/base/content/zen-assets.jar.inc.mn
+@@ -23,3 +23,4 @@
+ #include ../../../zen/space-routing/jar.inc.mn
+ #include ../../../zen/kavacha-newtab/jar.inc.mn
+ #include ../../../zen/kavacha-search/jar.inc.mn
++#include ../../../zen/kavacha-studio/jar.inc.mn
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+index d4b3016..1592728 100644
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -196,6 +196,14 @@ const BUILTIN = [
+     icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
+     domain: KavachaCommandDomain.APPEARANCE,
+   },
++  {
++    l10nId: "kavacha-action-open-studio",
++    // about:studio is a privileged chrome page (ADR 0009); reuse an existing
++    // tab if one is already open rather than piling up duplicates.
++    command: window => window.switchToTabHavingURI("about:studio", true),
++    icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++    domain: KavachaCommandDomain.APPEARANCE,
++  },
+ 
+   // -- Privacy ---------------------------------------------------------------
+   {
+diff --git a/src/zen/kavacha-studio/KavachaAboutStudio.sys.mjs b/src/zen/kavacha-studio/KavachaAboutStudio.sys.mjs
+new file mode 100644
+index 0000000..9fa067a
+--- /dev/null
++++ b/src/zen/kavacha-studio/KavachaAboutStudio.sys.mjs
+@@ -0,0 +1,55 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha: nsIAboutModule for about:studio — the Customization Studio /
++// Visual Browser Builder (ROADMAP Phase 3; ADR 0009).
++//
++// This is the modern JS about-module pattern (mirrors the engine's
++// AboutNewTabRedirector.sys.mjs): registered through components.conf against
++// the contract `@mozilla.org/network/protocol/about;1?what=studio`, so NO
++// Gecko C++ redirector edit is needed (MASTER_PLAN Principle 1 — never modify
++// the engine). It resolves about:studio to a privileged chrome document.
++//
++// WHY PRIVILEGED (IS_SECURE_CHROME_UI, like about:preferences): studio.js has
++// to drive the already-shipped chrome singletons — KavachaLayoutEngine (patch
++// 0022), KavachaThemeEngine (patch 0023), and KavachaUserCSS (patch 0025) —
++// through their public APIs. A secure-chrome-UI page loads in the parent
++// process with the system principal (the chrome:// target is a UI resource,
++// so the redirector keeps the system principal — see nsAboutRedirector.cpp),
++// which is exactly the privilege about:preferences panes use to call Services
++// and ChromeUtils.importESModule. The engines apply live to every browser
++// window, so a Studio edit updates the real chrome immediately — the preview
++// IS the browser.
++
++const kChromeURL = "chrome://browser/content/kavacha-studio/studio.html";
++
++export class AboutStudio {
++  QueryInterface = ChromeUtils.generateQI(["nsIAboutModule"]);
++
++  newChannel(aURI, aLoadInfo) {
++    const chromeURI = Services.io.newURI(kChromeURL);
++    // chrome:// is a UI resource, so the channel keeps the system principal
++    // (we deliberately do NOT set a result-principal URI). Same shape as the
++    // engine's AboutNewTabRedirector: build from the loadInfo, then re-point
++    // originalURI so the address bar still reads "about:studio".
++    const channel = Services.io.newChannelFromURIWithLoadInfo(
++      chromeURI,
++      aLoadInfo
++    );
++    channel.originalURI = aURI;
++    return channel;
++  }
++
++  getURIFlags() {
++    // Privileged chrome UI, scripts allowed — the about:preferences profile.
++    // No URI_SAFE_FOR_UNTRUSTED_CONTENT: about:studio is never web content.
++    return (
++      Ci.nsIAboutModule.ALLOW_SCRIPT | Ci.nsIAboutModule.IS_SECURE_CHROME_UI
++    );
++  }
++
++  getChromeURI() {
++    return Services.io.newURI(kChromeURL);
++  }
++}
+diff --git a/src/zen/kavacha-studio/components.conf b/src/zen/kavacha-studio/components.conf
+new file mode 100644
+index 0000000..0896f5e
+--- /dev/null
++++ b/src/zen/kavacha-studio/components.conf
+@@ -0,0 +1,15 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++# Kavacha: register about:studio (the Customization Studio) as a JS
++# nsIAboutModule. Mirrors engine/browser/components/newtab/components.conf so
++# no Gecko C++ redirector edit is needed (ADR 0009).
++Classes = [
++    {
++        "cid": "{f3bd07a7-ab9c-413b-810c-080c4094f511}",
++        "contract_ids": ["@mozilla.org/network/protocol/about;1?what=studio"],
++        "esModule": "resource:///modules/KavachaAboutStudio.sys.mjs",
++        "constructor": "AboutStudio",
++    },
++]
+diff --git a/src/zen/kavacha-studio/jar.inc.mn b/src/zen/kavacha-studio/jar.inc.mn
+new file mode 100644
+index 0000000..cc03727
+--- /dev/null
++++ b/src/zen/kavacha-studio/jar.inc.mn
+@@ -0,0 +1,7 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++        content/browser/kavacha-studio/studio.html                             (../../zen/kavacha-studio/studio.html)
++        content/browser/kavacha-studio/studio.css                              (../../zen/kavacha-studio/studio.css)
++        content/browser/kavacha-studio/studio.js                               (../../zen/kavacha-studio/studio.js)
+diff --git a/src/zen/kavacha-studio/moz.build b/src/zen/kavacha-studio/moz.build
+new file mode 100644
+index 0000000..8641d31
+--- /dev/null
++++ b/src/zen/kavacha-studio/moz.build
+@@ -0,0 +1,17 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++# Kavacha Customization Studio (about:studio). The JS about-module is a plain
++# EXTRA_JS_MODULE (resource:///modules/KavachaAboutStudio.sys.mjs); its
++# components.conf registers the about: contract. The studio.html/css/js chrome
++# content is registered separately via jar.inc.mn (included from
++# src/browser/base/content/zen-assets.jar.inc.mn). ADR 0009.
++
++EXTRA_JS_MODULES += [
++    "KavachaAboutStudio.sys.mjs",
++]
++
++XPCOM_MANIFESTS += [
++    "components.conf",
++]
+diff --git a/src/zen/kavacha-studio/studio.css b/src/zen/kavacha-studio/studio.css
+new file mode 100644
+index 0000000..c50b6e2
+--- /dev/null
++++ b/src/zen/kavacha-studio/studio.css
+@@ -0,0 +1,292 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* Customization Studio (about:studio). Styled from Kavacha/Zen chrome tokens
++ * so the Studio itself follows the active theme (patch 0016 bakes the Midnight
++ * floor; the theme engine, patch 0023, re-tints --kavacha-* live). ADR 0009. */
++
++:root {
++  --studio-surface: var(--kavacha-surface, #14111f);
++  --studio-elevated: var(--kavacha-surface-elevated, #1d1930);
++  --studio-sunken: var(--kavacha-surface-sunken, #0e0b18);
++  --studio-border: var(--kavacha-border, #2e2846);
++  --studio-text: var(--kavacha-text-primary, #edeaf7);
++  --studio-text-dim: var(--kavacha-text-secondary, #a79fc4);
++  --studio-accent: var(--zen-primary-color, var(--kavacha-accent, #8b7bd8));
++  color-scheme: dark;
++}
++
++* {
++  box-sizing: border-box;
++}
++
++body {
++  margin: 0;
++  padding: 0 0 64px;
++  font: message-box;
++  font-size: 15px;
++  line-height: 1.5;
++  color: var(--studio-text);
++  background: var(--studio-surface);
++  min-height: 100vh;
++}
++
++.studio-header {
++  padding: 40px max(24px, 50% - 460px) 24px;
++  background: linear-gradient(
++    180deg,
++    var(--studio-elevated),
++    var(--studio-surface)
++  );
++  border-bottom: 1px solid var(--studio-border);
++}
++
++.studio-title h1 {
++  margin: 0;
++  font-size: 28px;
++  font-weight: 700;
++  letter-spacing: -0.01em;
++}
++
++.studio-subtitle {
++  margin: 6px 0 0;
++  color: var(--studio-text-dim);
++  max-width: 52ch;
++}
++
++.studio-tabs {
++  display: flex;
++  gap: 4px;
++  padding: 0 max(24px, 50% - 460px);
++  border-bottom: 1px solid var(--studio-border);
++  background: var(--studio-surface);
++  position: sticky;
++  top: 0;
++  z-index: 2;
++}
++
++.studio-tab {
++  appearance: none;
++  border: none;
++  background: none;
++  color: var(--studio-text-dim);
++  font: inherit;
++  font-weight: 600;
++  padding: 14px 16px;
++  cursor: pointer;
++  border-bottom: 2px solid transparent;
++  margin-bottom: -1px;
++}
++
++.studio-tab:hover {
++  color: var(--studio-text);
++}
++
++.studio-tab[aria-selected="true"] {
++  color: var(--studio-text);
++  border-bottom-color: var(--studio-accent);
++}
++
++.studio-body {
++  padding: 28px max(24px, 50% - 460px) 0;
++  max-width: 920px;
++  margin: 0 auto;
++}
++
++.studio-panel[hidden] {
++  display: none;
++}
++
++.studio-card {
++  background: var(--studio-elevated);
++  border: 1px solid var(--studio-border);
++  border-radius: 14px;
++  padding: 20px 22px;
++  margin-bottom: 18px;
++}
++
++.studio-card[data-requires][hidden] {
++  display: none;
++}
++
++.studio-card h2 {
++  margin: 0 0 4px;
++  font-size: 17px;
++  font-weight: 650;
++}
++
++.studio-hint {
++  margin: 0 0 14px;
++  color: var(--studio-text-dim);
++  font-size: 13px;
++}
++
++.field {
++  display: flex;
++  align-items: center;
++  gap: 14px;
++  margin-top: 14px;
++  flex-wrap: wrap;
++}
++
++.field-label {
++  min-width: 76px;
++  color: var(--studio-text-dim);
++  font-size: 13px;
++  font-weight: 600;
++}
++
++/* Segmented radio-button group */
++.segmented {
++  display: inline-flex;
++  background: var(--studio-sunken);
++  border: 1px solid var(--studio-border);
++  border-radius: 10px;
++  padding: 3px;
++  gap: 2px;
++}
++
++.segmented button {
++  appearance: none;
++  border: none;
++  background: none;
++  color: var(--studio-text-dim);
++  font: inherit;
++  font-size: 13px;
++  font-weight: 600;
++  padding: 7px 14px;
++  border-radius: 7px;
++  cursor: pointer;
++}
++
++.segmented button:hover {
++  color: var(--studio-text);
++}
++
++.segmented button[aria-checked="true"] {
++  background: var(--studio-accent);
++  color: #fff;
++}
++
++input[type="range"] {
++  flex: 1;
++  min-width: 160px;
++  accent-color: var(--studio-accent);
++}
++
++output {
++  font-variant-numeric: tabular-nums;
++  color: var(--studio-text-dim);
++  min-width: 52px;
++  text-align: right;
++}
++
++.checkbox-row {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  margin-top: 16px;
++  cursor: pointer;
++}
++
++.checkbox-row input {
++  accent-color: var(--studio-accent);
++  width: 16px;
++  height: 16px;
++}
++
++.studio-actions {
++  margin: 4px 0 24px;
++}
++
++.studio-button {
++  appearance: none;
++  font: inherit;
++  font-weight: 600;
++  border-radius: 10px;
++  padding: 10px 18px;
++  cursor: pointer;
++  border: 1px solid var(--studio-border);
++}
++
++.studio-button.ghost {
++  background: transparent;
++  color: var(--studio-text-dim);
++}
++
++.studio-button.ghost:hover {
++  color: var(--studio-text);
++  background: var(--studio-elevated);
++}
++
++.studio-button.primary {
++  background: var(--studio-accent);
++  color: #fff;
++  border-color: transparent;
++}
++
++.studio-button.primary:hover {
++  filter: brightness(1.08);
++}
++
++/* Theme grid */
++.theme-grid {
++  display: grid;
++  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
++  gap: 14px;
++}
++
++.theme-card {
++  appearance: none;
++  text-align: left;
++  border: 2px solid var(--studio-border);
++  border-radius: 12px;
++  padding: 0;
++  overflow: hidden;
++  background: var(--studio-sunken);
++  color: var(--studio-text);
++  cursor: pointer;
++  font: inherit;
++}
++
++.theme-card:hover {
++  border-color: var(--studio-text-dim);
++}
++
++.theme-card[aria-checked="true"] {
++  border-color: var(--studio-accent);
++}
++
++.theme-swatch {
++  height: 68px;
++  display: flex;
++}
++
++.theme-swatch span {
++  flex: 1;
++}
++
++.theme-meta {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  padding: 10px 12px;
++}
++
++.theme-name {
++  font-weight: 600;
++  font-size: 13px;
++}
++
++.theme-active-badge {
++  font-size: 11px;
++  font-weight: 700;
++  color: var(--studio-accent);
++  text-transform: uppercase;
++  letter-spacing: 0.04em;
++}
++
++.theme-card:not([aria-checked="true"]) .theme-active-badge {
++  display: none;
++}
+diff --git a/src/zen/kavacha-studio/studio.html b/src/zen/kavacha-studio/studio.html
+new file mode 100644
+index 0000000..7dcdb49
+--- /dev/null
++++ b/src/zen/kavacha-studio/studio.html
+@@ -0,0 +1,148 @@
++<!-- This Source Code Form is subject to the terms of the Mozilla Public
++   - License, v. 2.0. If a copy of the MPL was not distributed with this
++   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
++<!DOCTYPE html>
++<html lang="en" dir="ltr">
++  <head>
++    <meta charset="utf-8" />
++    <meta
++      http-equiv="Content-Security-Policy"
++      content="default-src chrome:; img-src chrome: data:; style-src chrome: 'unsafe-inline'; object-src 'none'"
++    />
++    <title>Customization Studio</title>
++    <link rel="stylesheet" href="chrome://browser/content/kavacha-studio/studio.css" />
++    <script src="chrome://browser/content/kavacha-studio/studio.js"></script>
++  </head>
++  <body>
++    <header class="studio-header">
++      <div class="studio-title">
++        <h1>Customization Studio</h1>
++        <p class="studio-subtitle">
++          Redesign your browser — no CSS required. Changes apply live to every
++          window.
++        </p>
++      </div>
++    </header>
++
++    <nav class="studio-tabs" role="tablist" aria-label="Studio sections">
++      <button
++        id="tab-layout"
++        class="studio-tab"
++        role="tab"
++        aria-selected="true"
++        aria-controls="panel-layout"
++        data-tab="layout"
++      >
++        Layout
++      </button>
++      <button
++        id="tab-themes"
++        class="studio-tab"
++        role="tab"
++        aria-selected="false"
++        aria-controls="panel-themes"
++        data-tab="themes"
++      >
++        Themes
++      </button>
++    </nav>
++
++    <main class="studio-body">
++      <!-- ============================ LAYOUT ============================ -->
++      <section
++        id="panel-layout"
++        class="studio-panel"
++        role="tabpanel"
++        aria-labelledby="tab-layout"
++      >
++        <div class="studio-card">
++          <h2>Tabs</h2>
++          <p class="studio-hint">
++            Horizontal is Kavacha's default. Vertical brings back a sidebar
++            strip.
++          </p>
++          <div class="segmented" role="radiogroup" aria-label="Tab layout" data-control="tabStyle">
++            <button role="radio" data-value="horizontal">Horizontal</button>
++            <button role="radio" data-value="vertical">Vertical</button>
++          </div>
++        </div>
++
++        <div class="studio-card" data-requires="vertical">
++          <h2>Sidebar</h2>
++          <p class="studio-hint">Only applies while tabs are vertical.</p>
++          <div class="field">
++            <span class="field-label">Position</span>
++            <div class="segmented" role="radiogroup" aria-label="Sidebar position" data-control="sidebar">
++              <button role="radio" data-value="left">Left</button>
++              <button role="radio" data-value="right">Right</button>
++              <button role="radio" data-value="hidden">Hidden</button>
++            </div>
++          </div>
++          <div class="field">
++            <label class="field-label" for="sidebar-width">Width</label>
++            <input
++              id="sidebar-width"
++              type="range"
++              min="48"
++              max="600"
++              step="1"
++              data-control="sidebarWidth"
++            />
++            <output id="sidebar-width-value" for="sidebar-width">250px</output>
++          </div>
++        </div>
++
++        <div class="studio-card">
++          <h2>Density</h2>
++          <p class="studio-hint">Breathing room around tabs and controls.</p>
++          <div class="segmented" role="radiogroup" aria-label="Interface density" data-control="density">
++            <button role="radio" data-value="compact">Compact</button>
++            <button role="radio" data-value="normal">Normal</button>
++            <button role="radio" data-value="comfortable">Comfortable</button>
++          </div>
++        </div>
++
++        <div class="studio-card">
++          <h2>Toolbar</h2>
++          <div class="field">
++            <span class="field-label">Position</span>
++            <div class="segmented" role="radiogroup" aria-label="Toolbar position" data-control="toolbarPosition">
++              <button role="radio" data-value="top">Top</button>
++              <button role="radio" data-value="bottom">Bottom</button>
++            </div>
++          </div>
++          <label class="checkbox-row">
++            <input type="checkbox" data-control="toolbarVisible" />
++            <span>Show the navigation toolbar</span>
++          </label>
++        </div>
++
++        <div class="studio-actions">
++          <button id="reset-layout" class="studio-button ghost">
++            Reset layout to default
++          </button>
++        </div>
++      </section>
++
++      <!-- ============================ THEMES ============================ -->
++      <section
++        id="panel-themes"
++        class="studio-panel"
++        role="tabpanel"
++        aria-labelledby="tab-themes"
++        hidden
++      >
++        <div class="studio-card">
++          <h2>Theme</h2>
++          <p class="studio-hint">
++            Themes tint the browser's surfaces. Your accent color stays yours —
++            change it any time from Settings.
++          </p>
++          <div id="theme-grid" class="theme-grid" role="radiogroup" aria-label="Theme">
++            <!-- theme cards injected by studio.js -->
++          </div>
++        </div>
++      </section>
++    </main>
++  </body>
++</html>
+diff --git a/src/zen/kavacha-studio/studio.js b/src/zen/kavacha-studio/studio.js
+new file mode 100644
+index 0000000..94f0a9e
+--- /dev/null
++++ b/src/zen/kavacha-studio/studio.js
+@@ -0,0 +1,227 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++// Customization Studio front-end (about:studio; ADR 0009). Runs in the parent
++// process with the system principal (IS_SECURE_CHROME_UI — see
++// KavachaAboutStudio.sys.mjs), so it drives the chrome singletons directly
++// through their public APIs. The engines apply live to every browser window,
++// so every control here updates the real chrome immediately — no separate
++// "preview". A pref doorbell keeps the Studio in sync when the same settings
++// are changed elsewhere (palette commands, hand-edited JSON).
++
++/* global ChromeUtils, Services */
++
++const { KavachaLayoutEngine } = ChromeUtils.importESModule(
++  "resource:///modules/KavachaLayoutEngine.sys.mjs"
++);
++const { KavachaThemeEngine } = ChromeUtils.importESModule(
++  "resource:///modules/KavachaThemeEngine.sys.mjs"
++);
++
++const kLayoutRevisionPref = "kavacha.layout.revision";
++const kThemePref = "kavacha.theme.active";
++
++// ---- Small helpers --------------------------------------------------------
++
++function qs(sel) {
++  return document.querySelector(sel);
++}
++
++/** Reflect a segmented radiogroup's selection. */
++function selectSegment(group, value) {
++  for (const btn of group.querySelectorAll("[role='radio']")) {
++    btn.setAttribute("aria-checked", String(btn.dataset.value === value));
++  }
++}
++
++function onSegment(group, handler) {
++  group.addEventListener("click", event => {
++    const btn = event.target.closest("[role='radio']");
++    if (btn && group.contains(btn)) {
++      handler(btn.dataset.value);
++    }
++  });
++}
++
++// ---- Tabs -----------------------------------------------------------------
++
++function initTabs() {
++  const tabs = [...document.querySelectorAll(".studio-tab")];
++  for (const tab of tabs) {
++    tab.addEventListener("click", () => {
++      for (const t of tabs) {
++        const selected = t === tab;
++        t.setAttribute("aria-selected", String(selected));
++        document.getElementById(t.getAttribute("aria-controls")).hidden =
++          !selected;
++      }
++    });
++  }
++}
++
++// ---- Layout panel ---------------------------------------------------------
++
++const Layout = {
++  // Guards the pref observer against echoing our own writes back into a render.
++  _writing: false,
++
++  async render() {
++    const layout = await KavachaLayoutEngine.getLayout();
++
++    selectSegment(qs("[data-control='tabStyle']"), layout.tabStyle);
++    selectSegment(qs("[data-control='sidebar']"), layout.sidebar);
++    selectSegment(qs("[data-control='density']"), layout.density);
++    selectSegment(qs("[data-control='toolbarPosition']"), layout.toolbar.position);
++
++    const width = qs("[data-control='sidebarWidth']");
++    width.value = layout.sidebarWidth;
++    qs("#sidebar-width-value").textContent = `${layout.sidebarWidth}px`;
++
++    qs("[data-control='toolbarVisible']").checked = layout.toolbar.visible;
++
++    // The sidebar card is meaningless in horizontal mode.
++    qs(".studio-card[data-requires='vertical']").hidden =
++      layout.tabStyle !== "vertical";
++  },
++
++  async commit(patch) {
++    this._writing = true;
++    try {
++      await KavachaLayoutEngine.setLayout(patch);
++    } catch (e) {
++      console.error("Studio: setLayout failed", e);
++    } finally {
++      this._writing = false;
++    }
++    await this.render();
++  },
++
++  init() {
++    onSegment(qs("[data-control='tabStyle']"), v =>
++      this.commit({ tabStyle: v })
++    );
++    onSegment(qs("[data-control='sidebar']"), v => this.commit({ sidebar: v }));
++    onSegment(qs("[data-control='density']"), v => this.commit({ density: v }));
++    onSegment(qs("[data-control='toolbarPosition']"), v =>
++      this.commit({ toolbar: { position: v } })
++    );
++
++    const width = qs("[data-control='sidebarWidth']");
++    // 'input' updates the readout live; commit on 'change' so we don't rewrite
++    // the layout file on every pixel of the drag.
++    width.addEventListener("input", () => {
++      qs("#sidebar-width-value").textContent = `${width.value}px`;
++    });
++    width.addEventListener("change", () =>
++      this.commit({ sidebarWidth: Number(width.value) })
++    );
++
++    qs("[data-control='toolbarVisible']").addEventListener("change", event =>
++      this.commit({ toolbar: { visible: event.target.checked } })
++    );
++
++    qs("#reset-layout").addEventListener("click", () =>
++      this.commit({
++        sidebar: "left",
++        sidebarWidth: 250,
++        tabStyle: "horizontal",
++        density: "compact",
++        toolbar: { position: "top", visible: true },
++      })
++    );
++  },
++};
++
++// ---- Themes panel ---------------------------------------------------------
++
++const Themes = {
++  async render() {
++    const grid = qs("#theme-grid");
++    const ids = await KavachaThemeEngine.listThemes();
++    const active = KavachaThemeEngine.activeThemeId;
++    grid.textContent = "";
++
++    for (const id of ids) {
++      let theme;
++      try {
++        theme = await KavachaThemeEngine.resolveTheme(id);
++      } catch (e) {
++        console.error(`Studio: could not load theme "${id}"`, e);
++        continue;
++      }
++      grid.append(this._card(theme, id === active));
++    }
++  },
++
++  _card(theme, isActive) {
++    const c = theme.colors || {};
++    const card = document.createElement("button");
++    card.className = "theme-card";
++    card.type = "button";
++    card.setAttribute("role", "radio");
++    card.setAttribute("aria-checked", String(isActive));
++    card.dataset.themeId = theme.id;
++
++    const swatch = document.createElement("div");
++    swatch.className = "theme-swatch";
++    for (const token of ["surface", "tabActiveBackground", "accent", "textPrimary"]) {
++      const band = document.createElement("span");
++      band.style.background = c[token] || "transparent";
++      swatch.append(band);
++    }
++
++    const meta = document.createElement("div");
++    meta.className = "theme-meta";
++    const name = document.createElement("span");
++    name.className = "theme-name";
++    name.textContent = theme.name || theme.id;
++    const badge = document.createElement("span");
++    badge.className = "theme-active-badge";
++    badge.textContent = "Active";
++    meta.append(name, badge);
++
++    card.append(swatch, meta);
++    card.addEventListener("click", () => this._select(theme.id));
++    return card;
++  },
++
++  async _select(id) {
++    try {
++      await KavachaThemeEngine.setActiveTheme(id);
++    } catch (e) {
++      console.error("Studio: setActiveTheme failed", e);
++    }
++    await this.render();
++  },
++};
++
++// ---- Pref doorbell: stay in sync with changes made elsewhere --------------
++
++const prefObserver = {
++  observe(subject, topic, data) {
++    if (data === kLayoutRevisionPref && !Layout._writing) {
++      Layout.render();
++    } else if (data === kThemePref) {
++      Themes.render();
++    }
++  },
++};
++
++document.addEventListener("DOMContentLoaded", async () => {
++  initTabs();
++  Layout.init();
++  await Layout.render();
++  await Themes.render();
++
++  Services.prefs.addObserver(kLayoutRevisionPref, prefObserver);
++  Services.prefs.addObserver(kThemePref, prefObserver);
++  window.addEventListener(
++    "unload",
++    () => {
++      Services.prefs.removeObserver(kLayoutRevisionPref, prefObserver);
++      Services.prefs.removeObserver(kThemePref, prefObserver);
++    },
++    { once: true }
++  );
++});
+diff --git a/src/zen/moz.build b/src/zen/moz.build
+index 4e3e80e..1b41104 100644
+--- a/src/zen/moz.build
++++ b/src/zen/moz.build
+@@ -11,6 +11,7 @@ DIRS += [
+     "common",
+     "drag-and-drop",
+     "glance",
++    "kavacha-studio",
+     "live-folders",
+     "mods",
+     "tests",

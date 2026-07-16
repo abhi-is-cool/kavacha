@@ -1,0 +1,668 @@
+# Patch 0025 — Kavacha Customization Studio, Advanced tier: live custom-CSS
+# editor with history + safe mode (ROADMAP Phase 3 "Live CSS editor with history
+# + safe mode"; ADR 0009).
+#
+# WHAT: KavachaUserCSS.sys.mjs is userChrome.css done safely — the user's chrome
+# CSS is applied LIVE as a per-window AUTHOR_SHEET (the chrome-only windowUtils
+# mechanism from 0012/0022/0023; never touches web content, never gains script),
+# every save snapshots the previous text to kavacha-usercss-history.json so any
+# change is revertible, and a SAFE MODE pref (kavacha.usercss.safe-mode) disables
+# ALL custom CSS so a broken rule can never brick the UI. The Studio grows an
+# "Advanced" tab (editor + Apply/Revert + history list + safe-mode toggle); a
+# palette command "Toggle Custom CSS Safe Mode" reaches the escape hatch even if
+# the chrome is unusable.
+#
+# RUNTIME SHAPE (shared with 0022/0023; ADR 0008): process singleton init() +
+# per-window applyToWindow() from ZenStartup, applyToAllWindows() driven by a
+# kavacha.usercss.revision doorbell the content editor bumps. The Studio page is
+# a tab's content document, so the chrome AUTHOR_SHEET never styles the editor
+# itself — the editor stays usable even while the user's CSS is (mis)styling the
+# surrounding chrome.
+#
+# NOT BUILD-VERIFIED: authored against the post-0024 tree. Run `git apply --check`
+# + Marionette (apply a rule, see the chrome change; toggle safe mode; revert
+# from history) before marking verified. Adds KavachaUserCSS.sys.mjs; touches
+# src/zen/common/moz.build, ZenStartup.mjs, KavachaCommandRegistry.sys.mjs,
+# zen-command-palette.ftl, and studio.html/js/css from 0024. Applies on top of
+# 0024.
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index 33ef46a..e5cefd4 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -53,3 +53,4 @@ kavacha-action-cycle-density = Cycle Interface Density
+ kavacha-action-reload-layout = Reload Layout from File
+ kavacha-action-switch-theme = Switch Theme
+ kavacha-action-open-studio = Open Customization Studio
++kavacha-action-usercss-safe-mode = Toggle Custom CSS Safe Mode
+diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
+index a65a888..a2a6a5a 100644
+--- a/src/zen/common/modules/ZenStartup.mjs
++++ b/src/zen/common/modules/ZenStartup.mjs
+@@ -164,6 +164,13 @@ class ZenStartup {
+       ).KavachaThemeEngine;
+       kavachaTheme.init();
+       kavachaTheme.applyToWindow(window);
++      // Kavacha: apply the user's custom chrome CSS to this window (the Studio
++      // Advanced tier; safe-mode-gated, versioned; ADR 0009).
++      const kavachaUserCSS = ChromeUtils.importESModule(
++        "resource:///modules/KavachaUserCSS.sys.mjs"
++      ).KavachaUserCSS;
++      kavachaUserCSS.init();
++      kavachaUserCSS.applyToWindow(window);
+       this.isReady = true;
+       this.promiseInitializedResolve();
+       delete this.promiseInitializedResolve;
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+index a16b136..3163188 100644
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -10,6 +10,7 @@ EXTRA_JS_MODULES += [
+   "sys/KavachaSpaceHistory.sys.mjs",
+   "sys/KavachaTabMemory.sys.mjs",
+   "sys/KavachaThemeEngine.sys.mjs",
++  "sys/KavachaUserCSS.sys.mjs",
+   "sys/ZenActorsManager.sys.mjs",
+   "sys/ZenCustomizableUI.sys.mjs",
+   "sys/ZenUIMigration.sys.mjs",
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+index 1592728..f322e4d 100644
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -204,6 +204,18 @@ const BUILTIN = [
+     icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
+     domain: KavachaCommandDomain.APPEARANCE,
+   },
++  {
++    l10nId: "kavacha-action-usercss-safe-mode",
++    // The escape hatch: disables ALL custom chrome CSS so a broken rule can
++    // never brick the UI. Reachable from the palette even if chrome is
++    // unusable (ADR 0009).
++    command: () =>
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaUserCSS.sys.mjs"
++      ).KavachaUserCSS.toggleSafeMode(),
++    icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++    domain: KavachaCommandDomain.APPEARANCE,
++  },
+ 
+   // -- Privacy ---------------------------------------------------------------
+   {
+diff --git a/src/zen/common/sys/KavachaUserCSS.sys.mjs b/src/zen/common/sys/KavachaUserCSS.sys.mjs
+new file mode 100644
+index 0000000..7870b6b
+--- /dev/null
++++ b/src/zen/common/sys/KavachaUserCSS.sys.mjs
+@@ -0,0 +1,202 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha user-CSS engine — the Customization Studio's "Advanced" tier
++// (ROADMAP Phase 3 "Live CSS editor with history + safe mode"; ADR 0009).
++//
++// This is userChrome.css done safely: the user's chrome CSS is applied LIVE as
++// a per-window AUTHOR_SHEET (windowUtils.loadSheetUsingURIString — the same
++// chrome-only mechanism patches 0012/0022/0023 use; it styles the browser
++// chrome, never web content and never gains script execution), it is VERSIONED
++// (every save snapshots the previous text so any change can be reverted), and
++// it has a SAFE MODE — a single pref that disables all custom CSS, so a broken
++// rule can never brick the UI (the "Toggle Custom CSS Safe Mode" palette
++// command flips it even if the chrome is unusable).
++//
++// Runtime shape mirrors KavachaLayoutEngine / KavachaThemeEngine (ADR 0008): a
++// process singleton whose init() installs the observers, a per-window
++// applyToWindow() called from ZenStartup, and applyToAllWindows() driven by a
++// monotonic `kavacha.usercss.revision` bump — the doorbell the about:studio
++// editor rings after a save.
++//
++// State on disk (profile):
++//   kavacha-user-chrome.css      current CSS text (hand-editable)
++//   kavacha-usercss-history.json [{ ts:<epoch ms>, css:<string> }, ...]
++//                                newest first, capped at history-max.
++
++const kCssFile = "kavacha-user-chrome.css";
++const kHistoryFile = "kavacha-usercss-history.json";
++const kRevisionPref = "kavacha.usercss.revision";
++const kSafeModePref = "kavacha.usercss.safe-mode";
++const kHistoryMaxPref = "kavacha.usercss.history-max";
++const kDefaultHistoryMax = 50;
++
++// Prepended to every applied sheet so users don't have to remember the XUL
++// namespace incantation that userChrome.css requires. Re-declaring the default
++// namespace in the user's own CSS is still valid (last declaration wins).
++const kNamespaces =
++  '@namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");\n' +
++  '@namespace html url("http://www.w3.org/1999/xhtml");\n';
++
++export const KavachaUserCSS = {
++  _initialized: false,
++  _css: null,
++  _sheetByWindow: new WeakMap(),
++
++  init() {
++    if (this._initialized) {
++      return;
++    }
++    this._initialized = true;
++    Services.prefs.addObserver(kRevisionPref, this);
++    Services.prefs.addObserver(kSafeModePref, this);
++  },
++
++  observe(subject, topic, data) {
++    if (topic !== "nsPref:changed") {
++      return;
++    }
++    if (data === kRevisionPref) {
++      // Content (about:studio) saved new CSS — re-read from disk and re-apply.
++      this._css = null;
++      this.applyToAllWindows();
++    } else if (data === kSafeModePref) {
++      this.applyToAllWindows();
++    }
++  },
++
++  get isSafeMode() {
++    return Services.prefs.getBoolPref(kSafeModePref, false);
++  },
++
++  get _cssPath() {
++    return PathUtils.join(PathUtils.profileDir, kCssFile);
++  },
++
++  get _historyPath() {
++    return PathUtils.join(PathUtils.profileDir, kHistoryFile);
++  },
++
++  async _loadCSS() {
++    if (this._css !== null) {
++      return this._css;
++    }
++    try {
++      this._css = await IOUtils.readUTF8(this._cssPath);
++    } catch (e) {
++      this._css = ""; // First run — no file yet.
++    }
++    return this._css;
++  },
++
++  // ----- Public API (about:studio Advanced tab, palette) ------------------
++
++  /** The current custom CSS text (may be ""). */
++  async getCSS() {
++    return this._loadCSS();
++  },
++
++  /** Replace the CSS, snapshotting the previous text into history, then apply. */
++  async setCSS(text) {
++    const css = typeof text === "string" ? text : "";
++    const previous = await this._loadCSS();
++    if (previous.trim()) {
++      await this._pushHistory(previous);
++    }
++    this._css = css;
++    await IOUtils.writeUTF8(this._cssPath, css);
++    // Bump the revision: the observer re-applies to every window, and an
++    // about:studio editor watching the pref re-reads too.
++    Services.prefs.setIntPref(
++      kRevisionPref,
++      Services.prefs.getIntPref(kRevisionPref, 0) + 1
++    );
++  },
++
++  async _readHistory() {
++    try {
++      const parsed = JSON.parse(await IOUtils.readUTF8(this._historyPath));
++      return Array.isArray(parsed) ? parsed : [];
++    } catch (e) {
++      return [];
++    }
++  },
++
++  async _pushHistory(css) {
++    const history = await this._readHistory();
++    history.unshift({ ts: Date.now(), css });
++    const max = Math.max(
++      1,
++      Services.prefs.getIntPref(kHistoryMaxPref, kDefaultHistoryMax)
++    );
++    history.length = Math.min(history.length, max);
++    await IOUtils.writeUTF8(this._historyPath, JSON.stringify(history, null, 2));
++  },
++
++  /** History newest-first: [{ ts, css }]. */
++  async listHistory() {
++    return this._readHistory();
++  },
++
++  /** Restore a history entry as the current CSS (itself undoable — setCSS
++   *  snapshots whatever is current before overwriting it). */
++  async revertTo(index) {
++    const history = await this._readHistory();
++    const entry = history[index];
++    if (entry) {
++      await this.setCSS(entry.css);
++    }
++  },
++
++  setSafeMode(on) {
++    Services.prefs.setBoolPref(kSafeModePref, !!on);
++  },
++
++  toggleSafeMode() {
++    this.setSafeMode(!this.isSafeMode);
++  },
++
++  // ----- Application ------------------------------------------------------
++
++  applyToAllWindows() {
++    for (const win of Services.wm.getEnumerator("navigator:browser")) {
++      if (!win.closed && win.document?.documentElement) {
++        this.applyToWindow(win);
++      }
++    }
++  },
++
++  async applyToWindow(win) {
++    if (win.closed || !win.windowUtils) {
++      return;
++    }
++    const utils = win.windowUtils;
++
++    // Always tear down the previous sheet first, so re-apply/safe-mode/revert
++    // all converge to "exactly the current CSS, or nothing".
++    const prev = this._sheetByWindow.get(win);
++    if (prev) {
++      try {
++        utils.removeSheetUsingURIString(prev, utils.AUTHOR_SHEET);
++      } catch (e) {}
++      this._sheetByWindow.delete(win);
++    }
++
++    if (this.isSafeMode) {
++      return; // Escape hatch: no custom CSS at all.
++    }
++    const css = await this._loadCSS();
++    if (!css.trim()) {
++      return;
++    }
++    const uri =
++      "data:text/css;charset=utf-8," + encodeURIComponent(kNamespaces + css);
++    try {
++      utils.loadSheetUsingURIString(uri, utils.AUTHOR_SHEET);
++      this._sheetByWindow.set(win, uri);
++    } catch (e) {
++      win.console?.error("KavachaUserCSS: failed to apply custom CSS", e);
++    }
++  },
++};
+diff --git a/src/zen/kavacha-studio/studio.css b/src/zen/kavacha-studio/studio.css
+index c50b6e2..2dcd64e 100644
+--- a/src/zen/kavacha-studio/studio.css
++++ b/src/zen/kavacha-studio/studio.css
+@@ -290,3 +290,102 @@ output {
+ .theme-card:not([aria-checked="true"]) .theme-active-badge {
+   display: none;
+ }
++
++/* Advanced: live CSS editor */
++.advanced-head {
++  display: flex;
++  align-items: flex-start;
++  justify-content: space-between;
++  gap: 20px;
++  flex-wrap: wrap;
++}
++
++.safe-mode-row {
++  margin-top: 0;
++  flex-shrink: 0;
++}
++
++.css-editor {
++  width: 100%;
++  min-height: 260px;
++  margin-top: 4px;
++  padding: 14px 16px;
++  border-radius: 10px;
++  border: 1px solid var(--studio-border);
++  background: var(--studio-sunken);
++  color: var(--studio-text);
++  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
++  font-size: 13px;
++  line-height: 1.55;
++  resize: vertical;
++  tab-size: 2;
++  white-space: pre;
++}
++
++.css-editor:focus {
++  outline: 2px solid var(--studio-accent);
++  outline-offset: -1px;
++}
++
++.editor-actions {
++  display: flex;
++  align-items: center;
++  gap: 12px;
++  margin: 14px 0 0;
++}
++
++.css-status {
++  color: var(--studio-text-dim);
++  font-size: 13px;
++}
++
++.studio-button.small {
++  padding: 5px 12px;
++  font-size: 12px;
++}
++
++.css-history {
++  list-style: none;
++  margin: 0;
++  padding: 0;
++}
++
++.css-history-empty {
++  color: var(--studio-text-dim);
++  font-size: 13px;
++}
++
++.css-history-item {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 14px;
++  padding: 10px 0;
++  border-bottom: 1px solid var(--studio-border);
++}
++
++.css-history-item:last-child {
++  border-bottom: none;
++}
++
++.css-history-meta {
++  display: flex;
++  flex-direction: column;
++  gap: 2px;
++  min-width: 0;
++}
++
++.css-history-when {
++  font-size: 12px;
++  font-weight: 600;
++  color: var(--studio-text-dim);
++}
++
++.css-history-preview {
++  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
++  font-size: 12px;
++  color: var(--studio-text);
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
+diff --git a/src/zen/kavacha-studio/studio.html b/src/zen/kavacha-studio/studio.html
+index 7dcdb49..b208af7 100644
+--- a/src/zen/kavacha-studio/studio.html
++++ b/src/zen/kavacha-studio/studio.html
+@@ -45,6 +45,16 @@
+       >
+         Themes
+       </button>
++      <button
++        id="tab-advanced"
++        class="studio-tab"
++        role="tab"
++        aria-selected="false"
++        aria-controls="panel-advanced"
++        data-tab="advanced"
++      >
++        Advanced
++      </button>
+     </nav>
+ 
+     <main class="studio-body">
+@@ -143,6 +153,58 @@
+           </div>
+         </div>
+       </section>
++
++      <!-- =========================== ADVANCED =========================== -->
++      <section
++        id="panel-advanced"
++        class="studio-panel"
++        role="tabpanel"
++        aria-labelledby="tab-advanced"
++        hidden
++      >
++        <div class="studio-card">
++          <div class="advanced-head">
++            <div>
++              <h2>Custom chrome CSS</h2>
++              <p class="studio-hint">
++                Style the browser itself, like userChrome.css — but versioned
++                and revertible. Targets chrome, never web pages. The XUL
++                namespace is added for you.
++              </p>
++            </div>
++            <label class="checkbox-row safe-mode-row">
++              <input type="checkbox" data-control="safeMode" />
++              <span>Safe mode (disable all custom CSS)</span>
++            </label>
++          </div>
++          <textarea
++            id="css-editor"
++            class="css-editor"
++            spellcheck="false"
++            autocomplete="off"
++            wrap="off"
++            placeholder="/* e.g. hide the forward button */&#10;#forward-button { display: none !important; }"
++          ></textarea>
++          <div class="studio-actions editor-actions">
++            <button id="apply-css" class="studio-button primary">Apply</button>
++            <button id="revert-css" class="studio-button ghost">
++              Revert changes
++            </button>
++            <span id="css-status" class="css-status" role="status"></span>
++          </div>
++        </div>
++
++        <div class="studio-card">
++          <h2>History</h2>
++          <p class="studio-hint">
++            Every Apply snapshots the previous CSS. Restore any version —
++            restoring is itself undoable.
++          </p>
++          <ul id="css-history" class="css-history">
++            <!-- history entries injected by studio.js -->
++          </ul>
++        </div>
++      </section>
+     </main>
+   </body>
+ </html>
+diff --git a/src/zen/kavacha-studio/studio.js b/src/zen/kavacha-studio/studio.js
+index 94f0a9e..2bfe821 100644
+--- a/src/zen/kavacha-studio/studio.js
++++ b/src/zen/kavacha-studio/studio.js
+@@ -18,9 +18,14 @@ const { KavachaLayoutEngine } = ChromeUtils.importESModule(
+ const { KavachaThemeEngine } = ChromeUtils.importESModule(
+   "resource:///modules/KavachaThemeEngine.sys.mjs"
+ );
++const { KavachaUserCSS } = ChromeUtils.importESModule(
++  "resource:///modules/KavachaUserCSS.sys.mjs"
++);
+ 
+ const kLayoutRevisionPref = "kavacha.layout.revision";
+ const kThemePref = "kavacha.theme.active";
++const kUserCSSRevisionPref = "kavacha.usercss.revision";
++const kUserCSSSafeModePref = "kavacha.usercss.safe-mode";
+ 
+ // ---- Small helpers --------------------------------------------------------
+ 
+@@ -196,14 +201,139 @@ const Themes = {
+   },
+ };
+ 
++// ---- Advanced panel (live CSS editor + history + safe mode) ---------------
++
++function formatTs(ts) {
++  try {
++    return new Date(ts).toLocaleString();
++  } catch (e) {
++    return "";
++  }
++}
++
++function firstLine(css) {
++  const line = String(css || "").split("\n").find(l => l.trim()) || "";
++  return line.length > 60 ? line.slice(0, 57) + "…" : line;
++}
++
++const Advanced = {
++  // True while the editor holds edits the user hasn't Applied. A pref-doorbell
++  // re-render must not clobber those, so render() leaves the textarea alone
++  // when dirty.
++  _dirty: false,
++
++  async render() {
++    if (!this._dirty) {
++      qs("#css-editor").value = await KavachaUserCSS.getCSS();
++    }
++    qs("[data-control='safeMode']").checked = KavachaUserCSS.isSafeMode;
++    await this._renderHistory();
++    this._status();
++  },
++
++  _status(msg) {
++    const el = qs("#css-status");
++    if (msg) {
++      el.textContent = msg;
++      return;
++    }
++    if (KavachaUserCSS.isSafeMode) {
++      el.textContent = "Safe mode on — custom CSS is disabled.";
++    } else {
++      el.textContent = this._dirty ? "Unsaved changes." : "";
++    }
++  },
++
++  async _renderHistory() {
++    const list = qs("#css-history");
++    const history = await KavachaUserCSS.listHistory();
++    list.textContent = "";
++    if (!history.length) {
++      const empty = document.createElement("li");
++      empty.className = "css-history-empty";
++      empty.textContent = "No previous versions yet.";
++      list.append(empty);
++      return;
++    }
++    history.forEach((entry, i) => {
++      const li = document.createElement("li");
++      li.className = "css-history-item";
++
++      const meta = document.createElement("div");
++      meta.className = "css-history-meta";
++      const when = document.createElement("span");
++      when.className = "css-history-when";
++      when.textContent = formatTs(entry.ts);
++      const preview = document.createElement("span");
++      preview.className = "css-history-preview";
++      preview.textContent = firstLine(entry.css);
++      meta.append(when, preview);
++
++      const restore = document.createElement("button");
++      restore.className = "studio-button ghost small";
++      restore.textContent = "Restore";
++      restore.addEventListener("click", () => this._revert(i));
++
++      li.append(meta, restore);
++      list.append(li);
++    });
++  },
++
++  async _apply() {
++    try {
++      await KavachaUserCSS.setCSS(qs("#css-editor").value);
++    } catch (e) {
++      console.error("Studio: setCSS failed", e);
++      this._status("Could not apply — see the Browser Console.");
++      return;
++    }
++    this._dirty = false;
++    await this._renderHistory();
++    this._status("Applied.");
++  },
++
++  async _revert(index) {
++    await KavachaUserCSS.revertTo(index);
++    this._dirty = false;
++    await this.render();
++    this._status("Restored.");
++  },
++
++  init() {
++    const editor = qs("#css-editor");
++    editor.addEventListener("input", () => {
++      this._dirty = true;
++      this._status();
++    });
++    qs("#apply-css").addEventListener("click", () => this._apply());
++    qs("#revert-css").addEventListener("click", async () => {
++      this._dirty = false;
++      editor.value = await KavachaUserCSS.getCSS();
++      this._status("Reverted to last applied.");
++    });
++    qs("[data-control='safeMode']").addEventListener("change", event =>
++      KavachaUserCSS.setSafeMode(event.target.checked)
++    );
++  },
++};
++
+ // ---- Pref doorbell: stay in sync with changes made elsewhere --------------
+ 
++const kWatchedPrefs = [
++  kLayoutRevisionPref,
++  kThemePref,
++  kUserCSSRevisionPref,
++  kUserCSSSafeModePref,
++];
++
+ const prefObserver = {
+   observe(subject, topic, data) {
+     if (data === kLayoutRevisionPref && !Layout._writing) {
+       Layout.render();
+     } else if (data === kThemePref) {
+       Themes.render();
++    } else if (data === kUserCSSRevisionPref || data === kUserCSSSafeModePref) {
++      Advanced.render();
+     }
+   },
+ };
+@@ -211,16 +341,20 @@ const prefObserver = {
+ document.addEventListener("DOMContentLoaded", async () => {
+   initTabs();
+   Layout.init();
++  Advanced.init();
+   await Layout.render();
+   await Themes.render();
++  await Advanced.render();
+ 
+-  Services.prefs.addObserver(kLayoutRevisionPref, prefObserver);
+-  Services.prefs.addObserver(kThemePref, prefObserver);
++  for (const pref of kWatchedPrefs) {
++    Services.prefs.addObserver(pref, prefObserver);
++  }
+   window.addEventListener(
+     "unload",
+     () => {
+-      Services.prefs.removeObserver(kLayoutRevisionPref, prefObserver);
+-      Services.prefs.removeObserver(kThemePref, prefObserver);
++      for (const pref of kWatchedPrefs) {
++        Services.prefs.removeObserver(pref, prefObserver);
++      }
+     },
+     { once: true }
+   );

@@ -40,3 +40,15 @@ pref("zen.view.window.scheme", 0);
 // Workspace state-history (ADR 0006): per-space snapshot retention bounds.
 pref("kavacha.history.max-snapshots-per-space", 100);
 pref("kavacha.history.retention-days", 90);
+
+// Kavacha layout engine (patch 0022; ADR 0008): monotonic revision counter.
+// KavachaLayoutEngine persists the layout to kavacha-layout.json and bumps
+// this pref; its observer (and any content page like about:studio) re-reads on
+// change. The engine sizes/positions chrome from that document live.
+pref("kavacha.layout.revision", 0);
+
+// Kavacha theme engine (patch 0023; ADR 0008): the active theme package id.
+// kavacha-midnight is the baked default (patch 0016); any other id overrides
+// its base --kavacha-* tokens live so Zen re-tints. User theme packages live
+// in the profile kavacha-themes/ directory.
+pref("kavacha.theme.active", "kavacha-midnight");

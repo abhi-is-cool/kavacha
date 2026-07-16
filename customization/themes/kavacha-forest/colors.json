@@ -1,0 +1,21 @@
+{
+  "$comment": "Color tokens map 1:1 to --kavacha-* CSS custom properties on the chrome root.",
+  "surface": "#101A14",
+  "surfaceElevated": "#16241B",
+  "surfaceSunken": "#0A120D",
+  "border": "#274031",
+  "textPrimary": "#E6F0E9",
+  "textSecondary": "#9BB6A6",
+  "textDisabled": "#5A7364",
+  "accent": "#E0A458",
+  "accentHover": "#F0B972",
+  "accentText": "#101A14",
+  "tabActiveBackground": "#1F3527",
+  "tabHoverBackground": "#182A1E",
+  "sidebarBackground": "#0A120D",
+  "urlbarBackground": "#16241B",
+  "success": "#63C185",
+  "warning": "#E0A458",
+  "danger": "#DE6B5F",
+  "privacyShield": "#6FB58F"
+}

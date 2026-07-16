@@ -22,8 +22,8 @@
     "tabStyle": {
       "type": "string",
       "enum": ["vertical", "horizontal"],
-      "default": "vertical",
-      "description": "Vertical tabs are the Kavacha default."
+      "default": "horizontal",
+      "description": "Horizontal tabs are Kavacha's default look (zen.tabs.vertical=false); vertical is one toggle away."
     },
     "density": {
       "type": "string",

@@ -1,0 +1,11 @@
+{
+  "$schema": "../theme-manifest.schema.json",
+  "id": "kavacha-forest",
+  "name": "Kavacha Forest",
+  "version": "0.1.0",
+  "author": "Kavacha",
+  "description": "A deep-evergreen dark theme: forest-green surfaces with a warm amber accent. A second bundled example of the theme-package format for the theme engine (patch 0023).",
+  "license": "MPL-2.0",
+  "colors": "colors.json",
+  "supports": ["dark"]
+}

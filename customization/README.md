@@ -21,7 +21,10 @@ directly and share them.
 
 Applies a layout document to the chrome: panel placement, sizes, density, hidden
 elements. [default-layout.json](layout-engine/default-layout.json) is the shipped
-default (left sidebar, 250 px, vertical tabs, compact).
+default (left sidebar, 250 px, horizontal tabs, compact — matching Kavacha's
+horizontal default look). The runtime engine that applies this document live now
+ships as `KavachaLayoutEngine` (patch 0022); the theme engine ships as
+`KavachaThemeEngine` (patch 0023). The visual Studio GUI over both is still to come.
 
 ## `themes/`
 

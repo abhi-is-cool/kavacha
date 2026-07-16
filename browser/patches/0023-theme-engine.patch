@@ -1,0 +1,355 @@
+# Patch 0023 — Kavacha theme engine: load & apply theme packages live
+# (ROADMAP Phase 3 "Theme engine loads theme packages"; ADR 0008).
+#
+# WHAT: KavachaThemeEngine.sys.mjs loads theme packages (manifest.json +
+# colors.json + optional style.css; see theme-manifest.schema.json) and
+# applies the active one (pref kavacha.theme.active) to browser chrome,
+# swappable at runtime. Built-in packages (kavacha-midnight, and a second
+# deep-evergreen dark theme kavacha-forest) are embedded token maps; USER /
+# marketplace themes load from the profile kavacha-themes/<id>/ directory
+# through the same apply path.
+#
+# RELATIONSHIP TO 0016: 0016 bakes Midnight into zen-theme.css and sets
+# `--zen-branding-dark: var(--kavacha-surface)`, from which Zen's whole
+# color-mix chain derives. The engine REUSES that bridge — to switch themes it
+# overrides only the base --kavacha-* tokens (inline, !important, on the chrome
+# root) and Zen re-tints. Default (kavacha-midnight) = clear overrides and let
+# the baked floor show (zero flash); any other theme = inline token override +
+# optional style.css as a per-window windowUtils AUTHOR_SHEET (the chrome-only
+# mechanism from patch 0012; never touches web content).
+#
+# WHY NOT A PREF/OVERLAY: runtime package loading, live swap, per-window sheet
+# lifecycle, and profile-directory discovery are logic, not a static default.
+# ACCENT POLICY: themes tint surfaces only; the engine never writes
+# --zen-primary-color / zen.theme.accent-color (owned by the welcome flow,
+# patch 0017). KNOWN LIMIT: base-token override fills only the dark half of
+# light-dark(), so both bundled themes are dark; light themes are a follow-up.
+#
+# NOT BUILD-VERIFIED: authored without a local Zen checkout; modified-file
+# hunks are reconstructed against the post-0022 tree (they include 0022's
+# lines because 0023 applies after it). Run `git apply --check` + Marionette
+# before marking verified. Touches: zen-command-palette.ftl, moz.build,
+# ZenStartup.mjs, KavachaCommandRegistry.sys.mjs; adds
+# KavachaThemeEngine.sys.mjs. Applies on top of 0022.
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -50,3 +50,4 @@
+ kavacha-action-cycle-sidebar = Cycle Sidebar Position (Left / Right / Hidden)
+ kavacha-action-cycle-density = Cycle Interface Density
+ kavacha-action-reload-layout = Reload Layout from File
++kavacha-action-switch-theme = Switch Theme
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -9,4 +10,5 @@
+   "sys/KavachaSpaceHistory.sys.mjs",
+   "sys/KavachaTabMemory.sys.mjs",
++  "sys/KavachaThemeEngine.sys.mjs",
+   "sys/ZenActorsManager.sys.mjs",
+   "sys/ZenCustomizableUI.sys.mjs",
+diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
+--- a/src/zen/common/modules/ZenStartup.mjs
++++ b/src/zen/common/modules/ZenStartup.mjs
+@@ -152,6 +159,13 @@
+       ).KavachaLayoutEngine;
+       kavachaLayout.init();
+       kavachaLayout.applyToWindow(window);
++      // Kavacha: apply the active theme package to this window's chrome
++      // (process singleton + per-window apply; ADR 0008).
++      const kavachaTheme = ChromeUtils.importESModule(
++        "resource:///modules/KavachaThemeEngine.sys.mjs"
++      ).KavachaThemeEngine;
++      kavachaTheme.init();
++      kavachaTheme.applyToWindow(window);
+       this.isReady = true;
+       this.promiseInitializedResolve();
+       delete this.promiseInitializedResolve;
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -168,8 +175,24 @@
+       ).KavachaLayoutEngine.reloadFromFile(),
+     icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
+     domain: KavachaCommandDomain.APPEARANCE,
+   },
++  {
++    l10nId: "kavacha-action-switch-theme",
++    command: async () => {
++      const e = ChromeUtils.importESModule(
++        "resource:///modules/KavachaThemeEngine.sys.mjs"
++      ).KavachaThemeEngine;
++      const ids = await e.listThemes();
++      if (ids.length < 2) {
++        return;
++      }
++      const i = ids.indexOf(e.activeThemeId);
++      await e.setActiveTheme(ids[(i + 1) % ids.length]);
++    },
++    icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++    domain: KavachaCommandDomain.APPEARANCE,
++  },
+ 
+   // -- Privacy ---------------------------------------------------------------
+   {
+     l10nId: "kavacha-action-privacy-center",
+diff --git a/src/zen/common/sys/KavachaThemeEngine.sys.mjs b/src/zen/common/sys/KavachaThemeEngine.sys.mjs
+new file mode 100644
+index 0000000..abcdef1
+--- /dev/null
++++ b/src/zen/common/sys/KavachaThemeEngine.sys.mjs
+@@ -0,0 +1,254 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha theme engine (ROADMAP Phase 3; ADR 0008). Loads theme packages
++// (manifest.json + colors.json + optional style.css — see
++// customization/themes/theme-manifest.schema.json) and applies the active one
++// LIVE to browser chrome, swappable at runtime via the `kavacha.theme.active`
++// pref.
++//
++// Relationship to patch 0016 (Kavacha Midnight baked floor): 0016 %includes
++// the midnight surface tokens into zen-theme.css at build time and, crucially,
++// sets `--zen-branding-dark: var(--kavacha-surface)` so Zen's whole color-mix
++// chain derives from it. This engine RE-USES that bridge: to switch themes it
++// only needs to override the base --kavacha-* tokens (inline, !important, on
++// the chrome root) and Zen re-tints. So:
++//   - active == kavacha-midnight (the baked default): clear all overrides and
++//     let 0016's build-time floor show — zero flash for the default look.
++//   - any other theme: set its --kavacha-* tokens inline !important, and load
++//     its optional style.css as a per-window AUTHOR_SHEET (windowUtils — the
++//     same chrome-only mechanism patch 0012 uses; never touches web content).
++//
++// Accent policy (ADR 0008): themes tint SURFACES only. The engine never writes
++// --zen-primary-color / zen.theme.accent-color — the accent is owned by the
++// welcome flow (patch 0017). A theme's accent tokens land as inert
++// --kavacha-accent* custom properties (Kavacha's own namespace).
++//
++// Built-in themes are embedded token maps here (mirroring how 0016 embeds
++// midnight's colors.json); USER / marketplace themes load from the profile
++// `kavacha-themes/<id>/` directory through the same apply path.
++
++const kThemePref = "kavacha.theme.active";
++const kDefaultTheme = "kavacha-midnight";
++const kUserThemesDir = "kavacha-themes";
++
++// Built-in packages. kavacha-midnight mirrors
++// customization/themes/kavacha-midnight/colors.json; kavacha-forest mirrors
++// customization/themes/kavacha-forest/colors.json (a second, deep-evergreen
++// dark theme bundled so switching is demonstrable). Both are dark: overriding
++// base --kavacha-* tokens fills only the dark half of light-dark() (ADR 0008
++// known limitation), so light themes are a follow-up.
++const BUILTIN_THEMES = {
++  "kavacha-midnight": {
++    name: "Kavacha Midnight",
++    colors: {
++      surface: "#14111F",
++      surfaceElevated: "#1D1930",
++      surfaceSunken: "#0E0B18",
++      border: "#2E2846",
++      textPrimary: "#EDEAF7",
++      textSecondary: "#A79FC4",
++      textDisabled: "#5E577A",
++      accent: "#E8A33D",
++      accentHover: "#F2B85C",
++      accentText: "#14111F",
++      tabActiveBackground: "#2A2344",
++      tabHoverBackground: "#201B36",
++      sidebarBackground: "#0E0B18",
++      urlbarBackground: "#1D1930",
++      success: "#5FBF77",
++      warning: "#E8A33D",
++      danger: "#E05C5C",
++      privacyShield: "#8B7BD8",
++    },
++  },
++  "kavacha-forest": {
++    name: "Kavacha Forest",
++    colors: {
++      surface: "#101A14",
++      surfaceElevated: "#16241B",
++      surfaceSunken: "#0A120D",
++      border: "#274031",
++      textPrimary: "#E6F0E9",
++      textSecondary: "#9BB6A6",
++      textDisabled: "#5A7364",
++      accent: "#E0A458",
++      accentHover: "#F0B972",
++      accentText: "#101A14",
++      tabActiveBackground: "#1F3527",
++      tabHoverBackground: "#182A1E",
++      sidebarBackground: "#0A120D",
++      urlbarBackground: "#16241B",
++      success: "#63C185",
++      warning: "#E0A458",
++      danger: "#DE6B5F",
++      privacyShield: "#6FB58F",
++    },
++  },
++};
++
++export const KavachaThemeEngine = {
++  _initialized: false,
++  // Custom-property names this engine has set on chrome roots, so a switch can
++  // remove exactly what it added before applying the next theme.
++  _managedProps: new Set(),
++  // Per-window style.css sheet URI (user themes), so a switch can remove it.
++  _sheetByWindow: new WeakMap(),
++
++  init() {
++    if (this._initialized) {
++      return;
++    }
++    this._initialized = true;
++    Services.prefs.addObserver(kThemePref, this);
++  },
++
++  observe(subject, topic, data) {
++    if (topic === "nsPref:changed" && data === kThemePref) {
++      this.applyToAllWindows();
++    }
++  },
++
++  get activeThemeId() {
++    return Services.prefs.getStringPref(kThemePref, kDefaultTheme);
++  },
++
++  // ----- Package loading --------------------------------------------------
++
++  /** All installed theme ids: built-ins first, then user packages. */
++  async listThemes() {
++    const ids = Object.keys(BUILTIN_THEMES);
++    for (const id of await this._userThemeIds()) {
++      if (!ids.includes(id)) {
++        ids.push(id);
++      }
++    }
++    return ids;
++  },
++
++  async _userThemeIds() {
++    const out = [];
++    const dir = PathUtils.join(PathUtils.profileDir, kUserThemesDir);
++    try {
++      for (const child of await IOUtils.getChildren(dir)) {
++        const info = await IOUtils.stat(child);
++        if (info.type === "directory") {
++          out.push(PathUtils.filename(child));
++        }
++      }
++    } catch (e) {
++      // No user themes directory yet — fine.
++    }
++    return out;
++  },
++
++  /** Resolve an id to { id, name, colors, styleCss }. Built-in or on-disk. */
++  async resolveTheme(id) {
++    if (BUILTIN_THEMES[id]) {
++      return { id, ...BUILTIN_THEMES[id], styleCss: null };
++    }
++    const base = PathUtils.join(PathUtils.profileDir, kUserThemesDir, id);
++    const manifest = JSON.parse(
++      await IOUtils.readUTF8(PathUtils.join(base, "manifest.json"))
++    );
++    const colors = JSON.parse(
++      await IOUtils.readUTF8(PathUtils.join(base, colorsFileOf(manifest)))
++    );
++    let styleCss = null;
++    if (manifest.style) {
++      try {
++        styleCss = await IOUtils.readUTF8(PathUtils.join(base, manifest.style));
++      } catch (e) {
++        // Optional file; a theme may ship colors only.
++      }
++    }
++    return { id, name: manifest.name || id, colors, styleCss };
++  },
++
++  // ----- Public API (palette, future about:studio / marketplace) ----------
++
++  async setActiveTheme(id) {
++    const known = await this.listThemes();
++    if (!known.includes(id)) {
++      throw new Error(`KavachaThemeEngine: unknown theme "${id}"`);
++    }
++    // The pref observer drives the actual application.
++    Services.prefs.setStringPref(kThemePref, id);
++  },
++
++  // ----- Application ------------------------------------------------------
++
++  applyToAllWindows() {
++    for (const win of Services.wm.getEnumerator("navigator:browser")) {
++      if (!win.closed && win.document?.documentElement) {
++        this.applyToWindow(win);
++      }
++    }
++  },
++
++  async applyToWindow(win) {
++    if (win.closed || !win.document?.documentElement) {
++      return;
++    }
++    const root = win.document.documentElement;
++    const utils = win.windowUtils;
++
++    // Tear down the previous theme's overrides on this window.
++    const prevSheet = this._sheetByWindow.get(win);
++    if (prevSheet) {
++      try {
++        utils.removeSheetUsingURIString(prevSheet, utils.AUTHOR_SHEET);
++      } catch (e) {}
++      this._sheetByWindow.delete(win);
++    }
++    for (const prop of this._managedProps) {
++      root.style.removeProperty(prop);
++    }
++
++    const id = this.activeThemeId;
++    if (id === kDefaultTheme) {
++      // The baked 0016 floor already provides Midnight — nothing to override.
++      return;
++    }
++
++    let theme;
++    try {
++      theme = await this.resolveTheme(id);
++    } catch (e) {
++      win.console?.error(`KavachaThemeEngine: failed to load theme "${id}"`, e);
++      return;
++    }
++
++    // Base --kavacha-* tokens, inline !important. 0016's
++    // `--zen-branding-dark: var(--kavacha-surface)` bridge re-derives Zen's
++    // chrome from these; accent tokens are inert (--kavacha-accent*).
++    for (const [token, value] of Object.entries(theme.colors)) {
++      if (token.startsWith("$")) {
++        continue; // colors.json may carry a $comment
++      }
++      const prop = "--kavacha-" + token.replace(/[A-Z]/g, m => "-" + m.toLowerCase());
++      this._managedProps.add(prop);
++      root.style.setProperty(prop, value, "important");
++    }
++
++    // Optional style.css (user themes) -> chrome-only AUTHOR_SHEET for this
++    // window. Built-in themes are colors-only, so this is skipped for them.
++    if (theme.styleCss) {
++      const uri =
++        "data:text/css;charset=utf-8," + encodeURIComponent(theme.styleCss);
++      try {
++        utils.loadSheetUsingURIString(uri, utils.AUTHOR_SHEET);
++        this._sheetByWindow.set(win, uri);
++      } catch (e) {
++        win.console?.error("KavachaThemeEngine: failed to load style.css", e);
++      }
++    }
++  },
++};
++
++// The manifest fixes colors to "colors.json", but read it from the manifest so
++// a future package format stays honored.
++function colorsFileOf(manifest) {
++  return typeof manifest.colors === "string" ? manifest.colors : "colors.json";
++}

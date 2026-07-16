@@ -1,0 +1,455 @@
+# Patch 0022 — Kavacha layout engine: apply the layout document live
+# (ROADMAP Phase 3 "Layout engine applies layout JSON live"; ADR 0008).
+#
+# WHAT: KavachaLayoutEngine.sys.mjs reads a per-profile kavacha-layout.json
+# (schema: customization/layout-engine/layout.schema.json) and applies it to
+# browser chrome without a restart — tab orientation, interface density,
+# sidebar side/width, hidden elements, per-component sizes. The document
+# round-trips with the future about:studio GUI and is hand-editable.
+#
+# WHY NOT A PREF/OVERLAY: the mapping from one JSON document to several chrome
+# surfaces (a pref + root attributes + a generated per-window sheet), plus
+# live re-application and file persistence, is logic, not a static default —
+# it needs a module. It reuses existing mechanisms wherever it can: tabStyle
+# is just the `zen.tabs.vertical` pref (Zen + patch 0010 already react to it),
+# and the generated sheet uses the same per-window windowUtils AUTHOR_SHEET
+# path as patch 0012. The CSS layer (kavacha-layout.inc.css) is %include'd and
+# gated on non-default attribute values, so it is a no-op at the shipped look.
+#
+# RUNTIME SHAPE (shared with 0023's theme engine): process singleton init()
+# installs a pref observer on kavacha.layout.revision (the content->chrome
+# doorbell a content page like about:studio bumps), per-window applyToWindow()
+# runs from ZenStartup, applyToAllWindows() enumerates navigator:browser on
+# change — the KavachaTabMemory (singleton) + KavachaUniversalSearch
+# (per-window) pattern.
+#
+# NOT BUILD-VERIFIED: authored without a local Zen checkout
+# (browser/zen-upstream is fetched by build/bootstrap.sh). The modified-file
+# hunks are reconstructed against the post-0021 tree; run
+# `git -C browser/zen-upstream apply --check` and a Marionette pass before
+# marking the ROADMAP item verified. Touches: zen-command-palette.ftl,
+# src/zen/common/moz.build, ZenStartup.mjs, zen-theme.css,
+# KavachaCommandRegistry.sys.mjs; adds KavachaLayoutEngine.sys.mjs +
+# kavacha-layout.inc.css. Applies on top of 0021.
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -47,3 +47,7 @@
+ kavacha-action-sleep-tabs = Sleep Inactive Tabs Now
+ kavacha-action-toggle-newtab = Toggle New Tab Style (Dashboard / Search)
+ kavacha-action-privacy-center = Open Privacy Center
++kavacha-action-toggle-tab-layout = Toggle Tab Layout (Vertical / Horizontal)
++kavacha-action-cycle-sidebar = Cycle Sidebar Position (Left / Right / Hidden)
++kavacha-action-cycle-density = Cycle Interface Density
++kavacha-action-reload-layout = Reload Layout from File
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -5,4 +5,5 @@
+ EXTRA_JS_MODULES += [
+   "sys/KavachaCommandRegistry.sys.mjs",
++  "sys/KavachaLayoutEngine.sys.mjs",
+   "sys/KavachaNewTab.sys.mjs",
+   "sys/KavachaPlacesAttribution.sys.mjs",
+diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
+--- a/src/zen/common/modules/ZenStartup.mjs
++++ b/src/zen/common/modules/ZenStartup.mjs
+@@ -145,6 +145,13 @@
+       ChromeUtils.importESModule(
+         "resource:///modules/KavachaSpaceHistory.sys.mjs"
+       ).KavachaSpaceHistory.init();
++      // Kavacha: apply the saved layout document to this window's chrome
++      // (process singleton + per-window apply; ADR 0008).
++      const kavachaLayout = ChromeUtils.importESModule(
++        "resource:///modules/KavachaLayoutEngine.sys.mjs"
++      ).KavachaLayoutEngine;
++      kavachaLayout.init();
++      kavachaLayout.applyToWindow(window);
+       this.isReady = true;
+       this.promiseInitializedResolve();
+       delete this.promiseInitializedResolve;
+diff --git a/src/zen/common/styles/zen-theme.css b/src/zen/common/styles/zen-theme.css
+--- a/src/zen/common/styles/zen-theme.css
++++ b/src/zen/common/styles/zen-theme.css
+@@ -345,3 +345,5 @@
+ %include zen-buttons.css
+ 
+ %include ../../kavacha-theme/kavacha-midnight.inc.css
++
++%include kavacha-layout.inc.css
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -132,7 +132,58 @@
+     icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
+     domain: KavachaCommandDomain.APPEARANCE,
+   },
++  {
++    l10nId: "kavacha-action-toggle-tab-layout",
++    command: async () => {
++      const e = ChromeUtils.importESModule(
++        "resource:///modules/KavachaLayoutEngine.sys.mjs"
++      ).KavachaLayoutEngine;
++      const layout = await e.getLayout();
++      await e.setLayout({
++        tabStyle: layout.tabStyle === "vertical" ? "horizontal" : "vertical",
++      });
++    },
++    icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++    domain: KavachaCommandDomain.APPEARANCE,
++  },
++  {
++    l10nId: "kavacha-action-cycle-sidebar",
++    command: async () => {
++      const e = ChromeUtils.importESModule(
++        "resource:///modules/KavachaLayoutEngine.sys.mjs"
++      ).KavachaLayoutEngine;
++      const order = ["left", "right", "hidden"];
++      const layout = await e.getLayout();
++      const next = order[(order.indexOf(layout.sidebar) + 1) % order.length];
++      await e.setLayout({ sidebar: next });
++    },
++    icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++    domain: KavachaCommandDomain.APPEARANCE,
++  },
++  {
++    l10nId: "kavacha-action-cycle-density",
++    command: async () => {
++      const e = ChromeUtils.importESModule(
++        "resource:///modules/KavachaLayoutEngine.sys.mjs"
++      ).KavachaLayoutEngine;
++      const order = ["compact", "normal", "comfortable"];
++      const layout = await e.getLayout();
++      const next = order[(order.indexOf(layout.density) + 1) % order.length];
++      await e.setLayout({ density: next });
++    },
++    icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++    domain: KavachaCommandDomain.APPEARANCE,
++  },
++  {
++    l10nId: "kavacha-action-reload-layout",
++    command: () =>
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaLayoutEngine.sys.mjs"
++      ).KavachaLayoutEngine.reloadFromFile(),
++    icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++    domain: KavachaCommandDomain.APPEARANCE,
++  },
+ 
+   // -- Privacy ---------------------------------------------------------------
+   {
+     l10nId: "kavacha-action-privacy-center",
+diff --git a/src/zen/common/sys/KavachaLayoutEngine.sys.mjs b/src/zen/common/sys/KavachaLayoutEngine.sys.mjs
+new file mode 100644
+index 0000000..abcdef1
+--- /dev/null
++++ b/src/zen/common/sys/KavachaLayoutEngine.sys.mjs
+@@ -0,0 +1,243 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha layout engine (ROADMAP Phase 3; ADR 0008). Reads a layout document
++// (schema: customization/layout-engine/layout.schema.json) from the profile
++// (kavacha-layout.json) and applies it LIVE to browser chrome: tab
++// orientation, interface density, sidebar side/width, hidden elements, and
++// per-component sizes. The document round-trips with the future about:studio
++// GUI and is hand-editable.
++//
++// Runtime shape (shared with KavachaThemeEngine — ADR 0008): a process
++// singleton whose init() installs the observers, a per-window applyToWindow()
++// called from ZenStartup, and applyToAllWindows() driven by a monotonic
++// `kavacha.layout.revision` pref bump — the content->chrome "doorbell" a
++// content page like about:studio uses, since it cannot call this chrome
++// singleton directly. Same singleton + per-window pattern as KavachaTabMemory
++// and KavachaUniversalSearch.
++//
++// What maps where:
++//   tabStyle        -> the `zen.tabs.vertical` pref (Zen + patch 0010 already
++//                      react live: CSS @media -moz-pref + gZenVerticalTabsManager).
++//                      The engine only flips the pref; it never moves DOM.
++//   density/sidebar -> attributes on document.documentElement, consumed by the
++//   /toolbar           kavacha-layout.inc.css layer (a no-op at the defaults).
++//   sidebarWidth    -> the --kavacha-sidebar-width custom property.
++//   hiddenElements  -> a generated author sheet per window (windowUtils),
++//   /componentSizes    the same per-window AUTHOR_SHEET mechanism as patch 0012.
++
++const kLayoutFile = "kavacha-layout.json";
++const kRevisionPref = "kavacha.layout.revision";
++const kVerticalPref = "zen.tabs.vertical";
++
++// The shipped default, mirroring customization/layout-engine/default-layout.json.
++// tabStyle is (re)seeded from the live zen.tabs.vertical pref in _normalize(),
++// so on a fresh profile the engine matches Kavacha's horizontal default look
++// (ui/defaults/kavacha-ux.js) instead of forcing the schema's field value.
++const DEFAULT_LAYOUT = {
++  sidebar: "left",
++  sidebarWidth: 250,
++  tabStyle: "horizontal",
++  density: "compact",
++  toolbar: { position: "top", visible: true },
++  hiddenElements: [],
++  componentSizes: {},
++};
++
++// componentSizes is keyed by an abstract component id; a raw {id: px} can't
++// know whether an id sizes width vs height, so only ids in this registry are
++// sizable. Unknown keys are ignored. These selectors are trusted (ours);
++// hiddenElements ids are user input and get CSS.escape'd before use.
++const COMPONENT_REGISTRY = {
++  sidebar: { selector: "#navigator-toolbox", prop: "width" },
++  urlbar: { selector: "#urlbar-container", prop: "width" },
++};
++
++const kSidebars = ["left", "right", "hidden"];
++const kTabStyles = ["vertical", "horizontal"];
++const kDensities = ["compact", "normal", "comfortable"];
++const kToolbarPositions = ["top", "bottom"];
++
++export const KavachaLayoutEngine = {
++  _initialized: false,
++  _layout: null,
++  // Per-window generated-sheet URI, so a re-apply can remove the previous one.
++  _sheetByWindow: new WeakMap(),
++
++  init() {
++    if (this._initialized) {
++      return;
++    }
++    this._initialized = true;
++    Services.prefs.addObserver(kRevisionPref, this);
++  },
++
++  observe(subject, topic, data) {
++    if (topic === "nsPref:changed" && data === kRevisionPref) {
++      this.reloadFromFile();
++    }
++  },
++
++  get _profilePath() {
++    return PathUtils.join(PathUtils.profileDir, kLayoutFile);
++  },
++
++  async _load() {
++    if (this._layout) {
++      return this._layout;
++    }
++    let doc = null;
++    try {
++      doc = JSON.parse(await IOUtils.readUTF8(this._profilePath));
++    } catch (e) {
++      // First run (no file) or unreadable — fall through to the seeded default.
++    }
++    this._layout = this._normalize(doc);
++    if (!doc) {
++      // Persist the seeded default so hand-editing / about:studio has a file.
++      await this._save(this._layout).catch(() => {});
++    }
++    return this._layout;
++  },
++
++  _normalize(doc) {
++    const out = { ...DEFAULT_LAYOUT, toolbar: { ...DEFAULT_LAYOUT.toolbar } };
++    // Seed tabStyle from the live pref so we never fight the shipped look.
++    out.tabStyle = Services.prefs.getBoolPref(kVerticalPref, true)
++      ? "vertical"
++      : "horizontal";
++    if (!doc || typeof doc !== "object") {
++      return out;
++    }
++    if (kSidebars.includes(doc.sidebar)) {
++      out.sidebar = doc.sidebar;
++    }
++    if (Number.isInteger(doc.sidebarWidth)) {
++      out.sidebarWidth = Math.min(600, Math.max(48, doc.sidebarWidth));
++    }
++    if (kTabStyles.includes(doc.tabStyle)) {
++      out.tabStyle = doc.tabStyle;
++    }
++    if (kDensities.includes(doc.density)) {
++      out.density = doc.density;
++    }
++    if (doc.toolbar && typeof doc.toolbar === "object") {
++      if (kToolbarPositions.includes(doc.toolbar.position)) {
++        out.toolbar.position = doc.toolbar.position;
++      }
++      out.toolbar.visible = doc.toolbar.visible !== false;
++    }
++    if (Array.isArray(doc.hiddenElements)) {
++      out.hiddenElements = doc.hiddenElements.filter(id => typeof id === "string");
++    }
++    if (doc.componentSizes && typeof doc.componentSizes === "object") {
++      out.componentSizes = {};
++      for (const [k, v] of Object.entries(doc.componentSizes)) {
++        if (COMPONENT_REGISTRY[k] && Number.isInteger(v) && v >= 0) {
++          out.componentSizes[k] = v;
++        }
++      }
++    }
++    return out;
++  },
++
++  async _save(layout) {
++    await IOUtils.writeUTF8(this._profilePath, JSON.stringify(layout, null, 2));
++  },
++
++  // ----- Public API (palette commands, future about:studio) --------------
++
++  async getLayout() {
++    return { ...(await this._load()) };
++  },
++
++  /** Merge a partial layout patch, persist it, and re-apply everywhere. */
++  async setLayout(patch) {
++    const current = await this._load();
++    this._layout = this._normalize({ ...current, ...patch });
++    await this._save(this._layout);
++    // Bump the revision: the in-process observer re-applies to all windows,
++    // and any content page (about:studio) watching the pref re-reads too.
++    Services.prefs.setIntPref(
++      kRevisionPref,
++      Services.prefs.getIntPref(kRevisionPref, 0) + 1
++    );
++  },
++
++  /** Re-read the file from disk (picks up hand-edits) and re-apply. */
++  async reloadFromFile() {
++    this._layout = null;
++    await this._load();
++    this.applyToAllWindows();
++  },
++
++  applyToAllWindows() {
++    for (const win of Services.wm.getEnumerator("navigator:browser")) {
++      if (!win.closed && win.document?.documentElement) {
++        this.applyToWindow(win);
++      }
++    }
++  },
++
++  async applyToWindow(win) {
++    const layout = await this._load();
++    if (win.closed || !win.document?.documentElement) {
++      return;
++    }
++    const root = win.document.documentElement;
++
++    // tabStyle -> the pref Zen + patch 0010 already react to. Only touch the
++    // pref when it actually differs, so we don't spuriously notify observers.
++    const wantVertical = layout.tabStyle === "vertical";
++    if (Services.prefs.getBoolPref(kVerticalPref, true) !== wantVertical) {
++      Services.prefs.setBoolPref(kVerticalPref, wantVertical);
++    }
++
++    // density / sidebar / toolbar -> root attributes for kavacha-layout.inc.css.
++    root.setAttribute("kavacha-density", layout.density);
++    root.setAttribute("kavacha-sidebar", layout.sidebar);
++    root.setAttribute("kavacha-toolbar-position", layout.toolbar.position);
++    root.toggleAttribute("kavacha-toolbar-hidden", !layout.toolbar.visible);
++    root.style.setProperty("--kavacha-sidebar-width", `${layout.sidebarWidth}px`);
++
++    this._applySheet(win, layout);
++  },
++
++  _applySheet(win, layout) {
++    const utils = win.windowUtils;
++    const prev = this._sheetByWindow.get(win);
++    if (prev) {
++      try {
++        utils.removeSheetUsingURIString(prev, utils.AUTHOR_SHEET);
++      } catch (e) {}
++      this._sheetByWindow.delete(win);
++    }
++    const rules = [];
++    for (const id of layout.hiddenElements) {
++      // User input -> CSS.escape before composing a selector. Chrome CSS can't
++      // execute script, but an unescaped id could still restyle unrelated UI.
++      rules.push(`#${win.CSS.escape(id)} { display: none !important; }`);
++    }
++    for (const [k, px] of Object.entries(layout.componentSizes)) {
++      const comp = COMPONENT_REGISTRY[k];
++      if (comp) {
++        rules.push(`${comp.selector} { ${comp.prop}: ${px}px !important; }`);
++      }
++    }
++    if (!rules.length) {
++      return;
++    }
++    const css =
++      '@namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");\n' +
++      '@namespace html url("http://www.w3.org/1999/xhtml");\n' +
++      rules.join("\n");
++    const uri = "data:text/css;charset=utf-8," + encodeURIComponent(css);
++    try {
++      utils.loadSheetUsingURIString(uri, utils.AUTHOR_SHEET);
++      this._sheetByWindow.set(win, uri);
++    } catch (e) {
++      win.console?.error("KavachaLayoutEngine: failed to load layout sheet", e);
++    }
++  },
++};
+diff --git a/src/zen/common/styles/kavacha-layout.inc.css b/src/zen/common/styles/kavacha-layout.inc.css
+new file mode 100644
+index 0000000..abcdef1
+--- /dev/null
++++ b/src/zen/common/styles/kavacha-layout.inc.css
+@@ -0,0 +1,59 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* ==========================================================================
++   Kavacha layout engine — chrome layer (ROADMAP Phase 3; ADR 0008).
++
++   KavachaLayoutEngine.sys.mjs writes the layout document onto the chrome root
++   as attributes + a custom property; this file defines what they DO. Every
++   rule is gated on a non-default attribute value, so at the shipped defaults
++   (density=compact, sidebar=left, toolbar visible) this layer is inert — the
++   engine's presence never changes the out-of-box look.
++
++   tabStyle is NOT handled here: it flows through the `zen.tabs.vertical` pref,
++   which Zen and patch 0010 (kavacha-horizontal-tabs.inc.css) already react to.
++   ========================================================================== */
++
++/* --- Interface density ---------------------------------------------------
++   Compact is the baseline (no rule). Normal/comfortable add breathing room to
++   the tab strip; kept deliberately narrow in scope pending the build-verify
++   pass, since Zen owns most chrome spacing. */
++:root[kavacha-density="normal"] {
++  --kavacha-density-pad: 4px;
++}
++:root[kavacha-density="comfortable"] {
++  --kavacha-density-pad: 8px;
++}
++:root:is([kavacha-density="normal"], [kavacha-density="comfortable"])
++  .tabbrowser-tab {
++  padding-block: var(--kavacha-density-pad) !important;
++}
++
++/* --- Sidebar (vertical-tabs mode only) -----------------------------------
++   In horizontal mode there is no sidebar, so these only bind when the vertical
++   tab strip is active. Left is the baseline. */
++/* stylelint-disable-next-line media-query-no-invalid */
++@media -moz-pref("zen.tabs.vertical") {
++  :root[kavacha-sidebar]:not([kavacha-sidebar="hidden"]) #navigator-toolbox {
++    width: var(--kavacha-sidebar-width, 250px) !important;
++  }
++
++  /* Put the sidebar on the trailing edge: #browser is the horizontal flex row
++     in vertical-tabs mode (toolbox + content), so reversing it moves the
++     toolbox to the right without reparenting anything. */
++  :root[kavacha-sidebar="right"] #browser {
++    flex-direction: row-reverse;
++  }
++
++  :root[kavacha-sidebar="hidden"] #navigator-toolbox {
++    display: none !important;
++  }
++}
++
++/* --- Toolbar visibility ---------------------------------------------------
++   Hidden hides the navigation/URL row; the tab strip and content stay. Users
++   reach it again by re-showing the toolbar from the palette / about:studio. */
++:root[kavacha-toolbar-hidden] #nav-bar {
++  display: none !important;
++}

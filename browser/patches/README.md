@@ -28,6 +28,8 @@ overlay/pref could not do it, and which upstream files it touches.
 | `0008-workspace-notes.patch` | Workspace notes (MVP): autosaving notes panel per space, opened from the space actions menu or the palette; stored locally in profile `kavacha-notes.json`, never on the synced space object |
 | `0009-workspace-archiving.patch` | Workspace archiving (MVP): archived spaces vanish from strip/navigation with tabs unloaded, but keep all data and stay in session store + sync; restore via "Archived Spaces" submenu |
 | `0010-horizontal-tabs.patch` | Horizontal tabs mode — Kavacha's default look (`zen.tabs.vertical=false` shipped in branding prefs). Functionally verified: strip, navigation, content, workspace switching. Vertical remains one pref away |
+| `0022-layout-engine.patch` | Layout engine: KavachaLayoutEngine applies a per-profile kavacha-layout.json to chrome live (tab orientation, density, sidebar, hidden elements) with palette commands; the CSS layer is gated on non-default attributes so it is a no-op at the default look (ROADMAP Phase 3; ADR 0008) |
+| `0023-theme-engine.patch` | Theme engine: KavachaThemeEngine loads theme packages and applies the active one live by overriding patch 0016's base `--kavacha-*` tokens; bundles a second dark theme (Forest) + loads user themes from the profile; "Switch Theme" command; accent stays user-owned (ROADMAP Phase 3; ADR 0008) |
 
 Audit note (2026-07-09): Zen's tracked sources contain no analytics/crash SDKs.
 Mozilla telemetry is already compiled out by Zen's build config; remaining automatic

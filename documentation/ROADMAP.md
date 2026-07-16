@@ -190,8 +190,20 @@ branch relationships become early edges of the Phase 6 knowledge graph.
         Pick your color (the no-default-accent decision becomes the user's),
         and new-tab style (floating search vs dashboard). Title: "Welcome to /
         your personal internet"
-- [ ] Layout engine applies layout JSON live (default shipped: `customization/layout-engine/`)
-- [ ] Theme engine loads theme packages (reference theme shipped: `kavacha-midnight`)
+- [x] **Layout engine applies layout JSON live** (patch `0022-layout-engine.patch`,
+      2026-07-15; ADR 0008): KavachaLayoutEngine reads a per-profile `kavacha-layout.json`
+      and applies it live to chrome — tab orientation (via `zen.tabs.vertical`), interface
+      density, sidebar side/width, hidden elements — with palette commands (Toggle Tab
+      Layout, Cycle Sidebar, Cycle Density, Reload Layout). `default-layout.json` reconciled
+      to the horizontal default. **Build/Marionette verification pending** — authored without
+      a local Zen checkout; hunks need `git apply --check` against upstream first
+- [x] **Theme engine loads theme packages** (patch `0023-theme-engine.patch`, 2026-07-15;
+      ADR 0008): KavachaThemeEngine loads packages (manifest + colors + optional style.css)
+      and applies the active one (`kavacha.theme.active`) live by overriding patch 0016's
+      base tokens so Zen re-tints; default stays the baked Midnight floor (zero flash). Ships
+      a second bundled dark theme (Kavacha Forest) + user themes from the profile
+      `kavacha-themes/`; "Switch Theme" palette command. Surfaces-only (accent stays
+      user-owned); light themes a follow-up. Same build-verification caveat
 - [ ] **Visual Browser Builder** (`about:studio`): redesign the browser without CSS —
       sidebar, tab style (vertical/horizontal/Arc-style), toolbar components
 - [ ] Live CSS editor with history + safe mode (Advanced tier)

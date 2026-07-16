@@ -2,7 +2,7 @@
   "$schema": "./layout.schema.json",
   "sidebar": "left",
   "sidebarWidth": 250,
-  "tabStyle": "vertical",
+  "tabStyle": "horizontal",
   "density": "compact",
   "toolbar": { "position": "top", "visible": true },
   "hiddenElements": []

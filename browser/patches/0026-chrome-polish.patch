@@ -1,0 +1,276 @@
+# Patch 0026 — Kavacha chrome polish: hover states, motion, tab dividers,
+# nav-icon sizing, and luminance-based contrast (ROADMAP Phase 3 follow-up;
+# ADR 0008).
+#
+# WHAT: adds a global chrome-polish stylesheet (kavacha-polish.inc.css,
+# %include'd from zen-theme.css after the layout layer) carrying hover/press
+# states, a faint liquid-glass divider between tabs, a softer selected-tab
+# highlight, smaller/spaced back-forward-reload icons, and reduced-motion-gated
+# animations (new-tab grow, menu/panel pop, button press). All rules use
+# currentColor and transform/opacity only — no forced colors, no layout thrash.
+#
+# CONTRAST FIX: KavachaThemeEngine now derives the chrome color-scheme from the
+# ACTIVE surface's luminance (parseCssColor + relative luminance on the computed
+# --kavacha-surface) and sets root.style.colorScheme = dark|light. This makes
+# native toolbar/tab text + icons readable on dark themes AND bright custom
+# surfaces from about:studio, replacing the earlier limitation where text could
+# stay black-on-dark / light-on-light. Runs on every applyToWindow, including
+# the default-Midnight path.
+#
+# WHY NOT A PREF: color-scheme selection is per-surface logic, and the polish is
+# presentational chrome CSS. All local; NO DATA collected. Privacy-preserving.
+#
+# NOT BUILD-VERIFIED IN-PATCH: authored from a post-0025 tree and verified via
+# `mach build faster` + launch (no engine errors). The KavachaThemeEngine hunk
+# applies over the file created by 0023. Applies on top of 0025.
+diff --git a/src/zen/common/styles/kavacha-polish.inc.css b/src/zen/common/styles/kavacha-polish.inc.css
+new file mode 100644
+--- /dev/null
++++ b/src/zen/common/styles/kavacha-polish.inc.css
+@@ -0,0 +1,162 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* ==========================================================================
++   Kavacha chrome polish — hover states, selection, tab dividers, nav-icon
++   sizing, and motion. Global (NOT gated on tab orientation), %include'd from
++   zen-theme.css after the layout layer.
++
++   Contrast is handled in JS: KavachaThemeEngine sets `color-scheme` from the
++   active surface's luminance, so native toolbar/tab text + icons resolve
++   readable on dark AND light themes. Nothing here forces text colors — tints
++   use `currentColor`, which follows that scheme.
++
++   Motion policy: transform/opacity only (GPU-composited, never triggers
++   layout), short + interruptible, and gated on prefers-reduced-motion. All
++   local; no network, no data. (ADR 0008.)
++   ========================================================================== */
++
++/* --- New-tab (+) stays reachable when the tab strip overflows -------------
++   The periphery holding the + otherwise scrolls away with the tabs. Pin it to
++   the trailing edge. */
++#tabbrowser-arrowscrollbox-periphery {
++  position: sticky;
++  inset-inline-end: 0;
++  z-index: 2;
++}
++
++/* --- Back / forward / reload: ~5% smaller, more air between --------------- */
++#back-button,
++#forward-button,
++#stop-reload-button {
++  margin-inline: 4px;
++}
++#back-button .toolbarbutton-icon,
++#forward-button .toolbarbutton-icon,
++#stop-reload-button .toolbarbutton-icon,
++#reload-button .toolbarbutton-icon,
++#stop-button .toolbarbutton-icon {
++  scale: 0.95;
++}
++
++/* Clear enabled/disabled distinction for back & forward (was near-identical). */
++#back-button[disabled] > .toolbarbutton-icon,
++#back-button[disabled="true"] > .toolbarbutton-icon,
++#forward-button[disabled] > .toolbarbutton-icon,
++#forward-button[disabled="true"] > .toolbarbutton-icon {
++  opacity: 0.28;
++}
++
++/* --- Faint liquid-glass divider between tabs ------------------------------
++   A translucent vertical hairline on the leading edge of every tab that
++   follows another tab, ~60% tab height, fading top/bottom. Never touches the
++   selected tab (its own edge or the following tab's edge). */
++.tabbrowser-tab {
++  position: relative;
++}
++.tabbrowser-tab + .tabbrowser-tab::before {
++  content: "";
++  position: absolute;
++  inset-inline-start: 0;
++  top: 50%;
++  translate: 0 -50%;
++  width: 1px;
++  height: 60%;
++  background: linear-gradient(
++    to bottom,
++    transparent,
++    color-mix(in srgb, currentColor 20%, transparent) 50%,
++    transparent
++  );
++  box-shadow: 0 0 2px color-mix(in srgb, currentColor 12%, transparent);
++  pointer-events: none;
++}
++.tabbrowser-tab[selected]::before,
++.tabbrowser-tab[visuallyselected]::before,
++.tabbrowser-tab[selected] + .tabbrowser-tab::before,
++.tabbrowser-tab[visuallyselected] + .tabbrowser-tab::before {
++  display: none;
++}
++
++/* --- Softer selected-tab highlight (was too poppy) ----------------------- */
++.tabbrowser-tab[selected] .tab-background,
++.tabbrowser-tab[visuallyselected] .tab-background {
++  background-color: color-mix(
++    in srgb,
++    var(--kavacha-tab-active-background, currentColor) 50%,
++    transparent
++  );
++  box-shadow: none;
++}
++
++/* --- Hover states --------------------------------------------------------
++   Subtle theme-aware highlight; transition on the base state so it fades in
++   AND out. */
++#nav-bar toolbarbutton,
++#TabsToolbar toolbarbutton,
++#tabs-newtab-button,
++#new-tab-button,
++.tab-close-button,
++.tabbrowser-tab .tab-background {
++  transition: background-color 120ms ease, box-shadow 120ms ease;
++}
++#nav-bar toolbarbutton:not([disabled]):hover,
++#TabsToolbar toolbarbutton:not([disabled]):hover,
++#tabs-newtab-button:hover,
++#new-tab-button:hover {
++  background-color: color-mix(in srgb, currentColor 10%, transparent);
++  border-radius: 6px;
++}
++.tabbrowser-tab:not([selected]):not([visuallyselected]):hover .tab-background {
++  background-color: color-mix(in srgb, currentColor 7%, transparent);
++}
++.tab-close-button:hover {
++  background-color: color-mix(in srgb, currentColor 14%, transparent);
++  border-radius: 4px;
++}
++
++/* --- Motion (reduced-motion gated) --------------------------------------- */
++@media (prefers-reduced-motion: no-preference) {
++  /* Tactile press feedback. */
++  #nav-bar toolbarbutton:not([disabled]):active,
++  #TabsToolbar toolbarbutton:not([disabled]):active,
++  #tabs-newtab-button:active,
++  #new-tab-button:active {
++    transform: scale(0.9);
++    transition: transform 80ms ease;
++  }
++
++  /* Menus & panels: subtle scale + fade from origin. */
++  panel::part(content),
++  menupopup::part(content),
++  .panel-arrowcontent {
++    animation: kavacha-pop 120ms cubic-bezier(0.2, 0, 0, 1);
++  }
++  @keyframes kavacha-pop {
++    from {
++      opacity: 0;
++      transform: scale(0.97);
++    }
++    to {
++      opacity: 1;
++      transform: scale(1);
++    }
++  }
++
++  /* New tab appears: gentle grow + fade. */
++  .tabbrowser-tab[fadein]:not([selected]) {
++    animation: kavacha-tab-in 150ms cubic-bezier(0.2, 0, 0, 1);
++  }
++  @keyframes kavacha-tab-in {
++    from {
++      opacity: 0;
++      transform: scaleX(0.85);
++      transform-origin: left center;
++    }
++    to {
++      opacity: 1;
++      transform: scaleX(1);
++    }
++  }
++}
+diff --git a/src/zen/common/styles/zen-theme.css b/src/zen/common/styles/zen-theme.css
+--- a/src/zen/common/styles/zen-theme.css
++++ b/src/zen/common/styles/zen-theme.css
+@@ -347,3 +347,4 @@
+ %include ../../kavacha-theme/kavacha-midnight.inc.css
+ 
+ %include kavacha-layout.inc.css
++%include kavacha-polish.inc.css
+diff --git a/src/zen/common/sys/KavachaThemeEngine.sys.mjs b/src/zen/common/sys/KavachaThemeEngine.sys.mjs
+--- a/src/zen/common/sys/KavachaThemeEngine.sys.mjs
++++ b/src/zen/common/sys/KavachaThemeEngine.sys.mjs
+@@ -208,7 +208,10 @@
+ 
+     const id = this.activeThemeId;
+     if (id === kDefaultTheme) {
+-      // The baked 0016 floor already provides Midnight — nothing to override.
++      // The baked 0016 floor already provides Midnight's tokens — no overrides
++      // to set, but still align the chrome color-scheme to that surface so
++      // native toolbar/tab text stays readable.
++      this._applyColorScheme(win, root);
+       return;
+     }
+ 
+@@ -244,6 +247,27 @@
+         win.console?.error("KavachaThemeEngine: failed to load style.css", e);
+       }
+     }
++
++    this._applyColorScheme(win, root);
++  },
++
++  // Align the chrome color-scheme to the ACTIVE surface's luminance so native
++  // toolbar/tab text and icons resolve readable on any theme — dark themes and
++  // bright custom surfaces (about:studio) alike. Read the *computed*
++  // --kavacha-surface so we react to whatever set it (this engine, the 0016
++  // floor, or a live about:studio edit), not just this engine's own writes.
++  _applyColorScheme(win, root) {
++    const raw = win
++      .getComputedStyle(root)
++      .getPropertyValue("--kavacha-surface")
++      .trim();
++    const rgb = parseCssColor(raw);
++    if (!rgb) {
++      return;
++    }
++    const luminance =
++      (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
++    root.style.colorScheme = luminance < 0.45 ? "dark" : "light";
+   },
+ };
+ 
+@@ -252,3 +276,32 @@
+ function colorsFileOf(manifest) {
+   return typeof manifest.colors === "string" ? manifest.colors : "colors.json";
+ }
++
++// Parse a #rgb / #rrggbb / rgb()/rgba() color string to [r, g, b] (0..255), or
++// null if it isn't one of those forms.
++function parseCssColor(str) {
++  if (!str) {
++    return null;
++  }
++  const s = str.trim();
++  let m = s.match(/^#([0-9a-f]{3})$/i);
++  if (m) {
++    return m[1].split("").map(c => parseInt(c + c, 16));
++  }
++  m = s.match(/^#([0-9a-f]{6})$/i);
++  if (m) {
++    return [0, 2, 4].map(i => parseInt(m[1].slice(i, i + 2), 16));
++  }
++  m = s.match(/^rgba?\(([^)]+)\)$/i);
++  if (m) {
++    const parts = m[1]
++      .split(/[,\s/]+/)
++      .filter(Boolean)
++      .slice(0, 3)
++      .map(Number);
++    if (parts.length === 3 && parts.every(n => !Number.isNaN(n))) {
++      return parts;
++    }
++  }
++  return null;
++}

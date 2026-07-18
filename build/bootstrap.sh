@@ -16,6 +16,12 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UPSTREAM_DIR="$REPO_ROOT/browser/zen-upstream"
 UPSTREAM_REPO="https://github.com/zen-browser/desktop.git"
+# Zen commit the Kavacha patch series is authored against. Cloning an unpinned
+# tip means upstream drift silently breaks patches on any machine that clones
+# later than the first one (observed: 0009 failed on a fresh Windows clone while
+# the same patch applied on a months-old macOS checkout). Bump deliberately, and
+# re-validate the patch series when you do.
+UPSTREAM_COMMIT="425f0ae1c392d44cfab9e43312fb6e854285c4e5"
 PATCHES_DIR="$REPO_ROOT/browser/patches"
 
 log()  { printf '\033[1;36m[kavacha]\033[0m %s\n' "$*"; }
@@ -54,8 +60,10 @@ fetch_upstream() {
     if [ -d "$UPSTREAM_DIR/.git" ]; then
         log "Upstream already cloned at browser/zen-upstream."
     else
-        log "Cloning Zen Browser (shallow)..."
-        git clone --depth 10 "$UPSTREAM_REPO" "$UPSTREAM_DIR"
+        log "Cloning Zen Browser..."
+        git clone "$UPSTREAM_REPO" "$UPSTREAM_DIR"
+        log "Pinning upstream to $UPSTREAM_COMMIT..."
+        git -C "$UPSTREAM_DIR" checkout -q "$UPSTREAM_COMMIT"
     fi
 }
 

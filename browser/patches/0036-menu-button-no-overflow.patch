@@ -1,0 +1,39 @@
+# Kavacha patch 0036 — Keep the menu button out of the overflow list
+#
+# Symptom: clicking the top-right menu button does nothing.
+#
+# Cause (measured over Marionette against the running build): the button was
+# not in the toolbar at all —
+#   #kavacha-menu-button parentElement = "widget-overflow-list"
+# #zen-sidebar-top-buttons-customization-target is only ~31px wide (one
+# button), so prepending a second one overflows the container and
+# CustomizableUI relocates it into the overflow panel. Anchoring a panel to a
+# node that itself lives inside the overflow panel fails: opening the overflow
+# panel's child dismisses the overflow panel, which takes the new popup with
+# it. So the click registered and simply produced nothing visible.
+#
+# The panel itself was never broken. Opening it programmatically in the same
+# probe returned state="showing" with 27 registry-built children, confirming
+# _injectPanel/_buildPanel and the registry wiring are correct.
+#
+# Fix: overflows="false", the CustomizableUI opt-out that pins a toolbar button
+# in place and excludes it from overflow relocation.
+#
+# NOTE: validated by git-apply against browser/zen-upstream. The overflow
+# placement above was captured from the live build via build/marionette-verify.py.
+#
+# Touches: src/zen/common/sys/KavachaMenu.sys.mjs
+diff --git a/src/zen/common/sys/KavachaMenu.sys.mjs b/src/zen/common/sys/KavachaMenu.sys.mjs
+index f2c53f3..fee0ee0 100644
+--- a/src/zen/common/sys/KavachaMenu.sys.mjs
++++ b/src/zen/common/sys/KavachaMenu.sys.mjs
+@@ -101,7 +101,8 @@ export const KavachaMenu = {
+       <toolbarbutton id="kavacha-menu-button"
+         class="toolbarbutton-1 chromeclass-toolbar-additional"
+         removable="false"
+-        skipintoolbarset="true" />
++        skipintoolbarset="true"
++        overflows="false" />
+     `);
+     if (target.id === "nav-bar") {
+       target.appendChild(frag);

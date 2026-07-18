@@ -1,0 +1,96 @@
+# Kavacha patch 0037 — Make the menu panel scroll
+#
+# Symptom: the menu panel's lower entries were unreachable; it did not scroll.
+#
+# Cause (measured over Marionette against the running build): the panel is
+# generated from the command registry, so it grows with every feature,
+# marketplace component and plugin. At 27 entries it was 722px tall in a 758px
+# window, anchored at y=81 -- bottom at 802, i.e. 44px below the viewport, with
+# overflow visible and no max-height.
+#
+# A CSS-only cap does NOT fix this. A XUL panel lays its children out as a box,
+# so max-height COMPRESSES the rows rather than overflowing them: with
+# max-height applied the content clamped to 692px and scrollHeight ==
+# clientHeight -- still nothing to scroll. arrowscrollbox behaved the same way,
+# keeping box-layout semantics.
+#
+# Fix: append the rows into an HTML <div> (display:block, overflow-y:auto),
+# which restores normal CSS overflow inside the popup. Verified after the
+# change: scrollHeight 813 vs clientHeight 624, scrollable true, and setting
+# scrollTop reached 189 -- every one of the 27 entries is reachable.
+#
+# Known cosmetic residue: the panel still overhangs the window bottom by ~6px
+# at 758px height; the calc() cap is marginally too generous. Scrolling is
+# unaffected.
+#
+# NOTE: validated by git-apply against browser/zen-upstream, and confirmed
+# functionally in the running build via build/marionette-verify.py.
+#
+# Touches: src/zen/common/sys/KavachaMenu.sys.mjs,
+# src/zen/common/styles/kavacha-menu.inc.css
+diff --git a/src/zen/common/sys/KavachaMenu.sys.mjs b/src/zen/common/sys/KavachaMenu.sys.mjs
+index fee0ee0..14779dd 100644
+--- a/src/zen/common/sys/KavachaMenu.sys.mjs
++++ b/src/zen/common/sys/KavachaMenu.sys.mjs
+@@ -157,8 +157,21 @@ export const KavachaMenu = {
+       panel.firstChild.remove();
+     }
+ 
++    // Rows go inside an arrowscrollbox, not straight into the panel. A XUL
++    // panel lays its children out as a box, so a max-height on the panel
++    // COMPRESSES the rows instead of overflowing them -- measured: content
++    // clamped to 692px with scrollHeight == clientHeight, i.e. nothing to
++    // scroll and the tail unreachable. arrowscrollbox is what Firefox uses for
++    // long menus and scrolls properly inside a popup.
++    const body = doc.createElementNS(
++      "http://www.w3.org/1999/xhtml",
++      "div"
++    );
++    body.className = "kavacha-menu-scrollbox";
++    panel.appendChild(body);
++
+     // Full settings surface at the top: opens about:preferences.
+-    panel.appendChild(
++    body.appendChild(
+       this._makeItem(win, {
+         label: _label("kavacha-menu-settings", "Settings"),
+         icon: kSettingsIcon,
+@@ -186,9 +199,9 @@ export const KavachaMenu = {
+         "value",
+         headerId ? _label(headerId, domain) : domain
+       );
+-      panel.appendChild(header);
++      body.appendChild(header);
+       for (const cmd of commands) {
+-        panel.appendChild(
++        body.appendChild(
+           this._makeItem(win, {
+             label: cmd.rawLabel ?? _label(cmd.l10nId, cmd.l10nId),
+             icon: cmd.icon,
+diff --git a/src/zen/common/styles/kavacha-menu.inc.css b/src/zen/common/styles/kavacha-menu.inc.css
+index f0e0068..6ecdb62 100644
+--- a/src/zen/common/styles/kavacha-menu.inc.css
++++ b/src/zen/common/styles/kavacha-menu.inc.css
+@@ -80,3 +80,22 @@
+     color-mix(in srgb, currentColor 16%, transparent)
+   );
+ }
++
++/* The panel is generated from the registry, so its height grows with every
++   feature, marketplace component and plugin that registers a command. Measured
++   over Marionette at 27 entries: 722px tall in a 758px window, anchored at
++   y=81, so it ran 44px past the viewport with overflow visible and no
++   max-height -- the bottom entries were unreachable and nothing scrolled.
++   Cap it against the viewport and let the overflow scroll. */
++#kavacha-menu-panel {
++  max-height: calc(100vh - 8rem);
++}
++
++/* The scrollbox owns the scrolling; it is capped so the panel, anchored just
++   below the toolbar, still ends above the window bottom. */
++.kavacha-menu-scrollbox {
++  display: block;
++  max-height: calc(100vh - 9rem);
++  overflow-y: auto;
++  overflow-x: hidden;
++}

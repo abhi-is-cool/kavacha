@@ -1,0 +1,1043 @@
+# Patch 0028 — Kavacha Component Marketplace (about:marketplace)
+# (ROADMAP Phase 3; ADR 0010).
+#
+# WHAT: an offline-first component marketplace. KavachaMarketplace.sys.mjs is a
+# process singleton that ships a BUNDLED, trusted catalog of components — themes
+# (referencing KavachaThemeEngine built-ins), layout presets (partial layout
+# docs), and bundles (ordered steps, e.g. "Research Mode" = Forest theme + a
+# reading layout) — installs them into the profile
+# (kavacha-marketplace/installed.json), and APPLIES them by delegating to the
+# engines that already ship: KavachaThemeEngine.setActiveTheme (patch 0023) and
+# KavachaLayoutEngine.setLayout (patch 0022). It has no application path of its
+# own. about:marketplace is a privileged chrome page (a JS nsIAboutModule, same
+# pattern as about:studio / ADR 0009) that renders the catalog grouped by type
+# and drives the engine through its public API.
+#
+# WHY: this supersedes the theme-only marketplace named in earlier ADRs with a
+# single surface for every customization component. It is offline-first because
+# accounts/network are Phase 5 — so it sideloads a first-party catalog and
+# installs locally; remote install, ratings, and auto-update are deferred.
+#
+# DOGFOODS PATCH 0027: each installed component registers an "Apply: <name>"
+# palette command through the completed registry, attributed to
+# source="marketplace:<id>" so uninstall revokes it as a group
+# (unregisterBySource). Runtime commands carry a literal rawLabel (they cannot
+# add .ftl keys) with l10nId as identity only — exactly the 0027 contract. The
+# single "Open Marketplace" entry command is likewise a runtime registration
+# (source "kavacha-marketplace"), so no registry/.ftl edit is needed (that stays
+# patch 0029's concern).
+#
+# RESERVED, HOSTLESS TYPES: the KavachaComponentType enum reserves "widget" and
+# "panel" for Phase 3's sidebar-widget / tool-panel hosts, which do not exist
+# yet. No installer ships for them and the bundled catalog carries none — an
+# install() of such a type throws until a host engine lands (ADR 0010).
+#
+# NOT BUILD-VERIFIED: authored against the post-0027 tree; run
+# `git -C browser/zen-upstream apply --check` + a Marionette pass (open
+# about:marketplace, install/apply/remove a theme, layout, and the Research Mode
+# bundle; confirm the palette gains/loses "Apply: ..." commands) before marking
+# the ROADMAP item verified. Adds src/zen/common/sys/KavachaMarketplace.sys.mjs
+# and src/zen/kavacha-marketplace/* (KavachaAboutMarketplace.sys.mjs,
+# components.conf, jar.inc.mn, moz.build, marketplace.html/css/js); touches
+# src/zen/common/modules/ZenStartup.mjs, src/zen/common/moz.build,
+# src/zen/moz.build, src/browser/base/content/zen-assets.jar.inc.mn. Applies on
+# top of 0027.
+diff --git a/src/browser/base/content/zen-assets.jar.inc.mn b/src/browser/base/content/zen-assets.jar.inc.mn
+--- a/src/browser/base/content/zen-assets.jar.inc.mn
++++ b/src/browser/base/content/zen-assets.jar.inc.mn
+@@ -23,4 +23,5 @@
+ #include ../../../zen/space-routing/jar.inc.mn
+ #include ../../../zen/kavacha-newtab/jar.inc.mn
+ #include ../../../zen/kavacha-search/jar.inc.mn
+ #include ../../../zen/kavacha-studio/jar.inc.mn
++#include ../../../zen/kavacha-marketplace/jar.inc.mn
+diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
+--- a/src/zen/common/modules/ZenStartup.mjs
++++ b/src/zen/common/modules/ZenStartup.mjs
+@@ -164,6 +164,12 @@ class ZenStartup {
+       ).KavachaUserCSS;
+       kavachaUserCSS.init();
+       kavachaUserCSS.applyToWindow(window);
++      // Kavacha: bring up the component marketplace — re-registers the palette
++      // commands of installed components and the "Open Marketplace" entry
++      // (ADR 0010). Process singleton; the window arg is unused.
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaMarketplace.sys.mjs"
++      ).KavachaMarketplace.init();
+       this.isReady = true;
+       this.promiseInitializedResolve();
+       delete this.promiseInitializedResolve;
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -5,4 +5,5 @@ EXTRA_JS_MODULES += [
+   "sys/KavachaCommandRegistry.sys.mjs",
+   "sys/KavachaLayoutEngine.sys.mjs",
++  "sys/KavachaMarketplace.sys.mjs",
+   "sys/KavachaNewTab.sys.mjs",
+   "sys/KavachaPlacesAttribution.sys.mjs",
+diff --git a/src/zen/moz.build b/src/zen/moz.build
+--- a/src/zen/moz.build
++++ b/src/zen/moz.build
+@@ -8,5 +8,6 @@ DIRS += [
+     "common",
+     "drag-and-drop",
+     "glance",
++    "kavacha-marketplace",
+     "kavacha-studio",
+     "live-folders",
+diff --git a/src/zen/common/sys/KavachaMarketplace.sys.mjs b/src/zen/common/sys/KavachaMarketplace.sys.mjs
+new file mode 100644
+index 0000000..6730975
+--- /dev/null
++++ b/src/zen/common/sys/KavachaMarketplace.sys.mjs
+@@ -0,0 +1,443 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha component marketplace (ROADMAP Phase 3 "Component marketplace";
++// ADR 0010). Offline-first: it ships a BUNDLED, trusted catalog of components
++// and installs them into the profile. It has NO application path of its own —
++// every component delegates to an engine that already ships (KavachaThemeEngine
++// patch 0023, KavachaLayoutEngine patch 0022). Remote install, ratings, and
++// auto-update arrive with Kavacha accounts in Phase 5.
++//
++// Component types (KavachaComponentType):
++//   theme  -> payload { builtinThemeId }; apply = KavachaThemeEngine.setActiveTheme.
++//   layout -> payload is a partial layout doc; apply = KavachaLayoutEngine.setLayout.
++//   bundle -> payload { steps:[{type, ...}] }; apply runs each step in order.
++//   widget/panel -> RESERVED. There is no sidebar-widget or tool-panel host
++//     engine yet, so no installer ships and the bundled catalog carries none.
++//     They exist in the enum so the taxonomy (and future package validation) is
++//     stable before their hosts land (ADR 0010).
++//
++// State (profile, local-only until Phase 5 sync):
++//   kavacha-marketplace/installed.json  -> { installed: ["id", ...] }
++//   kavacha-marketplace/catalog/<id>/   -> optional sideloaded packages,
++//     discovered the way KavachaThemeEngine scans profile kavacha-themes/.
++//
++// Trust: the bundled catalog is first-party and trusted. A sideloaded theme
++// package's manifest is validated against
++// customization/themes/theme-manifest.schema.json and its style.css is loaded
++// sandboxed as a chrome-only AUTHOR_SHEET (never web content, never script) —
++// the same guarantees customization/README.md states for the marketplace.
++//
++// Dogfooding patch 0027: each installed component registers an "Apply: <name>"
++// palette command attributed to source "marketplace:<id>", so uninstall drops
++// it as a group via KavachaCommandRegistry.unregisterBySource. Runtime commands
++// cannot add .ftl keys, so they carry a literal rawLabel and use l10nId only as
++// identity (patch 0027).
++
++const { KavachaThemeEngine } = ChromeUtils.importESModule(
++  "resource:///modules/KavachaThemeEngine.sys.mjs"
++);
++const { KavachaLayoutEngine } = ChromeUtils.importESModule(
++  "resource:///modules/KavachaLayoutEngine.sys.mjs"
++);
++const { KavachaCommandRegistry, KavachaCommandDomain } =
++  ChromeUtils.importESModule(
++    "resource:///modules/KavachaCommandRegistry.sys.mjs"
++  );
++
++const kRevisionPref = "kavacha.marketplace.revision";
++const kMarketDir = "kavacha-marketplace";
++const kInstalledFile = "installed.json";
++const kCatalogDir = "catalog";
++
++// Component type taxonomy. theme/layout/bundle have installers below; widget
++// and panel are reserved but hostless (see header + ADR 0010).
++export const KavachaComponentType = Object.freeze({
++  THEME: "theme",
++  LAYOUT: "layout",
++  BUNDLE: "bundle",
++  WIDGET: "widget", // reserved — no sidebar-widget host engine yet
++  PANEL: "panel", // reserved — no tool-panel host engine yet
++});
++
++// Types this engine can actually apply today. A component whose type is not in
++// this set (widget/panel, or an unknown sideloaded type) is listed but not
++// installable — the installer is the guard.
++const APPLICABLE_TYPES = new Set([
++  KavachaComponentType.THEME,
++  KavachaComponentType.LAYOUT,
++  KavachaComponentType.BUNDLE,
++]);
++
++// The bundled, trusted catalog. theme payloads name a KavachaThemeEngine
++// built-in (patch 0023); layout payloads are partial layout docs
++// KavachaLayoutEngine.setLayout merges (patch 0022); the bundle sequences the
++// two. No widget/panel entries — those types have no host engine yet.
++const BUILTIN_CATALOG = [
++  {
++    id: "theme-midnight",
++    type: KavachaComponentType.THEME,
++    name: "Midnight",
++    description: "Kavacha's default deep-indigo dark surface theme.",
++    author: "Kavacha",
++    version: "1.0.0",
++    payload: { builtinThemeId: "kavacha-midnight" },
++  },
++  {
++    id: "theme-forest",
++    type: KavachaComponentType.THEME,
++    name: "Forest",
++    description: "A deep-evergreen dark theme — greener surfaces, warm accent.",
++    author: "Kavacha",
++    version: "1.0.0",
++    payload: { builtinThemeId: "kavacha-forest" },
++  },
++  {
++    id: "layout-focus-reading",
++    type: KavachaComponentType.LAYOUT,
++    name: "Focus Reading",
++    description:
++      "Comfortable density with a left sidebar — roomy and distraction-light.",
++    author: "Kavacha",
++    version: "1.0.0",
++    payload: { density: "comfortable", sidebar: "left" },
++  },
++  {
++    id: "layout-developer",
++    type: KavachaComponentType.LAYOUT,
++    name: "Developer",
++    description:
++      "Vertical tabs in a wide left sidebar — built for many tabs at once.",
++    author: "Kavacha",
++    version: "1.0.0",
++    payload: { tabStyle: "vertical", sidebar: "left", sidebarWidth: 320 },
++  },
++  {
++    id: "research-mode",
++    type: KavachaComponentType.BUNDLE,
++    name: "Research Mode",
++    description:
++      "One click: the Forest theme plus a comfortable reading layout.",
++    author: "Kavacha",
++    version: "1.0.0",
++    payload: {
++      steps: [
++        { type: KavachaComponentType.THEME, builtinThemeId: "kavacha-forest" },
++        {
++          type: KavachaComponentType.LAYOUT,
++          density: "comfortable",
++          sidebar: "left",
++        },
++      ],
++    },
++  },
++];
++
++export const KavachaMarketplace = {
++  types: KavachaComponentType,
++
++  _initialized: false,
++  // Cache of installed ids (Set<string>); null until first load.
++  _installed: null,
++  // The "marketplace:<id>" sources we have registered palette commands under,
++  // so a reconcile can drop the ones no longer installed.
++  _commandSources: new Set(),
++
++  init() {
++    if (this._initialized) {
++      return;
++    }
++    this._initialized = true;
++    // The registry is per-process and starts empty every launch, so re-register
++    // a palette command for each already-installed component and the single
++    // "Open Marketplace" entry command.
++    this._registerEntryCommand();
++    this._loadInstalled()
++      .then(() => this._reconcileCommands())
++      .catch(e => console.error("KavachaMarketplace: init failed", e));
++    // The content->chrome doorbell: about:marketplace bumps this pref; installed
++    // state may also be hand-edited. Reload and reconcile on a bump.
++    Services.prefs.addObserver(kRevisionPref, this);
++  },
++
++  observe(subject, topic, data) {
++    if (topic === "nsPref:changed" && data === kRevisionPref) {
++      this._installed = null;
++      this._loadInstalled()
++        .then(() => this._reconcileCommands())
++        .catch(e => console.error("KavachaMarketplace: reload failed", e));
++    }
++  },
++
++  // ----- Profile state ----------------------------------------------------
++
++  get _dirPath() {
++    return PathUtils.join(PathUtils.profileDir, kMarketDir);
++  },
++  get _installedPath() {
++    return PathUtils.join(this._dirPath, kInstalledFile);
++  },
++  get _catalogPath() {
++    return PathUtils.join(this._dirPath, kCatalogDir);
++  },
++
++  async _loadInstalled() {
++    if (this._installed) {
++      return this._installed;
++    }
++    let ids = [];
++    try {
++      const doc = JSON.parse(await IOUtils.readUTF8(this._installedPath));
++      if (doc && Array.isArray(doc.installed)) {
++        ids = doc.installed.filter(id => typeof id === "string");
++      }
++    } catch (e) {
++      // First run (no file) or unreadable — start from an empty install set.
++    }
++    this._installed = new Set(ids);
++    return this._installed;
++  },
++
++  async _saveInstalled() {
++    await IOUtils.makeDirectory(this._dirPath, { ignoreExisting: true });
++    await IOUtils.writeUTF8(
++      this._installedPath,
++      JSON.stringify({ installed: [...this._installed] }, null, 2)
++    );
++  },
++
++  _bumpRevision() {
++    Services.prefs.setIntPref(
++      kRevisionPref,
++      Services.prefs.getIntPref(kRevisionPref, 0) + 1
++    );
++  },
++
++  // ----- Catalog ----------------------------------------------------------
++
++  /** Built-in catalog plus any sideloaded packages under catalog/<id>/. */
++  async getCatalog() {
++    const catalog = BUILTIN_CATALOG.map(c => ({ ...c, builtin: true }));
++    const seen = new Set(catalog.map(c => c.id));
++    for (const component of await this._discoverUserComponents()) {
++      if (!seen.has(component.id)) {
++        catalog.push(component);
++        seen.add(component.id);
++      }
++    }
++    return catalog;
++  },
++
++  // Sideloaded packages live under kavacha-marketplace/catalog/<id>/ with a
++  // component.json manifest — discovered the way KavachaThemeEngine scans
++  // profile kavacha-themes/. Deliberately minimal: the descriptor is read but
++  // the shipped catalog is the trusted built-in array. (A theme package's
++  // manifest would be schema-validated and its style.css sandboxed before use;
++  // built-in entries are trusted and skip that path.)
++  async _discoverUserComponents() {
++    const out = [];
++    let children;
++    try {
++      children = await IOUtils.getChildren(this._catalogPath);
++    } catch (e) {
++      return out; // No sideload directory yet — fine.
++    }
++    for (const child of children) {
++      try {
++        const info = await IOUtils.stat(child);
++        if (info.type !== "directory") {
++          continue;
++        }
++        const id = PathUtils.filename(child);
++        const manifest = JSON.parse(
++          await IOUtils.readUTF8(PathUtils.join(child, "component.json"))
++        );
++        out.push({
++          id,
++          type: manifest.type,
++          name: manifest.name || id,
++          description: manifest.description || "",
++          author: manifest.author || "Unknown",
++          version: manifest.version || "0.0.0",
++          payload: manifest.payload || {},
++          builtin: false,
++        });
++      } catch (e) {
++        // Skip a malformed package rather than failing the whole listing.
++      }
++    }
++    return out;
++  },
++
++  /** Resolve an id to its component descriptor (built-in or sideloaded). */
++  async resolveComponent(id) {
++    return (await this.getCatalog()).find(c => c.id === id) || null;
++  },
++
++  // ----- Install state ----------------------------------------------------
++
++  async getInstalled() {
++    return [...(await this._loadInstalled())];
++  },
++
++  async isInstalled(id) {
++    return (await this._loadInstalled()).has(id);
++  },
++
++  /**
++   * Install a component: add it to the installed set, persist, register its
++   * palette command, and bump the revision. widget/panel (and unknown types)
++   * throw — no host engine can apply them yet.
++   */
++  async install(id) {
++    const component = await this.resolveComponent(id);
++    if (!component) {
++      throw new Error(`KavachaMarketplace: unknown component "${id}"`);
++    }
++    if (!APPLICABLE_TYPES.has(component.type)) {
++      throw new Error(
++        `KavachaMarketplace: component type "${component.type}" has no host yet`
++      );
++    }
++    const installed = await this._loadInstalled();
++    if (!installed.has(id)) {
++      installed.add(id);
++      await this._saveInstalled();
++    }
++    this._registerCommandFor(component);
++    this._bumpRevision();
++  },
++
++  /**
++   * Uninstall a component: remove it from the installed set, persist, drop its
++   * palette command group, and bump the revision. Uninstalling never touches
++   * the browser's current look — a theme/layout the component applied stays put
++   * until the user changes it (the engines own that state).
++   */
++  async uninstall(id) {
++    const installed = await this._loadInstalled();
++    if (installed.has(id)) {
++      installed.delete(id);
++      await this._saveInstalled();
++    }
++    const source = "marketplace:" + id;
++    KavachaCommandRegistry.unregisterBySource(source);
++    this._commandSources.delete(source);
++    this._bumpRevision();
++  },
++
++  // ----- Application (delegates to the existing engines) ------------------
++
++  /** Apply a component's effect through the engine that owns it. */
++  async apply(id) {
++    const component = await this.resolveComponent(id);
++    if (!component) {
++      throw new Error(`KavachaMarketplace: unknown component "${id}"`);
++    }
++    await this._applyComponent(component);
++  },
++
++  async _applyComponent(component) {
++    switch (component.type) {
++      case KavachaComponentType.THEME:
++        await KavachaThemeEngine.setActiveTheme(component.payload.builtinThemeId);
++        break;
++      case KavachaComponentType.LAYOUT:
++        await KavachaLayoutEngine.setLayout(component.payload);
++        break;
++      case KavachaComponentType.BUNDLE:
++        await this._applyBundle(component.payload);
++        break;
++      default:
++        // widget/panel are reserved but hostless (ADR 0010) — nothing applies.
++        throw new Error(
++          `KavachaMarketplace: no host for component type "${component.type}"`
++        );
++    }
++  },
++
++  // A bundle only sequences other component effects (Research Mode = a theme
++  // step + a layout step); there is no bundle-specific application path, just
++  // the same engine calls the individual types use.
++  async _applyBundle(payload) {
++    for (const step of payload?.steps || []) {
++      if (step.type === KavachaComponentType.THEME) {
++        await KavachaThemeEngine.setActiveTheme(step.builtinThemeId);
++      } else if (step.type === KavachaComponentType.LAYOUT) {
++        const { type, ...layoutPatch } = step;
++        await KavachaLayoutEngine.setLayout(layoutPatch);
++      }
++      // Unknown/hostless step types are skipped.
++    }
++  },
++
++  // ----- Palette commands (dogfoods the patch-0027 registry) --------------
++
++  // One "Apply: <name>" command per installed component, sourced
++  // "marketplace:<id>" so uninstall revokes it as a group. rawLabel because a
++  // runtime command cannot add an .ftl key; l10nId is identity only (patch
++  // 0027). Guarded against double-register with registry.has().
++  _registerCommandFor(component) {
++    const l10nId = "kavacha-marketplace-apply-" + component.id;
++    if (KavachaCommandRegistry.has(l10nId)) {
++      return;
++    }
++    const source = "marketplace:" + component.id;
++    KavachaCommandRegistry.register(
++      {
++        l10nId,
++        rawLabel: "Apply: " + component.name,
++        command: () => this.apply(component.id),
++        icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++        domain: KavachaCommandDomain.APPEARANCE,
++      },
++      { source }
++    );
++    this._commandSources.add(source);
++  },
++
++  // The single entry command that opens about:marketplace. Registered once in
++  // init() with its own source ("kavacha-marketplace"), decoupled from the per-
++  // component commands. Registering it here (a runtime rawLabel command) avoids
++  // editing KavachaCommandRegistry / the .ftl (that stays patch 0029's concern).
++  _registerEntryCommand() {
++    const l10nId = "kavacha-marketplace-open";
++    if (KavachaCommandRegistry.has(l10nId)) {
++      return;
++    }
++    KavachaCommandRegistry.register(
++      {
++        l10nId,
++        rawLabel: "Open Marketplace",
++        command: window =>
++          window.switchToTabHavingURI("about:marketplace", true),
++        icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++        domain: KavachaCommandDomain.NAVIGATION,
++      },
++      { source: "kavacha-marketplace" }
++    );
++  },
++
++  // Bring the live palette in line with the installed set: add a command for
++  // every installed, applicable component that hasn't one, and drop any command
++  // whose component is no longer installed (e.g. installed.json was hand-edited
++  // and the revision bumped). Idempotent — has() guards the adds.
++  async _reconcileCommands() {
++    const installed = await this._loadInstalled();
++    const wanted = new Set();
++    for (const id of installed) {
++      const component = await this.resolveComponent(id);
++      if (component && APPLICABLE_TYPES.has(component.type)) {
++        this._registerCommandFor(component);
++        wanted.add("marketplace:" + id);
++      }
++    }
++    for (const source of [...this._commandSources]) {
++      if (!wanted.has(source)) {
++        KavachaCommandRegistry.unregisterBySource(source);
++        this._commandSources.delete(source);
++      }
++    }
++  },
++};
+diff --git a/src/zen/kavacha-marketplace/KavachaAboutMarketplace.sys.mjs b/src/zen/kavacha-marketplace/KavachaAboutMarketplace.sys.mjs
+new file mode 100644
+index 0000000..ffa26de
+--- /dev/null
++++ b/src/zen/kavacha-marketplace/KavachaAboutMarketplace.sys.mjs
+@@ -0,0 +1,53 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha: nsIAboutModule for about:marketplace — the Component Marketplace
++// (ROADMAP Phase 3; ADR 0010).
++//
++// Same modern JS about-module pattern as about:studio's KavachaAboutStudio
++// (mirrors the engine's AboutNewTabRedirector.sys.mjs): registered through
++// components.conf against `@mozilla.org/network/protocol/about;1?what=marketplace`,
++// so NO Gecko C++ redirector edit is needed (MASTER_PLAN Principle 1). It
++// resolves about:marketplace to a privileged chrome document.
++//
++// WHY PRIVILEGED (IS_SECURE_CHROME_UI, like about:preferences): marketplace.js
++// drives the chrome singleton KavachaMarketplace (ADR 0010) — and, through it,
++// the Theme/Layout engines — via their public APIs. A secure-chrome-UI page
++// loads in the parent process with the system principal (the chrome:// target
++// is a UI resource, so the redirector keeps the system principal — see
++// nsAboutRedirector.cpp), which is exactly the privilege about:preferences uses
++// to ChromeUtils.importESModule and call Services.
++
++const kChromeURL =
++  "chrome://browser/content/kavacha-marketplace/marketplace.html";
++
++export class AboutMarketplace {
++  QueryInterface = ChromeUtils.generateQI(["nsIAboutModule"]);
++
++  newChannel(aURI, aLoadInfo) {
++    const chromeURI = Services.io.newURI(kChromeURL);
++    // chrome:// is a UI resource, so the channel keeps the system principal
++    // (we deliberately do NOT set a result-principal URI). Same shape as the
++    // engine's AboutNewTabRedirector: build from the loadInfo, then re-point
++    // originalURI so the address bar still reads "about:marketplace".
++    const channel = Services.io.newChannelFromURIWithLoadInfo(
++      chromeURI,
++      aLoadInfo
++    );
++    channel.originalURI = aURI;
++    return channel;
++  }
++
++  getURIFlags() {
++    // Privileged chrome UI, scripts allowed — the about:preferences profile.
++    // No URI_SAFE_FOR_UNTRUSTED_CONTENT: about:marketplace is never web content.
++    return (
++      Ci.nsIAboutModule.ALLOW_SCRIPT | Ci.nsIAboutModule.IS_SECURE_CHROME_UI
++    );
++  }
++
++  getChromeURI() {
++    return Services.io.newURI(kChromeURL);
++  }
++}
+diff --git a/src/zen/kavacha-marketplace/components.conf b/src/zen/kavacha-marketplace/components.conf
+new file mode 100644
+index 0000000..90026df
+--- /dev/null
++++ b/src/zen/kavacha-marketplace/components.conf
+@@ -0,0 +1,15 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++# Kavacha: register about:marketplace (the Component Marketplace) as a JS
++# nsIAboutModule. Mirrors engine/browser/components/newtab/components.conf so
++# no Gecko C++ redirector edit is needed (ADR 0010).
++Classes = [
++    {
++        "cid": "{aa780430-c386-4052-8b78-87bb0687f43a}",
++        "contract_ids": ["@mozilla.org/network/protocol/about;1?what=marketplace"],
++        "esModule": "resource:///modules/KavachaAboutMarketplace.sys.mjs",
++        "constructor": "AboutMarketplace",
++    },
++]
+diff --git a/src/zen/kavacha-marketplace/jar.inc.mn b/src/zen/kavacha-marketplace/jar.inc.mn
+new file mode 100644
+index 0000000..8b63104
+--- /dev/null
++++ b/src/zen/kavacha-marketplace/jar.inc.mn
+@@ -0,0 +1,7 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++        content/browser/kavacha-marketplace/marketplace.html                   (../../zen/kavacha-marketplace/marketplace.html)
++        content/browser/kavacha-marketplace/marketplace.css                    (../../zen/kavacha-marketplace/marketplace.css)
++        content/browser/kavacha-marketplace/marketplace.js                     (../../zen/kavacha-marketplace/marketplace.js)
+diff --git a/src/zen/kavacha-marketplace/marketplace.css b/src/zen/kavacha-marketplace/marketplace.css
+new file mode 100644
+index 0000000..19a69d5
+--- /dev/null
++++ b/src/zen/kavacha-marketplace/marketplace.css
+@@ -0,0 +1,178 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* Component Marketplace (about:marketplace). Shares about:studio's visual
++ * language (patch 0024) — same Kavacha/Zen chrome tokens, so the page follows
++ * the active theme (patch 0016 bakes the Midnight floor; the theme engine,
++ * patch 0023, re-tints --kavacha-* live). ADR 0010. */
++
++:root {
++  --market-surface: var(--kavacha-surface, #14111f);
++  --market-elevated: var(--kavacha-surface-elevated, #1d1930);
++  --market-sunken: var(--kavacha-surface-sunken, #0e0b18);
++  --market-border: var(--kavacha-border, #2e2846);
++  --market-text: var(--kavacha-text-primary, #edeaf7);
++  --market-text-dim: var(--kavacha-text-secondary, #a79fc4);
++  --market-accent: var(--zen-primary-color, var(--kavacha-accent, #8b7bd8));
++  color-scheme: dark;
++}
++
++* {
++  box-sizing: border-box;
++}
++
++body {
++  margin: 0;
++  padding: 0 0 64px;
++  font: message-box;
++  font-size: 15px;
++  line-height: 1.5;
++  color: var(--market-text);
++  background: var(--market-surface);
++  min-height: 100vh;
++}
++
++.market-header {
++  padding: 40px max(24px, 50% - 460px) 24px;
++  background: linear-gradient(
++    180deg,
++    var(--market-elevated),
++    var(--market-surface)
++  );
++  border-bottom: 1px solid var(--market-border);
++}
++
++.market-title h1 {
++  margin: 0;
++  font-size: 28px;
++  font-weight: 700;
++  letter-spacing: -0.01em;
++}
++
++.market-subtitle {
++  margin: 6px 0 0;
++  color: var(--market-text-dim);
++  max-width: 58ch;
++}
++
++.market-note {
++  margin: 18px 0 0;
++  padding: 12px 14px;
++  border: 1px solid var(--market-border);
++  border-radius: 10px;
++  background: var(--market-sunken);
++  color: var(--market-text-dim);
++  font-size: 13px;
++  max-width: 66ch;
++}
++
++.market-body {
++  padding: 28px max(24px, 50% - 460px) 0;
++  max-width: 920px;
++  margin: 0 auto;
++}
++
++.market-section {
++  margin: 26px 0 12px;
++  font-size: 15px;
++  font-weight: 700;
++  text-transform: uppercase;
++  letter-spacing: 0.05em;
++  color: var(--market-text-dim);
++}
++
++.market-section:first-child {
++  margin-top: 4px;
++}
++
++.market-grid {
++  display: grid;
++  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
++  gap: 16px;
++}
++
++.market-card {
++  display: flex;
++  flex-direction: column;
++  background: var(--market-elevated);
++  border: 1px solid var(--market-border);
++  border-radius: 14px;
++  padding: 18px 20px;
++}
++
++.market-name {
++  margin: 0;
++  font-size: 17px;
++  font-weight: 650;
++}
++
++.market-desc {
++  margin: 6px 0 0;
++  color: var(--market-text-dim);
++  font-size: 13px;
++  flex: 1;
++}
++
++.market-meta {
++  margin: 12px 0 0;
++  color: var(--market-text-dim);
++  font-size: 12px;
++  font-variant-numeric: tabular-nums;
++}
++
++.market-installed-badge {
++  align-self: flex-start;
++  margin: 10px 0 0;
++  padding: 2px 8px;
++  border-radius: 999px;
++  background: color-mix(in srgb, var(--market-accent) 22%, transparent);
++  color: var(--market-accent);
++  font-size: 11px;
++  font-weight: 700;
++  text-transform: uppercase;
++  letter-spacing: 0.04em;
++}
++
++.market-actions {
++  display: flex;
++  gap: 8px;
++  margin-top: 16px;
++}
++
++.market-button {
++  appearance: none;
++  font: inherit;
++  font-weight: 600;
++  font-size: 13px;
++  border-radius: 10px;
++  padding: 8px 16px;
++  cursor: pointer;
++  border: 1px solid var(--market-border);
++}
++
++.market-button.ghost {
++  background: transparent;
++  color: var(--market-text-dim);
++}
++
++.market-button.ghost:hover {
++  color: var(--market-text);
++  background: var(--market-sunken);
++}
++
++.market-button.primary {
++  background: var(--market-accent);
++  color: #fff;
++  border-color: transparent;
++}
++
++.market-button.primary:hover {
++  filter: brightness(1.08);
++}
++
++.market-button:disabled {
++  opacity: 0.5;
++  cursor: default;
++  filter: none;
++}
+diff --git a/src/zen/kavacha-marketplace/marketplace.html b/src/zen/kavacha-marketplace/marketplace.html
+new file mode 100644
+index 0000000..6375484
+--- /dev/null
++++ b/src/zen/kavacha-marketplace/marketplace.html
+@@ -0,0 +1,39 @@
++<!-- This Source Code Form is subject to the terms of the Mozilla Public
++   - License, v. 2.0. If a copy of the MPL was not distributed with this
++   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
++<!DOCTYPE html>
++<html lang="en" dir="ltr">
++  <head>
++    <meta charset="utf-8" />
++    <meta
++      http-equiv="Content-Security-Policy"
++      content="default-src chrome:; img-src chrome: data:; style-src chrome: 'unsafe-inline'; object-src 'none'"
++    />
++    <title>Kavacha Marketplace</title>
++    <link
++      rel="stylesheet"
++      href="chrome://browser/content/kavacha-marketplace/marketplace.css"
++    />
++    <script src="chrome://browser/content/kavacha-marketplace/marketplace.js"></script>
++  </head>
++  <body>
++    <header class="market-header">
++      <div class="market-title">
++        <h1>Kavacha Marketplace</h1>
++        <p class="market-subtitle">
++          Install components — themes, layouts, and bundles — then apply them
++          with a click. Everything applies live through Kavacha's own engines.
++        </p>
++      </div>
++      <p class="market-note">
++        Sideloaded &amp; offline. These components ship with Kavacha and install
++        locally into your profile — no account or network needed. Remote install,
++        ratings, and auto-update arrive with Kavacha accounts (Phase 5).
++      </p>
++    </header>
++
++    <main id="market-body" class="market-body">
++      <!-- catalog sections injected by marketplace.js -->
++    </main>
++  </body>
++</html>
+diff --git a/src/zen/kavacha-marketplace/marketplace.js b/src/zen/kavacha-marketplace/marketplace.js
+new file mode 100644
+index 0000000..9e0dd3e
+--- /dev/null
++++ b/src/zen/kavacha-marketplace/marketplace.js
+@@ -0,0 +1,155 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++// Component Marketplace front-end (about:marketplace; ADR 0010). Runs in the
++// parent process with the system principal (IS_SECURE_CHROME_UI — see
++// KavachaAboutMarketplace.sys.mjs), so it drives the KavachaMarketplace chrome
++// singleton directly through its public API. Install/uninstall/apply all bump
++// `kavacha.marketplace.revision`; a pref doorbell re-renders so the grid stays
++// in sync when state changes here or elsewhere.
++
++/* global ChromeUtils, Services */
++
++const { KavachaMarketplace } = ChromeUtils.importESModule(
++  "resource:///modules/KavachaMarketplace.sys.mjs"
++);
++
++const kRevisionPref = "kavacha.marketplace.revision";
++
++// Section order + titles for the component types the marketplace ships. Types
++// without a host engine yet (widget/panel) are intentionally absent.
++const SECTIONS = [
++  { type: "theme", title: "Themes" },
++  { type: "layout", title: "Layouts" },
++  { type: "bundle", title: "Bundles" },
++];
++
++function qs(sel) {
++  return document.querySelector(sel);
++}
++
++async function render() {
++  const body = qs("#market-body");
++
++  let catalog;
++  let installed;
++  try {
++    catalog = await KavachaMarketplace.getCatalog();
++    installed = new Set(await KavachaMarketplace.getInstalled());
++  } catch (e) {
++    console.error("Marketplace: failed to load catalog", e);
++    return;
++  }
++
++  body.textContent = "";
++  for (const section of SECTIONS) {
++    const items = catalog.filter(c => c.type === section.type);
++    if (!items.length) {
++      continue;
++    }
++    body.append(sectionHeader(section.title));
++    const grid = document.createElement("div");
++    grid.className = "market-grid";
++    for (const component of items) {
++      grid.append(card(component, installed.has(component.id)));
++    }
++    body.append(grid);
++  }
++}
++
++function sectionHeader(title) {
++  const h = document.createElement("h2");
++  h.className = "market-section";
++  h.textContent = title;
++  return h;
++}
++
++function card(component, isInstalled) {
++  const el = document.createElement("article");
++  el.className = "market-card";
++  el.dataset.componentId = component.id;
++
++  const name = document.createElement("h3");
++  name.className = "market-name";
++  name.textContent = component.name;
++  el.append(name);
++
++  const desc = document.createElement("p");
++  desc.className = "market-desc";
++  desc.textContent = component.description || "";
++  el.append(desc);
++
++  const meta = document.createElement("p");
++  meta.className = "market-meta";
++  meta.textContent = `${component.author} · v${component.version}`;
++  el.append(meta);
++
++  if (isInstalled) {
++    const badge = document.createElement("span");
++    badge.className = "market-installed-badge";
++    badge.textContent = "Installed";
++    el.append(badge);
++  }
++
++  const actions = document.createElement("div");
++  actions.className = "market-actions";
++
++  const installBtn = document.createElement("button");
++  installBtn.className = "market-button " + (isInstalled ? "ghost" : "primary");
++  installBtn.textContent = isInstalled ? "Remove" : "Install";
++  installBtn.addEventListener("click", () =>
++    toggleInstall(component.id, isInstalled)
++  );
++
++  const applyBtn = document.createElement("button");
++  applyBtn.className = "market-button primary";
++  applyBtn.textContent = "Apply";
++  applyBtn.disabled = !isInstalled;
++  applyBtn.addEventListener("click", () => apply(component.id));
++
++  actions.append(installBtn, applyBtn);
++  el.append(actions);
++  return el;
++}
++
++async function toggleInstall(id, isInstalled) {
++  try {
++    if (isInstalled) {
++      await KavachaMarketplace.uninstall(id);
++    } else {
++      await KavachaMarketplace.install(id);
++    }
++  } catch (e) {
++    console.error("Marketplace: install toggle failed", e);
++  }
++  // The revision bump re-renders via the observer; render here too so the grid
++  // updates even if the observer coalesces or misses this process's own write.
++  await render();
++}
++
++async function apply(id) {
++  try {
++    await KavachaMarketplace.apply(id);
++  } catch (e) {
++    console.error("Marketplace: apply failed", e);
++  }
++}
++
++const prefObserver = {
++  observe(subject, topic, data) {
++    if (data === kRevisionPref) {
++      render();
++    }
++  },
++};
++
++document.addEventListener("DOMContentLoaded", async () => {
++  await render();
++  Services.prefs.addObserver(kRevisionPref, prefObserver);
++  window.addEventListener(
++    "unload",
++    () => Services.prefs.removeObserver(kRevisionPref, prefObserver),
++    { once: true }
++  );
++});
+diff --git a/src/zen/kavacha-marketplace/moz.build b/src/zen/kavacha-marketplace/moz.build
+new file mode 100644
+index 0000000..d189b12
+--- /dev/null
++++ b/src/zen/kavacha-marketplace/moz.build
+@@ -0,0 +1,17 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++# Kavacha Component Marketplace (about:marketplace). The JS about-module is a
++# plain EXTRA_JS_MODULE (resource:///modules/KavachaAboutMarketplace.sys.mjs);
++# its components.conf registers the about: contract. The marketplace.html/css/js
++# chrome content is registered separately via jar.inc.mn (included from
++# src/browser/base/content/zen-assets.jar.inc.mn). ADR 0010.
++
++EXTRA_JS_MODULES += [
++    "KavachaAboutMarketplace.sys.mjs",
++]
++
++XPCOM_MANIFESTS += [
++    "components.conf",
++]

@@ -1,0 +1,47 @@
+# Kavacha patch 0035 — Remove the lopsided content inset in horizontal-tabs mode
+#
+# Symptom: an accent-coloured border down the RIGHT and BOTTOM edges of the web
+# content, with none on the left.
+#
+# Cause (measured over Marionette against the running build, not guessed):
+#   #zen-tabbox-wrapper  margin: 0px 8px 8px 0px
+#   content chain right/bottom = 1272/750 inside a 1280x758 window
+# Upstream zen-browser-ui.css insets the content by --zen-element-separation on
+# all sides, then zeroes the side the vertical sidebar occupies:
+#   & #zen-tabbox-wrapper { margin: var(--zen-element-separation); margin-top: 0; }
+#   &:not([zen-right-side="true"]) #zen-tabbox-wrapper { margin-left: 0; }
+# That compensation assumes a left sidebar. Kavacha's horizontal-tabs mode
+# (patch 0010) removes the sidebar entirely, so only the right/bottom insets
+# survive and the frame becomes asymmetric.
+#
+# Fix: inside the existing @media not -moz-pref("zen.tabs.vertical") block,
+# zero the wrapper margin so web content meets the window edge on all sides.
+# Scoped to horizontal mode only — vertical/sidebar layout keeps Zen's look.
+#
+# NOTE: validated by git-apply against browser/zen-upstream; the geometry above
+# was captured from the live build via build/marionette-verify.py.
+#
+# Touches: src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
+diff --git a/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
+index bb5c4bd..11e5417 100644
+--- a/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
++++ b/src/zen/tabs/zen-tabs/kavacha-horizontal-tabs.inc.css
+@@ -40,6 +40,18 @@
+     height: auto !important;
+   }
+ 
++  /* Upstream insets the content by --zen-element-separation on every side
++     except the one the vertical sidebar occupies: zen-browser-ui.css sets
++     margin-top: 0 and then margin-left: 0 when the sidebar is on the left.
++     With horizontal tabs there IS no sidebar, so that compensation leaves a
++     lopsided 8px gap on the right and bottom only, which reads as an
++     accent-coloured border down two edges. Measured over Marionette:
++     #zen-tabbox-wrapper margin 0px 8px 8px 0px, content right/bottom 1272/750
++     inside a 1280x758 window. Web content should meet the window edge. */
++  #zen-tabbox-wrapper {
++    margin: 0 !important;
++  }
++
+   /* Chrome-convention ordering: tab strip on the very top row, URL bar row
+      under it with the app menu / extensions on its right. Wrapping row flex
+      lets nav-bar and the (former sidebar) top-buttons share the second row. */

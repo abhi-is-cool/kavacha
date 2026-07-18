@@ -1,0 +1,658 @@
+# Patch 0031 — Settings consolidation: Appearance & Themes + Customization
+# panes in about:preferences (ROADMAP Phase 3 UX; ADR 0009/0021 pane pattern).
+#
+# WHAT: two Kavacha Settings panes, added with Zen's own four-file pane recipe
+# (the same one patch 0021's Privacy Center uses).
+#   - paneKavachaAppearance ("Appearance & Themes"): a theme picker over
+#     KavachaThemeEngine.listThemes()/resolveTheme()/setActiveTheme() (patch
+#     0023), an accent-color control bound to the user-owned zen.theme.accent-color
+#     pref with a "Use system accent" reset, a new-tab dashboard/floating-search
+#     toggle over zen.urlbar.replace-newtab, and a "Customize visually in the
+#     Studio →" button to about:studio.
+#   - paneKavachaCustomization ("Customization"): layout controls (tab style,
+#     sidebar position, density, toolbar visibility) over
+#     KavachaLayoutEngine.getLayout()/setLayout() (patch 0022, watching the
+#     kavacha.layout.revision doorbell), a "Custom CSS safe mode" checkbox over
+#     KavachaUserCSS (patch 0025), and links out to about:studio (Advanced),
+#     about:marketplace (patch 0028) and about:plugins (patch 0029).
+#
+# WHY: "all the options and theme stuff should be in that [settings menu]".
+# about:preferences becomes the one settings home — the patch-0030 top-right
+# menu's "Settings" row lands here. These panes are deliberately THIN views over
+# the already-shipped engines (they only read/write the engines' public APIs and
+# their prefs, and apply live to every window); the rich visual surfaces stay in
+# the about: pages, one click away. No engine logic is duplicated.
+#
+# WHY A PATCH: Zen's Settings pane registration is spread across meta-patch files
+# (preferences-xhtml.patch / preferences-js.patch / jar-mn.patch) that only a
+# patch can extend; an overlay/pref cannot register a preferences pane. Follows
+# ADR 0021's recipe exactly — the register_module template-inline guard already
+# matches categoryName.startsWith("paneKavacha"), so both paneKavacha* ids render.
+#
+# NOT BUILD-VERIFIED (no Firefox tree built in this environment). The two
+# controllers pass `node --check`; the meta-patch edits keep their inner unified
+# diffs count-consistent; the outer diff applies cleanly on top of 0030 with
+# `git apply --check`. Applies on top of 0030.
+#
+# Touches: locales/en-US/browser/browser/preferences/zen-preferences.ftl;
+# src/browser/components/preferences/{jar-mn,preferences-js,preferences-xhtml}.patch;
+# src/browser/components/preferences/kavacha-appearance.js (new);
+# src/browser/components/preferences/kavacha-customization.js (new);
+# src/browser/components/preferences/kavachaAppearance.inc.xhtml (new);
+# src/browser/components/preferences/kavachaCustomization.inc.xhtml (new);
+# src/browser/themes/shared/preferences/zen-preferences.css.
+diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+index d60167c..c59c6ae 100644
+--- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
++++ b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+@@ -397,3 +397,59 @@ kavacha-privacy-posture-gpc = Global Privacy Control
+ kavacha-privacy-posture-banners = Cookie banner auto-reject
+ kavacha-privacy-on = On
+ kavacha-privacy-off = Off
++
++# Kavacha Appearance & Themes pane (patch 0031)
++pane-kavacha-appearance-title = Appearance & Themes
++category-kavacha-appearance =
++    .tooltiptext = { pane-kavacha-appearance-title }
++kavacha-appearance-title = Appearance & Themes
++kavacha-appearance-theme-header = Theme
++kavacha-appearance-theme-description = Pick a theme for the browser chrome. Themes change surface colors; your accent color is set separately below.
++kavacha-appearance-theme-label = Active theme
++kavacha-appearance-accent-header = Accent color
++kavacha-appearance-accent-description = The accent is yours — it stays put when you switch themes.
++kavacha-appearance-accent-label = Accent color
++kavacha-appearance-accent-system = Use system accent
++kavacha-appearance-newtab-header = New tab
++kavacha-appearance-newtab-dashboard =
++    .label = Open the Kavacha dashboard instead of the floating search bar
++kavacha-appearance-newtab-description = Choose what a new tab shows: the full Kavacha dashboard, or a minimal floating search bar.
++kavacha-appearance-studio-link = Customize visually in the Studio →
++
++# Kavacha Customization pane (patch 0031)
++pane-kavacha-customization-title = Customization
++category-kavacha-customization =
++    .tooltiptext = { pane-kavacha-customization-title }
++kavacha-customization-title = Customization
++kavacha-customization-layout-header = Layout
++kavacha-customization-layout-description = Arrange the browser chrome. Changes apply live to every window.
++kavacha-customization-tabstyle-label = Tab bar
++kavacha-customization-tabstyle-horizontal =
++    .label = Horizontal
++kavacha-customization-tabstyle-vertical =
++    .label = Vertical
++kavacha-customization-sidebar-label = Sidebar position
++kavacha-customization-sidebar-left =
++    .label = Left
++kavacha-customization-sidebar-right =
++    .label = Right
++kavacha-customization-sidebar-hidden =
++    .label = Hidden
++kavacha-customization-density-label = Density
++kavacha-customization-density-compact =
++    .label = Compact
++kavacha-customization-density-normal =
++    .label = Normal
++kavacha-customization-density-comfortable =
++    .label = Comfortable
++kavacha-customization-toolbar-visible =
++    .label = Show the toolbar
++kavacha-customization-advanced-header = Advanced CSS
++kavacha-customization-advanced-description = Custom chrome CSS is applied live and versioned. Safe mode turns it all off if a rule ever breaks the interface.
++kavacha-customization-safemode =
++    .label = Custom CSS safe mode
++kavacha-customization-css-link = Edit custom CSS in the Studio →
++kavacha-customization-more-header = More
++kavacha-customization-more-description = Browse installable components and manage plugins.
++kavacha-customization-marketplace-link = Open Component Marketplace →
++kavacha-customization-plugins-link = Manage Plugins →
+diff --git a/src/browser/components/preferences/jar-mn.patch b/src/browser/components/preferences/jar-mn.patch
+index b820c2d..f657ef9 100644
+--- a/src/browser/components/preferences/jar-mn.patch
++++ b/src/browser/components/preferences/jar-mn.patch
+@@ -2,12 +2,14 @@ diff --git a/browser/components/preferences/jar.mn b/browser/components/preferen
+ index aec7888f59eeb5dbffc62b861fe223159ac42586..a593f3015469c11c762ae01465964251a77ddb45 100644
+ --- a/browser/components/preferences/jar.mn
+ +++ b/browser/components/preferences/jar.mn
+-@@ -69,5 +69,8 @@ browser.jar:
++@@ -69,5 +69,10 @@ browser.jar:
+     content/browser/preferences/widgets/sync-engines-list.css          (widgets/sync-engine-list/sync-engines-list.css)
+     content/browser/preferences/widgets/update-information.mjs          (widgets/update-information/update-information.mjs)
+     content/browser/preferences/widgets/update-information.css          (widgets/update-information/update-information.css)
+ +
+ +   content/browser/preferences/zen-settings.js
+ +   content/browser/preferences/kavacha-privacy.js
+++   content/browser/preferences/kavacha-appearance.js
+++   content/browser/preferences/kavacha-customization.js
+     content/browser/preferences/widgets/update-state.mjs          (widgets/update-state/update-state.mjs)
+     content/browser/preferences/widgets/update-state.css          (widgets/update-state/update-state.css)
+diff --git a/src/browser/components/preferences/kavacha-appearance.js b/src/browser/components/preferences/kavacha-appearance.js
+new file mode 100644
+index 0000000..249b85a
+--- /dev/null
++++ b/src/browser/components/preferences/kavacha-appearance.js
+@@ -0,0 +1,150 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++// Kavacha "Appearance & Themes" Settings pane (ROADMAP Phase 3 UX; ADR 0009).
++// about:preferences is the one settings home, so this pane is a THIN view over
++// the already-shipped engines: the theme picker drives KavachaThemeEngine (patch
++// 0023), the accent control writes the user-owned zen.theme.accent-color pref
++// (never touched by the theme engine — ADR 0008), and the new-tab toggle flips
++// zen.urlbar.replace-newtab. Everything applies live; the rich visual editor is
++// one click away in about:studio.
++
++"use strict";
++
++/* global ChromeUtils, Services, document, window, console, openTrustedLinkIn */
++
++const { KavachaThemeEngine } = ChromeUtils.importESModule(
++  "resource:///modules/KavachaThemeEngine.sys.mjs"
++);
++
++const kThemePref = "kavacha.theme.active";
++// The accent is user-owned and deliberately SEPARATE from the theme (ADR 0008).
++const kAccentPref = "zen.theme.accent-color";
++// true == floating search bar on new tabs; false == the Kavacha dashboard.
++const kNewtabFloatingPref = "zen.urlbar.replace-newtab";
++
++var gKavachaAppearance = {
++  _initted: false,
++
++  init() {
++    if (this._initted) {
++      return;
++    }
++    this._initted = true;
++
++    this._themeSelect = document.getElementById("kavachaAppearanceThemeSelect");
++    this._accentInput = document.getElementById("kavachaAppearanceAccentInput");
++    this._newtab = document.getElementById("kavachaAppearanceNewtabDashboard");
++
++    this._themeSelect.addEventListener("command", () => this._onThemeChange());
++    this._accentInput.addEventListener("change", () => this._onAccentChange());
++    document
++      .getElementById("kavachaAppearanceAccentReset")
++      .addEventListener("command", () => this._resetAccent());
++    this._newtab.addEventListener("command", () => this._onNewtabChange());
++    document
++      .getElementById("kavachaAppearanceStudioLink")
++      .addEventListener("command", () => this._openPage("about:studio"));
++
++    Services.prefs.addObserver(kThemePref, this);
++    Services.prefs.addObserver(kAccentPref, this);
++    Services.prefs.addObserver(kNewtabFloatingPref, this);
++    window.addEventListener("unload", () => this._uninit(), { once: true });
++
++    this._renderThemes();
++    this._renderAccent();
++    this._renderNewtab();
++  },
++
++  observe(subject, topic, data) {
++    if (topic !== "nsPref:changed") {
++      return;
++    }
++    if (data === kThemePref) {
++      this._renderThemes();
++    } else if (data === kAccentPref) {
++      this._renderAccent();
++    } else if (data === kNewtabFloatingPref) {
++      this._renderNewtab();
++    }
++  },
++
++  _uninit() {
++    Services.prefs.removeObserver(kThemePref, this);
++    Services.prefs.removeObserver(kAccentPref, this);
++    Services.prefs.removeObserver(kNewtabFloatingPref, this);
++  },
++
++  async _renderThemes() {
++    try {
++      const ids = await KavachaThemeEngine.listThemes();
++      const active = KavachaThemeEngine.activeThemeId;
++      const popup = this._themeSelect.menupopup;
++      while (popup.firstChild) {
++        popup.firstChild.remove();
++      }
++      for (const id of ids) {
++        let name = id;
++        try {
++          name = (await KavachaThemeEngine.resolveTheme(id)).name || id;
++        } catch (e) {
++          // Unreadable package — still offer its id so it can be selected.
++        }
++        const item = document.createXULElement("menuitem");
++        item.setAttribute("value", id);
++        item.setAttribute("label", name);
++        popup.appendChild(item);
++      }
++      this._themeSelect.value = active;
++    } catch (e) {
++      console.error("KavachaAppearance: failed to list themes", e);
++    }
++  },
++
++  async _onThemeChange() {
++    try {
++      await KavachaThemeEngine.setActiveTheme(this._themeSelect.value);
++    } catch (e) {
++      console.error("KavachaAppearance: setActiveTheme failed", e);
++    }
++  },
++
++  _renderAccent() {
++    const raw = Services.prefs.getStringPref(kAccentPref, "");
++    // <input type="color"> only accepts #rrggbb; system keywords (AccentColor)
++    // or gradients fall back to the input's own default swatch.
++    if (/^#[0-9a-fA-F]{6}$/.test(raw)) {
++      this._accentInput.value = raw.toLowerCase();
++    }
++  },
++
++  _onAccentChange() {
++    Services.prefs.setStringPref(kAccentPref, this._accentInput.value);
++  },
++
++  _resetAccent() {
++    // Clearing the pref hands the accent back to the system/default.
++    Services.prefs.clearUserPref(kAccentPref);
++  },
++
++  _renderNewtab() {
++    // The pref is "floating search"; the checkbox offers the inverse.
++    this._newtab.checked = !Services.prefs.getBoolPref(kNewtabFloatingPref, true);
++  },
++
++  _onNewtabChange() {
++    Services.prefs.setBoolPref(kNewtabFloatingPref, !this._newtab.checked);
++  },
++
++  _openPage(url) {
++    if (typeof openTrustedLinkIn === "function") {
++      openTrustedLinkIn(url, "tab");
++      return;
++    }
++    const win =
++      window.browsingContext?.topChromeWindow ||
++      Services.wm.getMostRecentBrowserWindow();
++    win?.switchToTabHavingURI(url, true);
++  },
++};
+diff --git a/src/browser/components/preferences/kavacha-customization.js b/src/browser/components/preferences/kavacha-customization.js
+new file mode 100644
+index 0000000..9092349
+--- /dev/null
++++ b/src/browser/components/preferences/kavacha-customization.js
+@@ -0,0 +1,133 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++// Kavacha "Customization" Settings pane (ROADMAP Phase 3 UX; ADR 0009).
++// about:preferences is the one settings home, so this pane is a THIN view over
++// the already-shipped engines: the layout controls drive KavachaLayoutEngine
++// (patch 0022) via getLayout()/setLayout(); the safe-mode checkbox drives
++// KavachaUserCSS (patch 0025). Everything applies live to every window. The
++// deep tools (visual CSS editor, marketplace, plugins) are one click away in
++// about:studio / about:marketplace / about:plugins.
++
++"use strict";
++
++/* global ChromeUtils, Services, document, window, console, openTrustedLinkIn */
++
++const { KavachaLayoutEngine } = ChromeUtils.importESModule(
++  "resource:///modules/KavachaLayoutEngine.sys.mjs"
++);
++const { KavachaUserCSS } = ChromeUtils.importESModule(
++  "resource:///modules/KavachaUserCSS.sys.mjs"
++);
++
++// Monotonic doorbell KavachaLayoutEngine bumps after every setLayout().
++const kLayoutRevisionPref = "kavacha.layout.revision";
++const kSafeModePref = "kavacha.usercss.safe-mode";
++
++var gKavachaCustomization = {
++  _initted: false,
++  // Guards the layout observer against echoing our own writes back into a render.
++  _writing: false,
++
++  init() {
++    if (this._initted) {
++      return;
++    }
++    this._initted = true;
++
++    this._tabStyle = document.getElementById("kavachaCustomizationTabStyle");
++    this._sidebar = document.getElementById("kavachaCustomizationSidebar");
++    this._density = document.getElementById("kavachaCustomizationDensity");
++    this._toolbar = document.getElementById("kavachaCustomizationToolbarVisible");
++    this._safeMode = document.getElementById("kavachaCustomizationSafeMode");
++
++    this._tabStyle.addEventListener("command", () =>
++      this._patchLayout({ tabStyle: this._tabStyle.value })
++    );
++    this._sidebar.addEventListener("command", () =>
++      this._patchLayout({ sidebar: this._sidebar.value })
++    );
++    this._density.addEventListener("command", () =>
++      this._patchLayout({ density: this._density.value })
++    );
++    this._toolbar.addEventListener("command", () =>
++      this._patchLayout({ toolbar: { visible: this._toolbar.checked } })
++    );
++    this._safeMode.addEventListener("command", () =>
++      KavachaUserCSS.setSafeMode(this._safeMode.checked)
++    );
++    document
++      .getElementById("kavachaCustomizationCssLink")
++      .addEventListener("command", () => this._openPage("about:studio"));
++    document
++      .getElementById("kavachaCustomizationMarketplaceLink")
++      .addEventListener("command", () => this._openPage("about:marketplace"));
++    document
++      .getElementById("kavachaCustomizationPluginsLink")
++      .addEventListener("command", () => this._openPage("about:plugins"));
++
++    Services.prefs.addObserver(kLayoutRevisionPref, this);
++    Services.prefs.addObserver(kSafeModePref, this);
++    window.addEventListener("unload", () => this._uninit(), { once: true });
++
++    this._renderLayout();
++    this._renderSafeMode();
++  },
++
++  observe(subject, topic, data) {
++    if (topic !== "nsPref:changed") {
++      return;
++    }
++    if (data === kLayoutRevisionPref && !this._writing) {
++      this._renderLayout();
++    } else if (data === kSafeModePref) {
++      this._renderSafeMode();
++    }
++  },
++
++  _uninit() {
++    Services.prefs.removeObserver(kLayoutRevisionPref, this);
++    Services.prefs.removeObserver(kSafeModePref, this);
++  },
++
++  async _renderLayout() {
++    try {
++      const layout = await KavachaLayoutEngine.getLayout();
++      this._tabStyle.value = layout.tabStyle;
++      this._sidebar.value = layout.sidebar;
++      this._density.value = layout.density;
++      this._toolbar.checked = layout.toolbar.visible;
++    } catch (e) {
++      console.error("KavachaCustomization: failed to read layout", e);
++    }
++  },
++
++  async _patchLayout(patch) {
++    // setLayout() bumps the revision pref synchronously; the guard keeps that
++    // notification from re-rendering (and clobbering) the control mid-edit.
++    this._writing = true;
++    try {
++      await KavachaLayoutEngine.setLayout(patch);
++    } catch (e) {
++      console.error("KavachaCustomization: setLayout failed", e);
++    } finally {
++      this._writing = false;
++    }
++  },
++
++  _renderSafeMode() {
++    this._safeMode.checked = KavachaUserCSS.isSafeMode;
++  },
++
++  _openPage(url) {
++    if (typeof openTrustedLinkIn === "function") {
++      openTrustedLinkIn(url, "tab");
++      return;
++    }
++    const win =
++      window.browsingContext?.topChromeWindow ||
++      Services.wm.getMostRecentBrowserWindow();
++    win?.switchToTabHavingURI(url, true);
++  },
++};
+diff --git a/src/browser/components/preferences/kavachaAppearance.inc.xhtml b/src/browser/components/preferences/kavachaAppearance.inc.xhtml
+new file mode 100644
+index 0000000..1fd25b3
+--- /dev/null
++++ b/src/browser/components/preferences/kavachaAppearance.inc.xhtml
+@@ -0,0 +1,48 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++<script type="text/javascript" src="chrome://browser/content/preferences/kavacha-appearance.js"/>
++<html:template id="template-paneKavachaAppearance">
++
++<hbox id="kavachaAppearanceCategory"
++      class="subcategory"
++      hidden="true"
++      data-category="paneKavachaAppearance">
++<html:h1 data-l10n-id="kavacha-appearance-title"/>
++</hbox>
++
++<groupbox id="kavachaAppearanceThemeGroup" data-category="paneKavachaAppearance" hidden="true" class="highlighting-group">
++  <label><html:h2 data-l10n-id="kavacha-appearance-theme-header"/></label>
++  <description class="description-deemphasized" data-l10n-id="kavacha-appearance-theme-description"/>
++  <hbox class="kavacha-appearance-row" align="center">
++    <label data-l10n-id="kavacha-appearance-theme-label" control="kavachaAppearanceThemeSelect"/>
++    <menulist id="kavachaAppearanceThemeSelect">
++      <menupopup/>
++    </menulist>
++  </hbox>
++</groupbox>
++
++<groupbox id="kavachaAppearanceAccentGroup" data-category="paneKavachaAppearance" hidden="true" class="highlighting-group">
++  <label><html:h2 data-l10n-id="kavacha-appearance-accent-header"/></label>
++  <description class="description-deemphasized" data-l10n-id="kavacha-appearance-accent-description"/>
++  <hbox class="kavacha-appearance-row" align="center">
++    <label data-l10n-id="kavacha-appearance-accent-label" control="kavachaAppearanceAccentInput"/>
++    <html:input type="color" id="kavachaAppearanceAccentInput" class="kavacha-appearance-color"/>
++    <button id="kavachaAppearanceAccentReset" data-l10n-id="kavacha-appearance-accent-system"/>
++  </hbox>
++</groupbox>
++
++<groupbox id="kavachaAppearanceNewtabGroup" data-category="paneKavachaAppearance" hidden="true" class="highlighting-group">
++  <label><html:h2 data-l10n-id="kavacha-appearance-newtab-header"/></label>
++  <checkbox id="kavachaAppearanceNewtabDashboard" data-l10n-id="kavacha-appearance-newtab-dashboard"/>
++  <description class="description-deemphasized" data-l10n-id="kavacha-appearance-newtab-description"/>
++</groupbox>
++
++<groupbox id="kavachaAppearanceStudioGroup" data-category="paneKavachaAppearance" hidden="true" class="highlighting-group">
++  <hbox pack="start">
++    <button id="kavachaAppearanceStudioLink" class="kavacha-appearance-cta" data-l10n-id="kavacha-appearance-studio-link"/>
++  </hbox>
++</groupbox>
++
++</html:template>
+diff --git a/src/browser/components/preferences/kavachaCustomization.inc.xhtml b/src/browser/components/preferences/kavachaCustomization.inc.xhtml
+new file mode 100644
+index 0000000..8cf7eb9
+--- /dev/null
++++ b/src/browser/components/preferences/kavachaCustomization.inc.xhtml
+@@ -0,0 +1,68 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++<script type="text/javascript" src="chrome://browser/content/preferences/kavacha-customization.js"/>
++<html:template id="template-paneKavachaCustomization">
++
++<hbox id="kavachaCustomizationCategory"
++      class="subcategory"
++      hidden="true"
++      data-category="paneKavachaCustomization">
++<html:h1 data-l10n-id="kavacha-customization-title"/>
++</hbox>
++
++<groupbox id="kavachaCustomizationLayoutGroup" data-category="paneKavachaCustomization" hidden="true" class="highlighting-group">
++  <label><html:h2 data-l10n-id="kavacha-customization-layout-header"/></label>
++  <description class="description-deemphasized" data-l10n-id="kavacha-customization-layout-description"/>
++  <hbox class="kavacha-customization-row" align="center">
++    <label data-l10n-id="kavacha-customization-tabstyle-label" control="kavachaCustomizationTabStyle"/>
++    <menulist id="kavachaCustomizationTabStyle">
++      <menupopup>
++        <menuitem value="horizontal" data-l10n-id="kavacha-customization-tabstyle-horizontal"/>
++        <menuitem value="vertical" data-l10n-id="kavacha-customization-tabstyle-vertical"/>
++      </menupopup>
++    </menulist>
++  </hbox>
++  <hbox class="kavacha-customization-row" align="center">
++    <label data-l10n-id="kavacha-customization-sidebar-label" control="kavachaCustomizationSidebar"/>
++    <menulist id="kavachaCustomizationSidebar">
++      <menupopup>
++        <menuitem value="left" data-l10n-id="kavacha-customization-sidebar-left"/>
++        <menuitem value="right" data-l10n-id="kavacha-customization-sidebar-right"/>
++        <menuitem value="hidden" data-l10n-id="kavacha-customization-sidebar-hidden"/>
++      </menupopup>
++    </menulist>
++  </hbox>
++  <hbox class="kavacha-customization-row" align="center">
++    <label data-l10n-id="kavacha-customization-density-label" control="kavachaCustomizationDensity"/>
++    <menulist id="kavachaCustomizationDensity">
++      <menupopup>
++        <menuitem value="compact" data-l10n-id="kavacha-customization-density-compact"/>
++        <menuitem value="normal" data-l10n-id="kavacha-customization-density-normal"/>
++        <menuitem value="comfortable" data-l10n-id="kavacha-customization-density-comfortable"/>
++      </menupopup>
++    </menulist>
++  </hbox>
++  <checkbox id="kavachaCustomizationToolbarVisible" data-l10n-id="kavacha-customization-toolbar-visible"/>
++</groupbox>
++
++<groupbox id="kavachaCustomizationAdvancedGroup" data-category="paneKavachaCustomization" hidden="true" class="highlighting-group">
++  <label><html:h2 data-l10n-id="kavacha-customization-advanced-header"/></label>
++  <description class="description-deemphasized" data-l10n-id="kavacha-customization-advanced-description"/>
++  <checkbox id="kavachaCustomizationSafeMode" data-l10n-id="kavacha-customization-safemode"/>
++  <hbox pack="start">
++    <button id="kavachaCustomizationCssLink" class="kavacha-customization-cta" data-l10n-id="kavacha-customization-css-link"/>
++  </hbox>
++</groupbox>
++
++<groupbox id="kavachaCustomizationMoreGroup" data-category="paneKavachaCustomization" hidden="true" class="highlighting-group">
++  <label><html:h2 data-l10n-id="kavacha-customization-more-header"/></label>
++  <description class="description-deemphasized" data-l10n-id="kavacha-customization-more-description"/>
++  <hbox class="kavacha-customization-row" pack="start">
++    <button id="kavachaCustomizationMarketplaceLink" class="kavacha-customization-cta" data-l10n-id="kavacha-customization-marketplace-link"/>
++    <button id="kavachaCustomizationPluginsLink" class="kavacha-customization-cta" data-l10n-id="kavacha-customization-plugins-link"/>
++  </hbox>
++</groupbox>
++
++</html:template>
+diff --git a/src/browser/components/preferences/preferences-js.patch b/src/browser/components/preferences/preferences-js.patch
+index f14cc38..5b02927 100644
+--- a/src/browser/components/preferences/preferences-js.patch
++++ b/src/browser/components/preferences/preferences-js.patch
+@@ -28,7 +28,7 @@ index 57add34d876fb885275f1147209c6fbeee367a7c..be0ab43b299317c0022a5e719f47a070
+          // Replace the template element with the nodes inside of it.
+          template.replaceWith(template.content);
+  
+-@@ -522,6 +525,11 @@ function init_all() {
++@@ -522,6 +525,13 @@ function init_all() {
+    register_module("paneSearch", gSearchPane);
+    register_module("panePrivacy", gPrivacyPane);
+    register_module("paneContainers", gContainersPane);
+@@ -37,6 +37,8 @@ index 57add34d876fb885275f1147209c6fbeee367a7c..be0ab43b299317c0022a5e719f47a070
+ +  register_module("paneZenCKS", gZenCKSSettings);
+ +  register_module("paneZenMarketplace", gZenMarketplaceManager);
+ +  register_module("paneKavachaPrivacy", gKavachaPrivacyCenter);
+++  register_module("paneKavachaAppearance", gKavachaAppearance);
+++  register_module("paneKavachaCustomization", gKavachaCustomization);
+  
+    // Restore the cached Firefox Labs nav button visibility so it shows
+    // immediately when recipes are expected to be available, before
+diff --git a/src/browser/components/preferences/preferences-xhtml.patch b/src/browser/components/preferences/preferences-xhtml.patch
+index 6e7240f..c15ddb4 100644
+--- a/src/browser/components/preferences/preferences-xhtml.patch
++++ b/src/browser/components/preferences/preferences-xhtml.patch
+@@ -11,7 +11,7 @@ index 9760a4a35b0b3bd21edec07a70c10bccc23e4a09..9f22146c259ea5b45005be660bfcb9ea
+    <link rel="localization" href="branding/brand.ftl"/>
+    <link rel="localization" href="browser/browser.ftl"/>
+      <!-- Used by fontbuilder.js -->
+-@@ -121,6 +123,31 @@
++@@ -121,6 +123,41 @@
+          iconsrc="chrome://browser/skin/preferences/category-general.svg"
+          data-l10n-id="pane-general-title">
+        </html:moz-page-nav-button>
+@@ -39,11 +39,21 @@ index 9760a4a35b0b3bd21edec07a70c10bccc23e4a09..9f22146c259ea5b45005be660bfcb9ea
+ +        view="paneKavachaPrivacy"
+ +        iconsrc="chrome://browser/skin/zen-icons/tracking-protection.svg"
+ +        data-l10n-id="pane-kavacha-privacy-title">
+++      </html:moz-page-nav-button>
+++      <html:moz-page-nav-button id="category-kavacha-appearance"
+++        view="paneKavachaAppearance"
+++        iconsrc="chrome://browser/skin/zen-icons/paintbrush.svg"
+++        data-l10n-id="pane-kavacha-appearance-title">
+++      </html:moz-page-nav-button>
+++      <html:moz-page-nav-button id="category-kavacha-customization"
+++        view="paneKavachaCustomization"
+++        iconsrc="chrome://browser/skin/zen-icons/sliders.svg"
+++        data-l10n-id="pane-kavacha-customization-title">
+ +      </html:moz-page-nav-button>
+        <html:moz-page-nav-button id="category-sync"
+          hidden="true"
+          view="paneSync"
+-@@ -253,6 +280,11 @@
++@@ -253,6 +290,13 @@
+  #include containers.inc.xhtml
+  #include sync.inc.xhtml
+  #include moreFromMozilla.inc.xhtml
+@@ -52,6 +62,8 @@ index 9760a4a35b0b3bd21edec07a70c10bccc23e4a09..9f22146c259ea5b45005be660bfcb9ea
+ +#include zenTabsManagement.inc.xhtml
+ +#include zenMarketplace.inc.xhtml
+ +#include kavachaPrivacyCenter.inc.xhtml
+++#include kavachaAppearance.inc.xhtml
+++#include kavachaCustomization.inc.xhtml
+          </vbox>
+        </vbox>
+      </vbox>
+diff --git a/src/browser/themes/shared/preferences/zen-preferences.css b/src/browser/themes/shared/preferences/zen-preferences.css
+index 3d0e0e3..09891ef 100644
+--- a/src/browser/themes/shared/preferences/zen-preferences.css
++++ b/src/browser/themes/shared/preferences/zen-preferences.css
+@@ -564,3 +564,36 @@ html|setting-group:is([data-subcategory="layout"], [groupid="support"], [groupid
+ #kavachaPrivacyClearStats {
+   margin-top: 12px;
+ }
++
++/* Kavacha Appearance & Themes + Customization panes (patch 0031) */
++.kavacha-appearance-row,
++.kavacha-customization-row {
++  gap: 12px;
++  padding-block: 6px;
++}
++
++.kavacha-appearance-row > label,
++.kavacha-customization-row > label {
++  min-width: 140px;
++}
++
++#kavachaAppearanceThemeSelect,
++#kavachaCustomizationTabStyle,
++#kavachaCustomizationSidebar,
++#kavachaCustomizationDensity {
++  min-width: 200px;
++}
++
++.kavacha-appearance-color {
++  width: 48px;
++  height: 28px;
++  padding: 0;
++  border: 1px solid var(--zen-colors-border);
++  border-radius: 6px;
++  background: transparent;
++}
++
++.kavacha-appearance-cta,
++.kavacha-customization-cta {
++  font-weight: 600;
++}

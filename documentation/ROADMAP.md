@@ -220,14 +220,53 @@ branch relationships become early edges of the Phase 6 knowledge graph.
       + "Toggle Custom CSS Safe Mode" palette command disable all custom CSS so a bad
       rule can never brick the UI. Ships as the Advanced tab in about:studio. Same
       build-verify gate. Marketplace is the next Phase-3 brick.
-- [ ] **Component marketplace** (supersedes theme-only marketplace): themes, layouts,
-      sidebar widgets, tool panels; bundles like "Research Mode"
-- [ ] **Command registry** on Zen's palette (Cmd+K): every Kavacha feature exposes
-      commands — navigation / organization / productivity / automation
-      (see [PLATFORM_PLAN.md](PLATFORM_PLAN.md)). Started 2026-07-12: template
-      creation commands (patch `0007-command-registry-templates.patch`)
-- [ ] Kavacha SDK + plugin permission model (workspaces/tabs/notes/commands behind
-      explicit per-plugin permissions; never passwords or private data)
+- [x] **Command registry** on Zen's palette (Cmd+K): every Kavacha feature exposes
+      commands — navigation / organization / productivity / appearance / privacy,
+      with automation reserved for Phase 7 (see [PLATFORM_PLAN.md](PLATFORM_PLAN.md)).
+      Started 2026-07-12 (patch `0007`); infrastructure in patch `0018`.
+      **Completed** patch `0027-command-registry-complete.patch` (2026-07-17):
+      domain-grouped palette display (0018's deferred enhancement, done at the
+      data layer) + the plugin/marketplace surface — `register(command, {source})`
+      with validation/dedup, `unregister`/`unregisterBySource`, a live-removal
+      sink so revoked commands leave the palette, `getByDomain`/`has`/capability
+      metadata, and `rawLabel` for runtime (plugin/marketplace) commands that
+      can't add `.ftl` keys. No new feature commands — the registry mechanism
+      itself. Build/Marionette verification pending (authored without a local
+      Zen checkout).
+- [x] **Component marketplace** (supersedes theme-only marketplace; patch
+      `0028-component-marketplace.patch`, 2026-07-17; ADR 0010): `about:marketplace`
+      — an offline-first bundled catalog of themes / layouts / bundles ("Research
+      Mode") that installs into the profile and applies via the Layout + Theme
+      engines (no new application path); each installed component registers palette
+      commands through the patch-0027 registry (source-attributed, revoked on
+      uninstall). Sidebar widgets / tool panels are reserved component types
+      pending a widget host; remote install + ratings + auto-update land with
+      Kavacha accounts (Phase 5). Build/Marionette verification pending.
+- [x] Kavacha SDK + plugin permission model (patch `0029-kavacha-sdk-plugins.patch`,
+      2026-07-17; ADR 0011): a permissioned SDK exposing only
+      workspaces / tabs / notes / commands — never passwords or private data —
+      behind explicit per-plugin, user-granted permissions; `KavachaPluginManager`
+      sideloads plugins from the profile and `about:plugins` manages grants;
+      plugin commands register through the patch-0027 registry (source `plugin:<id>`)
+      and are revoked on disable. Compartment isolation is a hardening follow-up;
+      remote plugin distribution via the marketplace is a later integration.
+      Build/Marionette verification pending.
+- [x] **Unified settings menu + discoverability** (patches `0030`–`0032`, 2026-07-17):
+      closes the "every feature is hidden in Cmd+K" gap that made the browser feel
+      empty. `0030` adds a top-right ⚙ **menu button** whose panel is *generated from
+      the command registry* (patch 0027) — every feature plus a Settings row into
+      about:preferences, so newly registered features (incl. plugin/marketplace
+      commands) appear automatically. `0031` makes **about:preferences the single
+      settings home** with **Appearance & Themes** and **Customization** panes — thin
+      views over the Theme / Layout / UserCSS engines with links to about:studio /
+      marketplace / plugins (via the patch-0021 pane recipe). `0032` adds a
+      **Workspaces** pane, a **Restore Archived Space** command with a picker (closes
+      the 0018/0027 gap; uses `gZenWorkspaces.unarchiveWorkspace`), and first-run
+      pointers to the menu (dashboard ⚙ link + welcome closing line). Build/Marionette
+      verification pending. Follow-ups noted while building: a grouped palette-result
+      renderer (0027 already stamps `group` labels); per-space context-menu entries
+      for snapshot/branch/timeline; a first-launch coach-mark on the ⚙ button; and a
+      dashboard contrast pass (low-opacity links likely below WCAG AA).
 
 ## Phase 4 — Privacy Center (Months 6–8) — Y1
 

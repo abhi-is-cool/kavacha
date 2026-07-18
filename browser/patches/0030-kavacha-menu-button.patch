@@ -1,0 +1,392 @@
+# Patch 0030 — Kavacha top-right menu button + registry-driven panel
+# (ROADMAP Phase 3 UX; discoverability).
+#
+# WHAT: a visible gear button (#kavacha-menu-button) prepended into the
+# top-right toolbar cluster (#zen-sidebar-top-buttons) that opens an arrow
+# panel (#kavacha-menu-panel) listing everything Kavacha can do. The panel is
+# GENERATED FROM THE COMMAND REGISTRY (patch 0027): it iterates
+# KavachaCommandDomainOrder and, per domain, emits KavachaCommandRegistry
+# .getByDomain(domain) as rows under a localized domain header, skipping any
+# command whose isAvailable(window) is false. A "Settings" row at the top opens
+# about:preferences — the full settings surface. KavachaMenu.sys.mjs is a
+# process singleton (init) with per-window UI (setupWindow); ZenStartup calls
+# both per window, mirroring the layout/theme engines (ADR 0008).
+#
+# WHY: until now every Kavacha feature was reachable ONLY through the Cmd+K
+# command palette — nothing surfaced them in the chrome, so a user who never
+# learned the shortcut never discovered them. The panel closes that gap. Because
+# it is generated from the registry rather than a hand-maintained list, it never
+# drifts: features added later, and the marketplace's (patch 0028) / plugins'
+# (patch 0029) runtime commands, appear automatically. It is rebuilt on every
+# popupshowing so runtime-registered and availability-gated commands stay live.
+# The quick-toggles (Theme switch, Tab layout, Density, New-tab style) are
+# already APPEARANCE registry commands, so they surface in the generated list —
+# no duplicate strip. This does NOT add a preferences pane (that is patch 0031)
+# and does NOT edit KavachaCommandRegistry (it only READS it).
+#
+# NOT BUILD-VERIFIED: authored against the post-0029 tree without a build. Adds
+# src/zen/common/sys/KavachaMenu.sys.mjs and
+# src/zen/common/styles/kavacha-menu.inc.css; touches
+# src/zen/common/modules/ZenStartup.mjs, src/zen/common/moz.build,
+# src/zen/common/styles/zen-theme.css, and
+# locales/en-US/browser/browser/zen-command-palette.ftl. Run
+# `git -C browser/zen-upstream apply --check` + a Marionette pass (click the
+# gear, confirm the panel lists Settings then every domain section, invoke a
+# command, confirm the panel gains a marketplace/plugin command at runtime)
+# before marking the ROADMAP item verified. Applies on top of 0029.
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -62,3 +62,7 @@
+ kavacha-command-domain-appearance = Appearance
+ kavacha-command-domain-privacy = Privacy
+ kavacha-command-domain-automation = Automation
++
++# Kavacha menu button + panel (patch 0030)
++kavacha-menu-button = Menu
++kavacha-menu-settings = Settings
+diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
+--- a/src/zen/common/modules/ZenStartup.mjs
++++ b/src/zen/common/modules/ZenStartup.mjs
+@@ -182,6 +182,14 @@
+       ChromeUtils.importESModule(
+         "resource:///modules/KavachaPluginManager.sys.mjs"
+       ).KavachaPluginManager.init();
++      // Kavacha: the top-right menu button + registry-driven panel, so every
++      // Kavacha feature is discoverable without the Cmd+K palette (process
++      // singleton + per-window UI).
++      const kavachaMenu = ChromeUtils.importESModule(
++        "resource:///modules/KavachaMenu.sys.mjs"
++      ).KavachaMenu;
++      kavachaMenu.init();
++      kavachaMenu.setupWindow(window);
+       this.isReady = true;
+       this.promiseInitializedResolve();
+       delete this.promiseInitializedResolve;
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -6,5 +6,6 @@ EXTRA_JS_MODULES += [
+   "sys/KavachaCommandRegistry.sys.mjs",
+   "sys/KavachaLayoutEngine.sys.mjs",
+   "sys/KavachaMarketplace.sys.mjs",
++  "sys/KavachaMenu.sys.mjs",
+   "sys/KavachaNewTab.sys.mjs",
+   "sys/KavachaPlacesAttribution.sys.mjs",
+diff --git a/src/zen/common/styles/zen-theme.css b/src/zen/common/styles/zen-theme.css
+--- a/src/zen/common/styles/zen-theme.css
++++ b/src/zen/common/styles/zen-theme.css
+@@ -348,3 +348,4 @@
+ 
+ %include kavacha-layout.inc.css
+ %include kavacha-polish.inc.css
++%include kavacha-menu.inc.css
+diff --git a/src/zen/common/sys/KavachaMenu.sys.mjs b/src/zen/common/sys/KavachaMenu.sys.mjs
+new file mode 100644
+index 0000000..c3a678d
+--- /dev/null
++++ b/src/zen/common/sys/KavachaMenu.sys.mjs
+@@ -0,0 +1,215 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha menu button + registry-driven panel (ROADMAP Phase 3 UX;
++// discoverability). Until now every Kavacha feature was reachable ONLY through
++// the Cmd+K command palette (ZenUBGlobalActions) — nothing surfaced them in the
++// chrome, so a user who never learned the shortcut never found them. This adds
++// a visible gear button to the top-right toolbar cluster
++// (#zen-sidebar-top-buttons) that opens a panel listing everything.
++//
++// The panel is GENERATED FROM THE COMMAND REGISTRY (patch 0027), not a
++// hand-maintained list, so it never drifts: it iterates
++// KavachaCommandDomainOrder and, per domain, emits KavachaCommandRegistry
++// .getByDomain(domain). Anything a future feature, the marketplace (patch 0028)
++// or a plugin (patch 0029) registers appears here automatically, and anything a
++// command's isAvailable() gates out is skipped. It is rebuilt on every
++// popupshowing so runtime-registered and availability-gated commands stay live.
++//
++// The panel also carries a "Settings" row that opens about:preferences — the
++// full settings surface — so the button is the single discoverable entry point
++// to both Kavacha's features and Firefox/Zen preferences.
++//
++// A process singleton (init) with per-window UI (setupWindow); ZenStartup calls
++// both per window, mirroring the layout/theme engines (ADR 0008).
++
++import {
++  KavachaCommandRegistry,
++  KavachaCommandDomainOrder,
++  KavachaCommandDomainLabel,
++} from "resource:///modules/KavachaCommandRegistry.sys.mjs";
++
++const lazy = {};
++
++// Same Fluent surface the palette uses (ZenUBGlobalActions): a sync-capable
++// Localization over the command-palette strings. Built-in command labels and
++// the domain headers resolve through it; runtime commands carry a literal
++// rawLabel instead (patch 0027).
++ChromeUtils.defineLazyGetter(lazy, "l10n", () => {
++  return new Localization(["browser/zen-command-palette.ftl"], true);
++});
++
++const kSettingsIcon = "chrome://browser/skin/zen-icons/settings.svg";
++
++function _label(id, fallback) {
++  try {
++    return lazy.l10n.formatValueSync(id) || fallback;
++  } catch (e) {
++    return fallback;
++  }
++}
++
++export const KavachaMenu = {
++  _initialized: false,
++
++  /** Process-singleton init. Idempotent; per-window UI is setupWindow(). */
++  init() {
++    if (this._initialized) {
++      return;
++    }
++    this._initialized = true;
++  },
++
++  /**
++   * Build this window's UI: the toolbar button, the panel, and the wiring
++   * between them. Idempotent per window (guarded on the button id) so a second
++   * call — e.g. a re-init — never double-injects.
++   */
++  setupWindow(win) {
++    const doc = win.document;
++    if (!doc || doc.getElementById("kavacha-menu-button")) {
++      return;
++    }
++    this._injectPanel(win);
++    this._injectButton(win);
++  },
++
++  // Leftmost/most-prominent button in the top-right cluster. Prepends into
++  // #zen-sidebar-top-buttons (where ZenUIManager also relocates the app-menu /
++  // extensions buttons in single-toolbar mode). removable="false" keeps it put.
++  _injectButton(win) {
++    const doc = win.document;
++    const cluster = doc.getElementById("zen-sidebar-top-buttons");
++    if (!cluster) {
++      return;
++    }
++    const frag = win.MozXULElement.parseXULToFragment(`
++      <toolbarbutton id="kavacha-menu-button"
++        class="toolbarbutton-1 chromeclass-toolbar-additional"
++        removable="false"
++        skipintoolbarset="true" />
++    `);
++    cluster.prepend(frag);
++    const button = doc.getElementById("kavacha-menu-button");
++    const label = _label("kavacha-menu-button", "Menu");
++    button.setAttribute("label", label);
++    button.setAttribute("tooltiptext", label);
++    button.addEventListener("command", () => this._openPanel(win));
++  },
++
++  // The panel lives in the window's mainPopupSet. Its content is (re)built on
++  // every popupshowing so runtime-registered commands and per-window
++  // availability stay live.
++  _injectPanel(win) {
++    const doc = win.document;
++    const popupSet = doc.getElementById("mainPopupSet");
++    if (!popupSet) {
++      return;
++    }
++    const frag = win.MozXULElement.parseXULToFragment(`
++      <panel id="kavacha-menu-panel"
++        type="arrow"
++        orient="vertical"
++        role="menu"
++        aria-label="${_label("kavacha-menu-button", "Menu")}" />
++    `);
++    popupSet.appendChild(frag);
++    const panel = doc.getElementById("kavacha-menu-panel");
++    panel.addEventListener("popupshowing", event => {
++      if (event.target === panel) {
++        this._buildPanel(win, panel);
++      }
++    });
++  },
++
++  _openPanel(win) {
++    const doc = win.document;
++    const button = doc.getElementById("kavacha-menu-button");
++    const panel = doc.getElementById("kavacha-menu-panel");
++    if (button && panel) {
++      panel.openPopup(button, "bottomright topright", 0, 0, false, false);
++    }
++  },
++
++  // Clear + rebuild the panel from the live registry every show.
++  _buildPanel(win, panel) {
++    const doc = win.document;
++    while (panel.firstChild) {
++      panel.firstChild.remove();
++    }
++
++    // Full settings surface at the top: opens about:preferences.
++    panel.appendChild(
++      this._makeItem(win, {
++        label: _label("kavacha-menu-settings", "Settings"),
++        icon: kSettingsIcon,
++        onCommand: () => {
++          panel.hidePopup();
++          win.openPreferences();
++        },
++      })
++    );
++
++    // Generated sections: one per non-empty domain, in the registry's declared
++    // order. Every Kavacha feature (plus marketplace/plugin runtime commands)
++    // reaches the panel here — nothing is hand-listed.
++    for (const domain of KavachaCommandDomainOrder) {
++      const commands = KavachaCommandRegistry.getByDomain(domain).filter(
++        cmd => !cmd.isAvailable || cmd.isAvailable(win)
++      );
++      if (!commands.length) {
++        continue;
++      }
++      const headerId = KavachaCommandDomainLabel[domain];
++      const header = doc.createXULElement("label");
++      header.className = "kavacha-menu-header";
++      header.setAttribute(
++        "value",
++        headerId ? _label(headerId, domain) : domain
++      );
++      panel.appendChild(header);
++      for (const cmd of commands) {
++        panel.appendChild(
++          this._makeItem(win, {
++            label: cmd.rawLabel ?? _label(cmd.l10nId, cmd.l10nId),
++            icon: cmd.icon,
++            onCommand: () => {
++              panel.hidePopup();
++              this._invoke(win, cmd);
++            },
++          })
++        );
++      }
++    }
++  },
++
++  _makeItem(win, { label, icon, onCommand }) {
++    const item = win.document.createXULElement("toolbarbutton");
++    item.className = "kavacha-menu-item subviewbutton";
++    item.setAttribute("label", label ?? "");
++    if (icon) {
++      item.setAttribute("image", icon);
++    }
++    item.addEventListener("command", onCommand);
++    return item;
++  },
++
++  // A registry command's action is polymorphic (patch 0027): a function
++  // command(window), or a string command/commandId naming a <command> node to
++  // doCommand(). Handle both, and never let one command's failure break the
++  // panel.
++  _invoke(win, cmd) {
++    try {
++      if (typeof cmd.command === "function") {
++        cmd.command(win);
++      } else if (typeof cmd.command === "string") {
++        win.document.getElementById(cmd.command)?.doCommand();
++      } else if (typeof cmd.commandId === "string") {
++        win.document.getElementById(cmd.commandId)?.doCommand();
++      }
++    } catch (e) {
++      console.error("KavachaMenu: command failed", cmd?.l10nId, e);
++    }
++  },
++};
+diff --git a/src/zen/common/styles/kavacha-menu.inc.css b/src/zen/common/styles/kavacha-menu.inc.css
+new file mode 100644
+index 0000000..f0e0068
+--- /dev/null
++++ b/src/zen/common/styles/kavacha-menu.inc.css
+@@ -0,0 +1,82 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* ==========================================================================
++   Kavacha menu button + registry-driven panel (patch 0030). Styles the gear
++   button in the top-right cluster (#kavacha-menu-button) and the panel it
++   opens (#kavacha-menu-panel). %include'd from zen-theme.css after the other
++   Kavacha layers.
++
++   Colors use the --kavacha-* surface tokens (patch 0016 bakes the Midnight
++   floor; the theme engine, patch 0023, re-tints them live) with plain
++   fallbacks, so the panel follows the active theme. The XUL panel chrome is
++   themed by pointing --panel-background / --panel-border-color at those tokens.
++   ========================================================================== */
++
++/* --- The toolbar button: gear icon --------------------------------------- */
++#kavacha-menu-button {
++  list-style-image: url("chrome://browser/skin/zen-icons/settings.svg");
++}
++
++/* --- The panel ----------------------------------------------------------- */
++#kavacha-menu-panel {
++  --panel-background: var(--kavacha-surface-elevated, #1d1930);
++  --panel-border-color: var(--kavacha-border, #2e2846);
++  --panel-color: var(--kavacha-text-primary, #edeaf7);
++  min-width: 280px;
++  padding: 6px;
++}
++
++/* Small, dim, uppercase domain headers. */
++.kavacha-menu-header {
++  margin: 8px 10px 2px;
++  font-size: 11px;
++  font-weight: 700;
++  text-transform: uppercase;
++  letter-spacing: 0.04em;
++  color: var(--kavacha-text-secondary, #a79fc4);
++}
++
++.kavacha-menu-header:first-child {
++  margin-top: 2px;
++}
++
++/* Rows: icon + label, full-width, subtle theme-aware hover. */
++.kavacha-menu-item {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  width: 100%;
++  margin: 0;
++  padding: 8px 10px;
++  border-radius: 8px;
++  color: var(--kavacha-text-primary, #edeaf7);
++  background: transparent;
++  -moz-box-align: center;
++}
++
++.kavacha-menu-item > .toolbarbutton-icon {
++  width: 16px;
++  height: 16px;
++  margin-inline-end: 0;
++}
++
++.kavacha-menu-item > .toolbarbutton-text {
++  text-align: start;
++}
++
++.kavacha-menu-item:hover,
++.kavacha-menu-item:focus {
++  background-color: var(
++    --kavacha-tab-hover-background,
++    color-mix(in srgb, currentColor 10%, transparent)
++  );
++}
++
++.kavacha-menu-item:active {
++  background-color: var(
++    --kavacha-tab-active-background,
++    color-mix(in srgb, currentColor 16%, transparent)
++  );
++}

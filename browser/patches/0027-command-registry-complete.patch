@@ -1,0 +1,329 @@
+# Patch 0027 — Complete the Kavacha command registry: domain-grouped palette
+# display + the plugin/marketplace surface (ROADMAP Phase 3 "Command registry";
+# PLATFORM_PLAN.md § "Command registry").
+#
+# The registry infrastructure landed in patch 0018 and every shipped Kavacha
+# feature already registers a command (0018/0020/0021/0022/0023/0024/0025).
+# 0018 explicitly deferred two things and named the registry as "the surface
+# plugins extend" without yet building that surface; 0027 finishes both:
+#
+#   1. Domain-grouped display. all() now returns commands clustered by a
+#      declared domain order (KavachaCommandDomainOrder), so related commands
+#      sit together in Cmd+K instead of interleaving. Each palette payload also
+#      carries a localized `group` label (kavacha-command-domain-*), ready for a
+#      grouped result renderer. A reserved AUTOMATION domain is added for the
+#      Phase 7 workflow commands (and for plugins) so the ordering already knows
+#      where they go.
+#
+#   2. The plugin/marketplace surface. register() gains source attribution +
+#      validation + duplicate rejection; unregister()/unregisterBySource() let a
+#      disabled plugin or uninstalled marketplace component drop every command it
+#      added, and a new onUnregister sink removes those from the LIVE palette
+#      (mirroring the existing onRegister add). getByDomain()/has()/domainLabel()
+#      and a KavachaCommandCapability enum round out the API the marketplace
+#      (patch 0028) and the SDK + permission model (patch 0029) build on.
+#
+# No new feature commands and no engine files — this completes the registry
+# mechanism itself. Restore-archived-space stays menu-driven (0018's note: it
+# needs a picker and has no clean single-call opener).
+#
+# NOT BUILD-VERIFIED: authored without a local Zen checkout; the
+# KavachaCommandRegistry.sys.mjs rewrite is exact (its pre-image blob matches the
+# post-0025 tree) but the ZenUBGlobalActions.sys.mjs and .ftl hunks are
+# reconstructed against the post-0026 tree. Run `git -C browser/zen-upstream
+# apply --check` + a Marionette pass (open Cmd+K, confirm commands cluster by
+# domain; register/unregister a runtime command and watch the palette) before
+# marking the ROADMAP item verified. Touches: zen-command-palette.ftl,
+# KavachaCommandRegistry.sys.mjs, ZenUBGlobalActions.sys.mjs. Applies on top of
+# 0026.
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index e5cefd4..b7a1c02 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -54,3 +54,11 @@ kavacha-action-reload-layout = Reload Layout from File
+ kavacha-action-switch-theme = Switch Theme
+ kavacha-action-open-studio = Open Customization Studio
+ kavacha-action-usercss-safe-mode = Toggle Custom CSS Safe Mode
++
++# Command palette — domain group headers (patch 0027)
++kavacha-command-domain-navigation = Navigation
++kavacha-command-domain-organization = Organization
++kavacha-command-domain-productivity = Productivity
++kavacha-command-domain-appearance = Appearance
++kavacha-command-domain-privacy = Privacy
++kavacha-command-domain-automation = Automation
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+index f322e4d..d93f59f 100644
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -4,31 +4,75 @@
+ 
+ // Kavacha command registry (ROADMAP Phase 3; PLATFORM_PLAN.md § "Command
+ // registry"). Every Kavacha feature exposes itself here as a Cmd+K command,
+-// organized by domain, and it is the surface plugins will extend.
++// organized by domain, and it is the surface plugins and the marketplace
++// extend.
+ //
+ // The palette (ZenUBGlobalActions) spreads all() into its action list at
+-// import and binds a live sink so register() calls made at runtime — by
+-// late-initializing features or future plugins — appear immediately.
++// import and binds live sinks so register()/unregister() calls made at runtime
++// — by late-initializing features, marketplace components, or plugins — appear
++// in and disappear from the live palette immediately.
+ //
+ // A command is: { l10nId, command(window)|"commandId", icon, domain,
+-// isAvailable?(window) }. Domain is metadata (grouped display is a later
+-// palette enhancement); the l10nId keys browser/zen-command-palette.ftl.
++// isAvailable?(window), capability? }. `domain` drives palette grouping (see
++// KavachaCommandDomainOrder / KavachaCommandDomainLabel); `capability` is
++// metadata the plugin permission model reads (built-ins leave it unset — they
++// are trusted). The l10nId keys browser/zen-command-palette.ftl; a domain's
++// group-header label keys it too (kavacha-command-domain-*).
+ 
+-export const KavachaCommandDomain = {
++export const KavachaCommandDomain = Object.freeze({
+   NAVIGATION: "navigation",
+   ORGANIZATION: "organization",
+   PRODUCTIVITY: "productivity",
+   APPEARANCE: "appearance",
+   PRIVACY: "privacy",
+-};
++  // Reserved for Phase 7 workflow/automation commands. No built-in targets it
++  // yet; it exists now so the marketplace and plugins have a stable home and
++  // the palette grouping already knows where automation commands sort.
++  AUTOMATION: "automation",
++});
++
++// Palette display order + localized group-header labels. ZenUBGlobalActions
++// reads these to cluster Kavacha commands by domain (closing patch 0018's
++// deferred "domain-grouped display") and to stamp a `group` label on each
++// action's payload. Domains not listed sort last.
++export const KavachaCommandDomainOrder = [
++  KavachaCommandDomain.NAVIGATION,
++  KavachaCommandDomain.ORGANIZATION,
++  KavachaCommandDomain.PRODUCTIVITY,
++  KavachaCommandDomain.APPEARANCE,
++  KavachaCommandDomain.PRIVACY,
++  KavachaCommandDomain.AUTOMATION,
++];
++
++export const KavachaCommandDomainLabel = Object.freeze({
++  [KavachaCommandDomain.NAVIGATION]: "kavacha-command-domain-navigation",
++  [KavachaCommandDomain.ORGANIZATION]: "kavacha-command-domain-organization",
++  [KavachaCommandDomain.PRODUCTIVITY]: "kavacha-command-domain-productivity",
++  [KavachaCommandDomain.APPEARANCE]: "kavacha-command-domain-appearance",
++  [KavachaCommandDomain.PRIVACY]: "kavacha-command-domain-privacy",
++  [KavachaCommandDomain.AUTOMATION]: "kavacha-command-domain-automation",
++});
++
++// Capabilities a command may declare. The plugin permission model (ROADMAP
++// Phase 3 "Kavacha SDK + plugin permission model") reads these to decide
++// whether a plugin may register or invoke a command: the Kavacha SDK stamps a
++// plugin command's capability from the plugin's granted permissions, and the
++// registry is the enforcement surface. Built-in commands leave it unset.
++export const KavachaCommandCapability = Object.freeze({
++  WORKSPACES: "workspaces",
++  TABS: "tabs",
++  NOTES: "notes",
++  COMMANDS: "commands",
++  WORKFLOWS: "workflows",
++});
+ 
+ const kNotPrivate = window => !window.gZenWorkspaces?.privateWindowOrDisabled;
+ const kHasBackgroundSpaces = window =>
+   kNotPrivate(window) &&
+   window.gZenWorkspaces?.getWorkspaces?.().filter(w => !w.archived).length > 1;
+ 
+-// Built-in Kavacha commands. Ordered by domain for readability; the palette
+-// fuzzy-matches by label so on-screen order comes from match score.
++// Built-in Kavacha commands. Ordered by domain for readability; all() re-sorts
++// by KavachaCommandDomainOrder so runtime registrations cluster with them.
+ const BUILTIN = [
+   // -- Navigation ----------------------------------------------------------
+   {
+@@ -226,36 +270,133 @@ const BUILTIN = [
+   },
+ ];
+ 
++// Runtime commands as { command, source } so a source (plugin / marketplace
++// component id) can be revoked as a group. _sinks/_removalSinks are the live
++// palette bindings (ZenUBGlobalActions).
+ const _registered = [];
+ const _sinks = [];
++const _removalSinks = [];
++
++const _domainRank = domain => {
++  const i = KavachaCommandDomainOrder.indexOf(domain);
++  return i === -1 ? KavachaCommandDomainOrder.length : i;
++};
++
++// Stable sort by domain order so the palette clusters commands by domain
++// (patch 0018's deferred "domain-grouped display"). Equal domains keep
++// insertion order — hence the index tie-breaker rather than Array.sort alone.
++const _byDomain = commands =>
++  commands
++    .map((command, i) => ({ command, i }))
++    .sort((a, b) => {
++      const d = _domainRank(a.command.domain) - _domainRank(b.command.domain);
++      return d !== 0 ? d : a.i - b.i;
++    })
++    .map(entry => entry.command);
++
++function _validate(command) {
++  if (!command || typeof command !== "object") {
++    throw new Error("KavachaCommandRegistry: command must be an object");
++  }
++  if (typeof command.l10nId !== "string" || !command.l10nId) {
++    throw new Error("KavachaCommandRegistry: command needs an l10nId");
++  }
++  if (
++    typeof command.command !== "function" &&
++    typeof command.commandId !== "string"
++  ) {
++    throw new Error(
++      `KavachaCommandRegistry: "${command.l10nId}" needs command(window) or commandId`
++    );
++  }
++}
+ 
+ export const KavachaCommandRegistry = {
+   domains: KavachaCommandDomain,
++  domainOrder: KavachaCommandDomainOrder,
++  capabilities: KavachaCommandCapability,
+ 
+   /**
+-   * Register a command at runtime (late features, plugins). Returns an
+-   * unregister function. Live palettes pick it up via the bound sink.
++   * Register a command at runtime (late features, marketplace components,
++   * plugins). `options.source` attributes the command to its owner so it can
++   * be revoked as a group with unregisterBySource — the plugin permission
++   * model (ROADMAP Phase 3) relies on this to drop every command a disabled
++   * plugin added. Throws on a malformed command or a duplicate l10nId. Returns
++   * an unregister function; the live palette picks it up via the onRegister
++   * sink and drops it via the onUnregister sink.
+    */
+-  register(command) {
+-    _registered.push(command);
++  register(command, options = {}) {
++    _validate(command);
++    if (this.has(command.l10nId)) {
++      throw new Error(
++        `KavachaCommandRegistry: "${command.l10nId}" is already registered`
++      );
++    }
++    const source = options.source || "runtime";
++    _registered.push({ command, source });
+     for (const sink of _sinks) {
+       sink(command);
+     }
+-    return () => {
+-      const i = _registered.indexOf(command);
+-      if (i >= 0) {
+-        _registered.splice(i, 1);
++    return () => this.unregister(command.l10nId);
++  },
++
++  /** Remove a single runtime command by l10nId (built-ins are permanent). */
++  unregister(l10nId) {
++    const i = _registered.findIndex(e => e.command.l10nId === l10nId);
++    if (i < 0) {
++      return false;
++    }
++    const [entry] = _registered.splice(i, 1);
++    for (const sink of _removalSinks) {
++      sink(entry.command);
++    }
++    return true;
++  },
++
++  /**
++   * Remove every runtime command a source registered (plugin disable /
++   * marketplace-component uninstall). Returns the number removed.
++   */
++  unregisterBySource(source) {
++    let removed = 0;
++    for (const entry of _registered.filter(e => e.source === source)) {
++      if (this.unregister(entry.command.l10nId)) {
++        removed++;
+       }
+-    };
++    }
++    return removed;
++  },
++
++  /** Whether a command with this l10nId exists (built-in or runtime). */
++  has(l10nId) {
++    return (
++      BUILTIN.some(c => c.l10nId === l10nId) ||
++      _registered.some(e => e.command.l10nId === l10nId)
++    );
+   },
+ 
+-  /** All commands, built-ins first, in registration order. */
++  /** All commands (built-ins then runtime), clustered by domain order. */
+   all() {
+-    return [...BUILTIN, ..._registered];
++    return _byDomain([...BUILTIN, ..._registered.map(e => e.command)]);
++  },
++
++  /** Commands in a single domain, in display order. */
++  getByDomain(domain) {
++    return this.all().filter(c => c.domain === domain);
++  },
++
++  /** The l10n id for a domain's palette group header (or null if unknown). */
++  domainLabel(domain) {
++    return KavachaCommandDomainLabel[domain] || null;
+   },
+ 
+   /** ZenUBGlobalActions binds a sink so runtime registrations reach it. */
+   onRegister(sink) {
+     _sinks.push(sink);
+   },
++
++  /** ...and one so runtime unregistrations leave the live palette. */
++  onUnregister(sink) {
++    _removalSinks.push(sink);
++  },
+ };
+diff --git a/src/zen/urlbar/ZenUBGlobalActions.sys.mjs b/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
+index 23ee2a8..c4d5e6f 100644
+--- a/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
++++ b/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
+@@ -292,13 +292,33 @@ function wrapAction(action) {
+     ...action,
+-    get label() {
+-      return lazy.l10n.formatValueSync(action.l10nId);
+-    },
++    get label() {
++      // Runtime commands (marketplace components, plugins) can't add .ftl
++      // keys, so they pass a literal `rawLabel`; built-ins localize by l10nId.
++      return action.rawLabel ?? lazy.l10n.formatValueSync(action.l10nId);
++    },
++    // Kavacha commands carry a `domain`; expose its localized label so a
++    // grouped palette renderer can show section headers. Undefined (harmless)
++    // for Zen's own actions, which have no domain.
++    get group() {
++      const labelId = action.domain
++        ? KavachaCommandRegistry.domainLabel(action.domain)
++        : null;
++      return labelId ? lazy.l10n.formatValueSync(labelId) : undefined;
++    },
+   };
+ }
+ 
+ export const globalActions = globalActionsTemplate.map(wrapAction);
+ 
+ // Runtime registrations (late features, plugins) land in the live palette.
+ KavachaCommandRegistry.onRegister(command => {
+   globalActions.push(wrapAction(command));
+ });
++
++// ...and runtime unregistrations (plugin disable, marketplace uninstall) leave
++// it, so a revoked command stops appearing in the palette immediately.
++KavachaCommandRegistry.onUnregister(command => {
++  const i = globalActions.findIndex(a => a.l10nId === command.l10nId);
++  if (i >= 0) {
++    globalActions.splice(i, 1);
++  }
++});

@@ -45,9 +45,14 @@ theme/
 Reference implementation: [kavacha-midnight/](themes/kavacha-midnight/), the default
 dark theme.
 
-**Marketplace (later in Phase 3):** upload, rate, install, auto-update. Submissions are
-statically validated against the schemas; `style.css` is reviewed/sandboxed — theme CSS
-must never gain script execution or touch web content.
+**Marketplace (`about:marketplace`, patch 0028; ADR 0010):** a component marketplace
+over themes, layouts, and bundles ("Research Mode"). It is offline-first — a bundled
+catalog installs into the profile and applies through the Layout and Theme engines, and
+each installed component registers palette commands via the command registry (patch 0027).
+Sidebar widgets and tool panels are reserved component types pending a widget host.
+Submissions are statically validated against the schemas; `style.css` is reviewed/sandboxed
+— theme CSS must never gain script execution or touch web content. Remote upload, ratings,
+install, and auto-update land with Kavacha accounts (Phase 5).
 
 ## Advanced tier — live CSS editor
 

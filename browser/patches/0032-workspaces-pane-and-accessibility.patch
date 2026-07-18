@@ -1,0 +1,507 @@
+# Patch 0032 — Workspaces settings pane + Restore-Archived picker + first-run
+# pointers (ROADMAP Phase 3 UX; discoverability).
+#
+# WHAT: the final patch of the settings-consolidation trio (0030 top-right menu,
+# 0031 Appearance/Customization panes, 0032 this):
+#   - paneKavachaWorkspaces ("Workspaces"): a THIN pane over already-shipped
+#     features — the tab-memory inactivity threshold pref KavachaTabMemory
+#     watches (kavacha.tabs.unload-after-minutes, patch 0013) plus a manual
+#     "Sleep inactive tabs now" (KavachaTabMemory.sleepBackgroundTabsNow, patch
+#     0018); New-space-from-template buttons (gZenWorkspaces
+#     .createWorkspaceFromTemplate, patch 0009); a "Restore an archived space…"
+#     button; and an informational pointer to Snapshot/branch/timeline on the
+#     menu and Cmd+K. Controller gKavachaWorkspaces, wired with Zen's own
+#     four-file pane recipe (ADR 0021) alongside 0031's two panes. The
+#     register_module template-inline guard already matches paneKavacha*.
+#   - "Restore Archived Space" command in KavachaCommandRegistry BUILTIN
+#     (ORGANIZATION domain; isAvailable = has archived spaces). Closes the gap
+#     0018/0027 noted: the opener is clean now (gZenWorkspaces
+#     .unarchiveWorkspace(uuid), patch 0009) — only a picker was missing, so
+#     this supplies one via Services.prompt.select. Because 0030's menu is
+#     generated from the registry, the command appears on the menu with no menu
+#     edit. l10n key kavacha-action-restore-space.
+#   - New-tab dashboard (patch 0011): a subtle "Settings" link (about:
+#     preferences) so first-run users find settings without the palette.
+#   - Welcome flow (patch 0017): a closing line on the final page pointing to
+#     the new top-right menu ("Everything lives here").
+#
+# WHY: completes the settings-consolidation trio 0030-0032 and surfaces the last
+# palette-only / menu-hidden features; restore-archived closes the
+# 0018/0027-noted gap; the dashboard and welcome now point first-run users at
+# the new menu.
+#
+# NOT BUILD-VERIFIED (no Firefox tree built in this environment). The new
+# controller and the KavachaCommandRegistry edit pass `node --check`; the
+# meta-patch edits (jar-mn / preferences-js / preferences-xhtml) keep their
+# inner unified diffs count-consistent; the outer diff applies cleanly on top of
+# 0031 with `git apply --check`. Applies on top of 0031.
+#
+# Touches: locales/en-US/browser/browser/preferences/zen-preferences.ftl;
+# locales/en-US/browser/browser/zen-command-palette.ftl;
+# locales/en-US/browser/browser/zen-welcome.ftl;
+# src/browser/components/preferences/{jar-mn,preferences-js,preferences-xhtml}.patch;
+# src/browser/components/preferences/kavacha-workspaces.js (new);
+# src/browser/components/preferences/kavachaWorkspaces.inc.xhtml (new);
+# src/browser/themes/shared/preferences/zen-preferences.css;
+# src/zen/common/sys/KavachaCommandRegistry.sys.mjs;
+# src/zen/welcome/ZenWelcome.mjs;
+# src/zen/kavacha-newtab/index.html; src/zen/kavacha-newtab/newtab.css.
+diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+index c59c6ae..53c632e 100644
+--- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
++++ b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+@@ -453,3 +453,23 @@ kavacha-customization-more-header = More
+ kavacha-customization-more-description = Browse installable components and manage plugins.
+ kavacha-customization-marketplace-link = Open Component Marketplace →
+ kavacha-customization-plugins-link = Manage Plugins →
++
++# Kavacha Workspaces pane (patch 0032)
++pane-kavacha-workspaces-title = Workspaces
++category-kavacha-workspaces =
++    .tooltiptext = { pane-kavacha-workspaces-title }
++kavacha-workspaces-title = Workspaces
++kavacha-workspaces-memory-header = Tab memory
++kavacha-workspaces-memory-description = Background tabs you haven't opened in a while are put to sleep to free memory, then restored the moment you return to them.
++kavacha-workspaces-unload-label = Sleep inactive background tabs after
++kavacha-workspaces-unload-suffix = minutes (0 = never)
++kavacha-workspaces-sleep-now = Sleep inactive tabs now
++kavacha-workspaces-templates-header = New spaces
++kavacha-workspaces-templates-description = Start a Space pre-arranged for a way of working. You can rename and reshape it afterwards.
++kavacha-workspaces-template-student = Student
++kavacha-workspaces-template-developer = Developer
++kavacha-workspaces-template-private = Private
++kavacha-workspaces-archived-header = Archived spaces
++kavacha-workspaces-archived-description = Archived Spaces keep all their tabs and notes — they are just hidden from the strip. Bring one back at any time.
++kavacha-workspaces-restore = Restore an archived space…
++kavacha-workspaces-more-description = Snapshot, branch, and timeline for a Space live on the ⚙ menu (top right) and in the command palette (Cmd+K).
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index dc2d48d..4763bff 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -66,3 +66,6 @@ kavacha-command-domain-automation = Automation
+ # Kavacha menu button + panel (patch 0030)
+ kavacha-menu-button = Menu
+ kavacha-menu-settings = Settings
++
++# Restore Archived Space command (patch 0032)
++kavacha-action-restore-space = Restore Archived Space
+diff --git a/locales/en-US/browser/browser/zen-welcome.ftl b/locales/en-US/browser/browser/zen-welcome.ftl
+index 884792b..b9630b5 100644
+--- a/locales/en-US/browser/browser/zen-welcome.ftl
++++ b/locales/en-US/browser/browser/zen-welcome.ftl
+@@ -47,3 +47,6 @@ kavacha-welcome-newtab-title = How should new tabs open?
+ kavacha-welcome-newtab-description = Both stay out of your way. You can switch anytime in Settings.
+ kavacha-welcome-newtab-floating = A centered search bar, ready to type
+ kavacha-welcome-newtab-dashboard = A quiet dashboard: clock, greeting, and a daily photo
++
++# Kavacha: closing pointer to the top-right menu (patch 0032)
++kavacha-welcome-menu-hint = Everything lives here — the ⚙ menu, top right.
+diff --git a/src/browser/components/preferences/jar-mn.patch b/src/browser/components/preferences/jar-mn.patch
+index f657ef9..048249e 100644
+--- a/src/browser/components/preferences/jar-mn.patch
++++ b/src/browser/components/preferences/jar-mn.patch
+@@ -2,7 +2,7 @@ diff --git a/browser/components/preferences/jar.mn b/browser/components/preferen
+ index aec7888f59eeb5dbffc62b861fe223159ac42586..a593f3015469c11c762ae01465964251a77ddb45 100644
+ --- a/browser/components/preferences/jar.mn
+ +++ b/browser/components/preferences/jar.mn
+-@@ -69,5 +69,10 @@ browser.jar:
++@@ -69,5 +69,11 @@ browser.jar:
+     content/browser/preferences/widgets/sync-engines-list.css          (widgets/sync-engine-list/sync-engines-list.css)
+     content/browser/preferences/widgets/update-information.mjs          (widgets/update-information/update-information.mjs)
+     content/browser/preferences/widgets/update-information.css          (widgets/update-information/update-information.css)
+@@ -11,5 +11,6 @@ index aec7888f59eeb5dbffc62b861fe223159ac42586..a593f3015469c11c762ae01465964251
+ +   content/browser/preferences/kavacha-privacy.js
+ +   content/browser/preferences/kavacha-appearance.js
+ +   content/browser/preferences/kavacha-customization.js
+++   content/browser/preferences/kavacha-workspaces.js
+     content/browser/preferences/widgets/update-state.mjs          (widgets/update-state/update-state.mjs)
+     content/browser/preferences/widgets/update-state.css          (widgets/update-state/update-state.css)
+diff --git a/src/browser/components/preferences/preferences-js.patch b/src/browser/components/preferences/preferences-js.patch
+index 5b02927..1745b4b 100644
+--- a/src/browser/components/preferences/preferences-js.patch
++++ b/src/browser/components/preferences/preferences-js.patch
+@@ -28,7 +28,7 @@ index 57add34d876fb885275f1147209c6fbeee367a7c..be0ab43b299317c0022a5e719f47a070
+          // Replace the template element with the nodes inside of it.
+          template.replaceWith(template.content);
+  
+-@@ -522,6 +525,13 @@ function init_all() {
++@@ -522,6 +525,14 @@ function init_all() {
+    register_module("paneSearch", gSearchPane);
+    register_module("panePrivacy", gPrivacyPane);
+    register_module("paneContainers", gContainersPane);
+@@ -39,6 +39,7 @@ index 57add34d876fb885275f1147209c6fbeee367a7c..be0ab43b299317c0022a5e719f47a070
+ +  register_module("paneKavachaPrivacy", gKavachaPrivacyCenter);
+ +  register_module("paneKavachaAppearance", gKavachaAppearance);
+ +  register_module("paneKavachaCustomization", gKavachaCustomization);
+++  register_module("paneKavachaWorkspaces", gKavachaWorkspaces);
+  
+    // Restore the cached Firefox Labs nav button visibility so it shows
+    // immediately when recipes are expected to be available, before
+diff --git a/src/browser/components/preferences/preferences-xhtml.patch b/src/browser/components/preferences/preferences-xhtml.patch
+index c15ddb4..589ff23 100644
+--- a/src/browser/components/preferences/preferences-xhtml.patch
++++ b/src/browser/components/preferences/preferences-xhtml.patch
+@@ -11,7 +11,7 @@ index 9760a4a35b0b3bd21edec07a70c10bccc23e4a09..9f22146c259ea5b45005be660bfcb9ea
+    <link rel="localization" href="branding/brand.ftl"/>
+    <link rel="localization" href="browser/browser.ftl"/>
+      <!-- Used by fontbuilder.js -->
+-@@ -121,6 +123,41 @@
++@@ -121,6 +123,46 @@
+          iconsrc="chrome://browser/skin/preferences/category-general.svg"
+          data-l10n-id="pane-general-title">
+        </html:moz-page-nav-button>
+@@ -49,11 +49,16 @@ index 9760a4a35b0b3bd21edec07a70c10bccc23e4a09..9f22146c259ea5b45005be660bfcb9ea
+ +        view="paneKavachaCustomization"
+ +        iconsrc="chrome://browser/skin/zen-icons/sliders.svg"
+ +        data-l10n-id="pane-kavacha-customization-title">
+++      </html:moz-page-nav-button>
+++      <html:moz-page-nav-button id="category-kavacha-workspaces"
+++        view="paneKavachaWorkspaces"
+++        iconsrc="chrome://browser/skin/zen-icons/window.svg"
+++        data-l10n-id="pane-kavacha-workspaces-title">
+ +      </html:moz-page-nav-button>
+        <html:moz-page-nav-button id="category-sync"
+          hidden="true"
+          view="paneSync"
+-@@ -253,6 +290,13 @@
++@@ -253,6 +295,14 @@
+  #include containers.inc.xhtml
+  #include sync.inc.xhtml
+  #include moreFromMozilla.inc.xhtml
+@@ -64,6 +69,7 @@ index 9760a4a35b0b3bd21edec07a70c10bccc23e4a09..9f22146c259ea5b45005be660bfcb9ea
+ +#include kavachaPrivacyCenter.inc.xhtml
+ +#include kavachaAppearance.inc.xhtml
+ +#include kavachaCustomization.inc.xhtml
+++#include kavachaWorkspaces.inc.xhtml
+          </vbox>
+        </vbox>
+      </vbox>
+diff --git a/src/browser/themes/shared/preferences/zen-preferences.css b/src/browser/themes/shared/preferences/zen-preferences.css
+index 09891ef..1ed3e67 100644
+--- a/src/browser/themes/shared/preferences/zen-preferences.css
++++ b/src/browser/themes/shared/preferences/zen-preferences.css
+@@ -597,3 +597,13 @@ html|setting-group:is([data-subcategory="layout"], [groupid="support"], [groupid
+ .kavacha-customization-cta {
+   font-weight: 600;
+ }
++
++/* Kavacha Workspaces pane (patch 0032) */
++.kavacha-workspaces-row {
++  gap: 10px;
++  padding-block: 6px;
++}
++
++.kavacha-workspaces-number {
++  width: 84px;
++}
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+index d93f59f..f0392ec 100644
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -268,6 +268,47 @@ const BUILTIN = [
+     icon: "chrome://browser/skin/zen-icons/tracking-protection.svg",
+     domain: KavachaCommandDomain.PRIVACY,
+   },
++
++  // -- Organization (restore) ----------------------------------------------
++  // Restore-archived-space stayed menu-driven because it needs a picker and
++  // (per 0018/0027) had no clean single-call opener. The opener is clean now
++  // — gZenWorkspaces.unarchiveWorkspace(uuid) (patch 0009) un-hides the space
++  // and switches to it — so the only missing piece was the picker, supplied
++  // here with Services.prompt.select.
++  {
++    l10nId: "kavacha-action-restore-space",
++    icon: "chrome://browser/skin/zen-icons/selectable/inbox.svg",
++    domain: KavachaCommandDomain.ORGANIZATION,
++    isAvailable: window =>
++      kNotPrivate(window) &&
++      !!window.gZenWorkspaces?.getWorkspaces?.().some(w => w.archived),
++    command: window => {
++      const spaces = window.gZenWorkspaces;
++      const archived =
++        spaces?.getWorkspaces?.().filter(w => w.archived) || [];
++      if (!archived.length) {
++        return;
++      }
++      // Label each space by name, prefixed with its emoji icon when it has
++      // one — mirroring the Archived Spaces submenu (patch 0009).
++      const labels = archived.map(w =>
++        w.icon && !w.icon.endsWith(".svg") ? `${w.icon}  ${w.name}` : w.name
++      );
++      const selected = { value: 0 };
++      const ok = Services.prompt.select(
++        window,
++        "Restore Archived Space",
++        "Choose a space to bring back:",
++        labels,
++        selected
++      );
++      if (ok) {
++        spaces.unarchiveWorkspace(archived[selected.value].uuid).catch(e =>
++          console.error("Kavacha: restore archived space failed", e)
++        );
++      }
++    },
++  },
+ ];
+ 
+ // Runtime commands as { command, source } so a source (plugin / marketplace
+diff --git a/src/zen/kavacha-newtab/index.html b/src/zen/kavacha-newtab/index.html
+index f23baed..b760a2e 100644
+--- a/src/zen/kavacha-newtab/index.html
++++ b/src/zen/kavacha-newtab/index.html
+@@ -43,6 +43,10 @@
+   <!-- Photo attribution (bottom-right) -->
+   <a id="credit" class="credit hidden" href="#"></a>
+ 
++  <!-- Settings pointer (bottom-left): first-run users find preferences here
++       without opening the command palette. -->
++  <a id="settings" class="settings" href="about:preferences">⚙ Settings</a>
++
+   <script src="chrome://browser/content/kavacha-newtab/newtab.js"></script>
+ </body>
+ </html>
+diff --git a/src/zen/kavacha-newtab/newtab.css b/src/zen/kavacha-newtab/newtab.css
+index 6624015..28a9154 100644
+--- a/src/zen/kavacha-newtab/newtab.css
++++ b/src/zen/kavacha-newtab/newtab.css
+@@ -104,6 +104,25 @@ body {
+   color: #fff;
+ }
+ 
++.settings {
++  position: fixed;
++  bottom: 1rem;
++  left: 1.4rem;
++  font-size: 0.8rem;
++  color: rgba(255, 255, 255, 0.6);
++  text-decoration: none;
++  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.6);
++  opacity: 0.85;
++  transition:
++    color 0.2s,
++    opacity 0.2s;
++}
++
++.settings:hover {
++  color: #fff;
++  opacity: 1;
++}
++
+ /* ---- onboarding ---- */
+ .onboarding {
+   position: fixed;
+diff --git a/src/zen/welcome/ZenWelcome.mjs b/src/zen/welcome/ZenWelcome.mjs
+index e33fb67..5ef22b9 100644
+--- a/src/zen/welcome/ZenWelcome.mjs
++++ b/src/zen/welcome/ZenWelcome.mjs
+@@ -644,6 +644,11 @@
+           {
+             id: "zen-welcome-start-browsing-description-1",
+           },
++          {
++            // Kavacha (patch 0032): first-run pointer to the new top-right
++            // menu, where Settings and every Kavacha command now live.
++            id: "kavacha-welcome-menu-hint",
++          },
+         ],
+         buttons: [
+           {
+diff --git a/src/browser/components/preferences/kavacha-workspaces.js b/src/browser/components/preferences/kavacha-workspaces.js
+new file mode 100644
+index 0000000..0075cf0
+--- /dev/null
++++ b/src/browser/components/preferences/kavacha-workspaces.js
+@@ -0,0 +1,136 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++// Kavacha "Workspaces" Settings pane (ROADMAP Phase 3 UX; ADR 0009/0021 pane
++// pattern). about:preferences is the one settings home, so this pane is a THIN
++// view over already-shipped features:
++//   - Tab memory: the inactivity threshold pref KavachaTabMemory watches
++//     (patch 0013) plus a manual "sleep now" (patch 0018).
++//   - New spaces: seeds a Space from a built-in template via
++//     gZenWorkspaces.createWorkspaceFromTemplate (patch 0009 / registry).
++//   - Archived spaces: reuses the exact "Restore Archived Space" picker the
++//     command palette runs (KavachaCommandRegistry, patch 0032).
++// gZenWorkspaces / KavachaTabMemory live on the top chrome window, not in the
++// about:preferences document, so everything routes through _topWin.
++
++"use strict";
++
++/* global ChromeUtils, Services, document, window, console */
++
++const kUnloadPref = "kavacha.tabs.unload-after-minutes";
++// Mirrors KavachaTabMemory's own code default (patch 0013).
++const kUnloadDefaultMinutes = 30;
++
++var gKavachaWorkspaces = {
++  _initted: false,
++
++  init() {
++    if (this._initted) {
++      return;
++    }
++    this._initted = true;
++
++    this._unload = document.getElementById("kavachaWorkspacesUnloadMinutes");
++    this._unload.addEventListener("change", () => this._onUnloadChange());
++    document
++      .getElementById("kavachaWorkspacesSleepNow")
++      .addEventListener("command", () => this._sleepNow());
++    document
++      .getElementById("kavachaWorkspacesTemplateStudent")
++      .addEventListener("command", () => this._createFromTemplate("student"));
++    document
++      .getElementById("kavachaWorkspacesTemplateDeveloper")
++      .addEventListener("command", () => this._createFromTemplate("developer"));
++    document
++      .getElementById("kavachaWorkspacesTemplatePrivate")
++      .addEventListener("command", () => this._createFromTemplate("privacy"));
++    document
++      .getElementById("kavachaWorkspacesRestore")
++      .addEventListener("command", () => this._restoreArchived());
++
++    Services.prefs.addObserver(kUnloadPref, this);
++    window.addEventListener("unload", () => this._uninit(), { once: true });
++
++    this._renderUnload();
++    this._renderArchivedAvailability();
++  },
++
++  observe(subject, topic, data) {
++    if (topic === "nsPref:changed" && data === kUnloadPref) {
++      this._renderUnload();
++    }
++  },
++
++  _uninit() {
++    Services.prefs.removeObserver(kUnloadPref, this);
++  },
++
++  // The top chrome window owns gZenWorkspaces; about:preferences does not.
++  get _topWin() {
++    return (
++      window.browsingContext?.topChromeWindow ||
++      Services.wm.getMostRecentBrowserWindow()
++    );
++  },
++
++  _renderUnload() {
++    this._unload.value = Services.prefs.getIntPref(
++      kUnloadPref,
++      kUnloadDefaultMinutes
++    );
++  },
++
++  _onUnloadChange() {
++    // 0 (or blank/negative) means never auto-sleep; KavachaTabMemory reads the
++    // same pref and reschedules its timer live (patch 0013).
++    let minutes = parseInt(this._unload.value, 10);
++    if (isNaN(minutes) || minutes < 0) {
++      minutes = 0;
++    }
++    Services.prefs.setIntPref(kUnloadPref, minutes);
++  },
++
++  _sleepNow() {
++    // patch 0018: discard every eligible background tab now, ignoring the
++    // inactivity threshold.
++    ChromeUtils.importESModule(
++      "resource:///modules/KavachaTabMemory.sys.mjs"
++    ).KavachaTabMemory.sleepBackgroundTabsNow();
++  },
++
++  _createFromTemplate(kind) {
++    // patch 0009: seed a new Space pre-arranged for a way of working.
++    const win = this._topWin;
++    win?.gZenWorkspaces
++      ?.createWorkspaceFromTemplate(kind)
++      .catch(e =>
++        console.error("KavachaWorkspaces: create-from-template failed", e)
++      );
++  },
++
++  _restoreArchived() {
++    // Run the same picker the "Restore Archived Space" command runs, on the
++    // top chrome window — no duplicated restore logic (patch 0032).
++    const win = this._topWin;
++    if (!win) {
++      return;
++    }
++    const { KavachaCommandRegistry } = ChromeUtils.importESModule(
++      "resource:///modules/KavachaCommandRegistry.sys.mjs"
++    );
++    const cmd = KavachaCommandRegistry.all().find(
++      c => c.l10nId === "kavacha-action-restore-space"
++    );
++    cmd?.command(win);
++    this._renderArchivedAvailability();
++  },
++
++  _renderArchivedAvailability() {
++    const win = this._topWin;
++    const hasArchived = !!win?.gZenWorkspaces
++      ?.getWorkspaces?.()
++      .some(w => w.archived);
++    document.getElementById("kavachaWorkspacesRestore").disabled = !hasArchived;
++  },
++};
+diff --git a/src/browser/components/preferences/kavachaWorkspaces.inc.xhtml b/src/browser/components/preferences/kavachaWorkspaces.inc.xhtml
+new file mode 100644
+index 0000000..69ecbce
+--- /dev/null
++++ b/src/browser/components/preferences/kavachaWorkspaces.inc.xhtml
+@@ -0,0 +1,50 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++<script type="text/javascript" src="chrome://browser/content/preferences/kavacha-workspaces.js"/>
++<html:template id="template-paneKavachaWorkspaces">
++
++<hbox id="kavachaWorkspacesCategory"
++      class="subcategory"
++      hidden="true"
++      data-category="paneKavachaWorkspaces">
++<html:h1 data-l10n-id="kavacha-workspaces-title"/>
++</hbox>
++
++<groupbox id="kavachaWorkspacesMemoryGroup" data-category="paneKavachaWorkspaces" hidden="true" class="highlighting-group">
++  <label><html:h2 data-l10n-id="kavacha-workspaces-memory-header"/></label>
++  <description class="description-deemphasized" data-l10n-id="kavacha-workspaces-memory-description"/>
++  <hbox class="kavacha-workspaces-row" align="center">
++    <label data-l10n-id="kavacha-workspaces-unload-label" control="kavachaWorkspacesUnloadMinutes"/>
++    <html:input type="number" id="kavachaWorkspacesUnloadMinutes" class="kavacha-workspaces-number" min="0" max="1440" step="5"/>
++    <label data-l10n-id="kavacha-workspaces-unload-suffix"/>
++  </hbox>
++  <hbox pack="start">
++    <button id="kavachaWorkspacesSleepNow" data-l10n-id="kavacha-workspaces-sleep-now"/>
++  </hbox>
++</groupbox>
++
++<groupbox id="kavachaWorkspacesTemplatesGroup" data-category="paneKavachaWorkspaces" hidden="true" class="highlighting-group">
++  <label><html:h2 data-l10n-id="kavacha-workspaces-templates-header"/></label>
++  <description class="description-deemphasized" data-l10n-id="kavacha-workspaces-templates-description"/>
++  <hbox class="kavacha-workspaces-row" pack="start">
++    <button id="kavachaWorkspacesTemplateStudent" data-l10n-id="kavacha-workspaces-template-student"/>
++    <button id="kavachaWorkspacesTemplateDeveloper" data-l10n-id="kavacha-workspaces-template-developer"/>
++    <button id="kavachaWorkspacesTemplatePrivate" data-l10n-id="kavacha-workspaces-template-private"/>
++  </hbox>
++</groupbox>
++
++<groupbox id="kavachaWorkspacesArchivedGroup" data-category="paneKavachaWorkspaces" hidden="true" class="highlighting-group">
++  <label><html:h2 data-l10n-id="kavacha-workspaces-archived-header"/></label>
++  <description class="description-deemphasized" data-l10n-id="kavacha-workspaces-archived-description"/>
++  <hbox pack="start">
++    <button id="kavachaWorkspacesRestore" data-l10n-id="kavacha-workspaces-restore"/>
++  </hbox>
++</groupbox>
++
++<groupbox id="kavachaWorkspacesMoreGroup" data-category="paneKavachaWorkspaces" hidden="true" class="highlighting-group">
++  <description class="description-deemphasized" data-l10n-id="kavacha-workspaces-more-description"/>
++</groupbox>
++
++</html:template>

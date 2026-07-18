@@ -1,0 +1,132 @@
+# Kavacha patch 0034 — Clear unpinned tabs on quit
+#
+# On quit, discard every non-pinned tab so the next launch restores ONLY the
+# tabs the user deliberately pinned. Pinning becomes the explicit "keep this"
+# gesture; ordinary browsing tabs do not accumulate across sessions.
+#
+# New process-singleton module KavachaSessionCleanup.sys.mjs observes
+# "quit-application-granted" (quit committed, windows still alive, SessionStore
+# final write not yet flushed) and removes non-pinned tabs from every browser
+# window. SessionStore keeps its state live as tabs close, so its final write
+# excludes them; pinned tabs remain and restore normally.
+#
+# Gated on pref kavacha.session.clear-unpinned-on-quit (default true) so it can
+# be disabled without a rebuild. skipPermitUnload avoids beforeunload prompts
+# blocking a quit the user already chose; closeWindowWithLastTab:false stops
+# removeTab from tearing a window down mid-quit.
+#
+# NOTE: authored/validated by git-apply against browser/zen-upstream; NOT yet
+# build- or Marionette-verified.
+#
+# Touches: src/zen/common/modules/ZenStartup.mjs (init the singleton per window),
+# src/zen/common/moz.build (register the module),
+# src/zen/common/sys/KavachaSessionCleanup.sys.mjs (new).
+diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
+index b2e0469..3aaa4be 100644
+--- a/src/zen/common/modules/ZenStartup.mjs
++++ b/src/zen/common/modules/ZenStartup.mjs
+@@ -190,6 +190,12 @@ class ZenStartup {
+       ).KavachaMenu;
+       kavachaMenu.init();
+       kavachaMenu.setupWindow(window);
++      // Kavacha: on quit, discard non-pinned tabs so only pinned tabs are
++      // restored next launch (process singleton; observes quit-application-
++      // granted). Pref-gated: kavacha.session.clear-unpinned-on-quit.
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaSessionCleanup.sys.mjs"
++      ).KavachaSessionCleanup.init();
+       this.isReady = true;
+       this.promiseInitializedResolve();
+       delete this.promiseInitializedResolve;
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+index 7a3dc38..126e6e9 100644
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -12,6 +12,7 @@ EXTRA_JS_MODULES += [
+   "sys/KavachaPluginManager.sys.mjs",
+   "sys/KavachaPluginPermissions.sys.mjs",
+   "sys/KavachaSDK.sys.mjs",
++  "sys/KavachaSessionCleanup.sys.mjs",
+   "sys/KavachaSpaceHistory.sys.mjs",
+   "sys/KavachaTabMemory.sys.mjs",
+   "sys/KavachaThemeEngine.sys.mjs",
+diff --git a/src/zen/common/sys/KavachaSessionCleanup.sys.mjs b/src/zen/common/sys/KavachaSessionCleanup.sys.mjs
+new file mode 100644
+index 0000000..446cef7
+--- /dev/null
++++ b/src/zen/common/sys/KavachaSessionCleanup.sys.mjs
+@@ -0,0 +1,74 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha "clear unpinned tabs on quit" (ROADMAP Phase 3 UX). Zen restores the
++// previous session on launch, which brings back EVERY tab. Kavacha's rule is
++// the opposite for casual tabs: when you quit, ordinary tabs should be gone and
++// only the tabs you deliberately PINNED should come back. Pinning is the
++// explicit "keep this" gesture.
++//
++// Mechanism: a process singleton that observes "quit-application-granted" — the
++// point at which quit is committed but windows are still alive and SessionStore
++// has not yet written its final state. We close every non-pinned tab in every
++// browser window. SessionStore keeps its in-memory state live as tabs close, so
++// the final write (at profile-before-change) already excludes them; pinned tabs
++// stay in the session and are restored next launch. Closed tabs land in the
++// normal "recently closed" list (undoable) but are not auto-restored.
++//
++// Gated on the pref kavacha.session.clear-unpinned-on-quit (default true) so it
++// can be turned off without a rebuild. skipPermitUnload avoids beforeunload
++// prompts blocking a quit the user already chose; closeWindowWithLastTab:false
++// keeps removeTab from tearing a window down mid-quit.
++
++const PREF = "kavacha.session.clear-unpinned-on-quit";
++
++export const KavachaSessionCleanup = {
++  _initialized: false,
++
++  /** Process-singleton init. Idempotent — safe to call once per window. */
++  init() {
++    if (this._initialized) {
++      return;
++    }
++    this._initialized = true;
++    Services.obs.addObserver(this, "quit-application-granted");
++  },
++
++  observe(subject, topic) {
++    if (topic !== "quit-application-granted") {
++      return;
++    }
++    // Fire once; nothing to observe after quit is granted.
++    Services.obs.removeObserver(this, "quit-application-granted");
++    if (!Services.prefs.getBoolPref(PREF, true)) {
++      return;
++    }
++    this._clearUnpinnedTabs();
++  },
++
++  _clearUnpinnedTabs() {
++    for (const win of Services.wm.getEnumerator("navigator:browser")) {
++      const gBrowser = win.gBrowser;
++      if (!gBrowser || win.closed) {
++        continue;
++      }
++      // Snapshot first: removeTab mutates gBrowser.tabs while we iterate.
++      const unpinned = Array.prototype.filter.call(
++        gBrowser.tabs,
++        tab => !tab.pinned && !tab.closing
++      );
++      for (const tab of unpinned) {
++        try {
++          gBrowser.removeTab(tab, {
++            animate: false,
++            skipPermitUnload: true,
++            closeWindowWithLastTab: false,
++          });
++        } catch (e) {
++          win.console?.error("KavachaSessionCleanup: removeTab failed", e);
++        }
++      }
++    }
++  },
++};

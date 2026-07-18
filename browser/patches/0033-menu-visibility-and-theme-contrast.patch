@@ -1,0 +1,123 @@
+# Patch 0033 — Fix the menu button visibility + darker, higher-contrast theme
+# (follow-up to 0030/0016 after first build feedback).
+#
+# TWO RUNTIME FIXES found once the chain was built and run:
+#
+# 1) The top-right menu gear (patch 0030) never showed. Two causes: (a) the
+#    button set list-style-image but not -moz-context-properties/fill, so the
+#    zen-icons context-fill SVG painted transparent — an icon-only button with
+#    no glyph looks absent; and (b) it injected into #zen-sidebar-top-buttons at
+#    ZenStartup isReady, which can run before that toolbar cluster exists, and
+#    then gave up silently. Fix: KavachaMenu._injectButton now targets the
+#    #zen-sidebar-top-buttons-customization-target hbox (falls back to the
+#    toolbar, then #nav-bar) and RETRIES briefly if the cluster isn't in the DOM
+#    yet; the CSS sets -moz-context-properties/fill on the button + icon.
+#
+# 2) Theme: deeper/darker surfaces and higher-contrast text (user: "darker, not
+#    dimmer; the text must contrast; bright accents are fine"). A new
+#    kavacha-theme-fixes.inc.css, %include'd LAST, overrides the Midnight base
+#    tokens (patch 0016) darker and re-bases --zen-branding-dark so Zen's whole
+#    derived chrome deepens; accent tokens untouched. First pass, tune to taste.
+#    Removing the light/dark toggle + a brightness control is a follow-up.
+#
+# NOT BUILD-VERIFIED beyond git-apply. Adds
+# src/zen/common/styles/kavacha-theme-fixes.inc.css; modifies KavachaMenu.sys.mjs
+# and zen-theme.css. Applies on top of 0032.
+diff --git a/src/zen/common/styles/zen-theme.css b/src/zen/common/styles/zen-theme.css
+--- a/src/zen/common/styles/zen-theme.css
++++ b/src/zen/common/styles/zen-theme.css
+@@ -349,3 +349,4 @@
+ %include kavacha-layout.inc.css
+ %include kavacha-polish.inc.css
+ %include kavacha-menu.inc.css
++%include kavacha-theme-fixes.inc.css
+diff --git a/src/zen/common/sys/KavachaMenu.sys.mjs b/src/zen/common/sys/KavachaMenu.sys.mjs
+index c3a678d..f2c53f3 100644
+--- a/src/zen/common/sys/KavachaMenu.sys.mjs
++++ b/src/zen/common/sys/KavachaMenu.sys.mjs
+@@ -75,13 +75,26 @@ export const KavachaMenu = {
+     this._injectButton(win);
+   },
+ 
+-  // Leftmost/most-prominent button in the top-right cluster. Prepends into
+-  // #zen-sidebar-top-buttons (where ZenUIManager also relocates the app-menu /
+-  // extensions buttons in single-toolbar mode). removable="false" keeps it put.
+-  _injectButton(win) {
++  // Leftmost/most-prominent button in the top-right cluster. The button belongs
++  // in the customization-target hbox (falls back to the toolbar itself, then
++  // the nav-bar). That cluster is built asynchronously during window setup, so
++  // if it isn't in the DOM yet we retry briefly rather than silently give up —
++  // that silent give-up was why the button never appeared.
++  _injectButton(win, attempt = 0) {
+     const doc = win.document;
+-    const cluster = doc.getElementById("zen-sidebar-top-buttons");
+-    if (!cluster) {
++    if (doc.getElementById("kavacha-menu-button")) {
++      return;
++    }
++    const target =
++      doc.getElementById("zen-sidebar-top-buttons-customization-target") ||
++      doc.getElementById("zen-sidebar-top-buttons") ||
++      doc.getElementById("nav-bar");
++    if (!target) {
++      if (attempt < 40) {
++        win.setTimeout(() => this._injectButton(win, attempt + 1), 250);
++      } else {
++        win.console?.warn("KavachaMenu: no toolbar target for the menu button");
++      }
+       return;
+     }
+     const frag = win.MozXULElement.parseXULToFragment(`
+@@ -90,7 +103,11 @@ export const KavachaMenu = {
+         removable="false"
+         skipintoolbarset="true" />
+     `);
+-    cluster.prepend(frag);
++    if (target.id === "nav-bar") {
++      target.appendChild(frag);
++    } else {
++      target.prepend(frag);
++    }
+     const button = doc.getElementById("kavacha-menu-button");
+     const label = _label("kavacha-menu-button", "Menu");
+     button.setAttribute("label", label);
+diff --git a/src/zen/common/styles/kavacha-theme-fixes.inc.css b/src/zen/common/styles/kavacha-theme-fixes.inc.css
+new file mode 100644
+index 0000000..ccede05
+--- /dev/null
++++ b/src/zen/common/styles/kavacha-theme-fixes.inc.css
+@@ -0,0 +1,34 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* ==========================================================================
++   Kavacha theme + menu fixes (patch 0033). %include'd LAST in zen-theme.css so
++   it wins the cascade over the Midnight floor (patch 0016) and the menu layer
++   (patch 0030).
++
++   1) Menu gear icon: zen-icons are context-fill SVGs, so without
++      -moz-context-properties/fill they paint transparent and the icon-only
++      button looks empty. Set on the button AND its icon box so it renders.
++   2) Darker surfaces + higher-contrast text (user direction: "darker, not
++      dimmer; the text must contrast; bright accent colors are fine"). Re-bases
++      Zen's whole chrome via --zen-branding-dark so derived surfaces deepen too;
++      accent tokens are left untouched. First pass — tune to taste.
++   ========================================================================== */
++
++#kavacha-menu-button,
++#kavacha-menu-button .toolbarbutton-icon {
++  -moz-context-properties: fill, fill-opacity;
++  fill: currentColor;
++}
++
++:host(:is(.anonymous-content-host, notification-message)),
++:root {
++  --kavacha-surface: #0b0912;
++  --kavacha-surface-elevated: #16131f;
++  --kavacha-surface-sunken: #060409;
++  --kavacha-border: #322b4a;
++  --kavacha-text-primary: #f6f4fc;
++  --kavacha-text-secondary: #cabfe6;
++  --zen-branding-dark: var(--kavacha-surface);
++}

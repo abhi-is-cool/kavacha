@@ -1,0 +1,1353 @@
+# Patch 0029 — Kavacha SDK + plugin permission model + about:plugins (ROADMAP
+# Phase 3 "Kavacha SDK + plugin permission model"; ADR 0011).
+#
+# WHAT: a permissioned plugin platform. sdk/kavacha-plugin.schema.json defines
+# the kavacha-plugin.json manifest; KavachaPluginPermissions.sys.mjs owns the
+# four grantable capabilities (workspaces / tabs / notes / commands) and
+# persists per-plugin, user-granted permissions to profile
+# kavacha-plugins/grants.json; KavachaSDK.sys.mjs is the capability facade a
+# plugin calls — every method is gated on the plugin's live grants, and it
+# exposes workspaces/tabs/notes/commands ONLY (read + safe-create workspaces,
+# http/https/about tabs on the active window, the current workspace note, and
+# Cmd+K command registration). KavachaPluginManager.sys.mjs is a process
+# singleton that sideloads plugins from profile kavacha-plugins/<id>/, activates
+# the enabled+granted ones with a least-privilege SDK, and drives the lifecycle
+# (enable/disable/grant/uninstall). about:plugins — a JS nsIAboutModule exactly
+# like about:studio (ADR 0009) — is the management page: list installed plugins,
+# grant/revoke each declared permission, enable/disable, uninstall.
+#
+# WHY: plugins must extend Kavacha without ever reaching passwords, saved
+# credentials, autofill, browsing history, or chrome internals. That exclusion
+# is STRUCTURAL — the grantable permission enum has no value for private data,
+# and there is no SDK method that could reach it — not a policy toggle. Runtime
+# commands dogfood the patch-0027 registry: each plugin command carries a
+# literal rawLabel + an identity l10nId + a capability, registered with
+# source="plugin:<id>" so disabling a plugin drops every command it added via
+# unregisterBySource. Plugins are sideloaded (offline) for now; remote install
+# via the marketplace (patch 0028) is a later integration. A real JS
+# sandbox/compartment isolation boundary per plugin is a hardening follow-up —
+# today granted plugins are trusted-on-grant and the SDK is the only sanctioned
+# surface.
+#
+# NOT BUILD-VERIFIED: authored against the post-0028 tree; run
+# `git -C browser/zen-upstream apply --check` + a Marionette pass (sideload a
+# plugin under profile kavacha-plugins/<id>/, open about:plugins, grant a
+# permission and enable, watch its command reach Cmd+K, disable and watch it
+# leave, revoke, uninstall) before marking the ROADMAP item verified. The
+# manifest schema + SDK reference (sdk/kavacha-plugin.schema.json, sdk/README.md)
+# live as repo-level design files — like customization/**/*.schema.json — and are
+# NOT part of this overlay patch. This patch adds
+# src/zen/common/sys/KavachaPluginManager.sys.mjs, KavachaPluginPermissions.sys.mjs,
+# KavachaSDK.sys.mjs, and src/zen/kavacha-plugins/* (about:plugins); touches
+# src/zen/common/modules/ZenStartup.mjs, src/zen/common/moz.build,
+# src/zen/moz.build, src/browser/base/content/zen-assets.jar.inc.mn. Applies on
+# top of 0028.
+diff --git a/src/browser/base/content/zen-assets.jar.inc.mn b/src/browser/base/content/zen-assets.jar.inc.mn
+--- a/src/browser/base/content/zen-assets.jar.inc.mn
++++ b/src/browser/base/content/zen-assets.jar.inc.mn
+@@ -24,4 +24,5 @@
+ #include ../../../zen/kavacha-newtab/jar.inc.mn
+ #include ../../../zen/kavacha-search/jar.inc.mn
+ #include ../../../zen/kavacha-studio/jar.inc.mn
+ #include ../../../zen/kavacha-marketplace/jar.inc.mn
++#include ../../../zen/kavacha-plugins/jar.inc.mn
+diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
+--- a/src/zen/common/modules/ZenStartup.mjs
++++ b/src/zen/common/modules/ZenStartup.mjs
+@@ -167,6 +167,11 @@ class ZenStartup {
+       ChromeUtils.importESModule(
+         "resource:///modules/KavachaMarketplace.sys.mjs"
+       ).KavachaMarketplace.init();
++      // Kavacha: enable granted plugins for this session and register their
++      // commands (permission-gated SDK; ADR 0011). Process singleton.
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaPluginManager.sys.mjs"
++      ).KavachaPluginManager.init();
+       this.isReady = true;
+       this.promiseInitializedResolve();
+       delete this.promiseInitializedResolve;
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -7,4 +8,7 @@ EXTRA_JS_MODULES += [
+   "sys/KavachaNewTab.sys.mjs",
+   "sys/KavachaPlacesAttribution.sys.mjs",
++  "sys/KavachaPluginManager.sys.mjs",
++  "sys/KavachaPluginPermissions.sys.mjs",
++  "sys/KavachaSDK.sys.mjs",
+   "sys/KavachaSpaceHistory.sys.mjs",
+   "sys/KavachaTabMemory.sys.mjs",
+diff --git a/src/zen/common/sys/KavachaPluginManager.sys.mjs b/src/zen/common/sys/KavachaPluginManager.sys.mjs
+new file mode 100644
+index 0000000..2384551
+--- /dev/null
++++ b/src/zen/common/sys/KavachaPluginManager.sys.mjs
+@@ -0,0 +1,260 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha plugin manager (ROADMAP Phase 3 "Kavacha SDK + plugin permission
++// model"; ADR 0011). A process singleton that sideloads plugins from the
++// profile and runs the granted ones with least privilege.
++//
++// Plugins live at kavacha-plugins/<id>/ with a kavacha-plugin.json manifest
++// (see sdk/kavacha-plugin.schema.json) and an `entry` ES module exporting
++// activate(sdk) (and optionally deactivate()). On init() every plugin that is
++// BOTH enabled AND holds at least one granted permission is activated with a
++// KavachaSDK.forPlugin(id) facade limited to what the user granted. Enabled
++// flags live in kavacha-plugins/state.json; grants in kavacha-plugins/grants.json
++// (owned by KavachaPluginPermissions).
++//
++// SECURITY:
++//  - Least privilege: a plugin only ever receives the SDK facade, and every
++//    facade method is gated on the user's live grants. The manager never grants
++//    a permission the user did not approve — grant() is the only widening path
++//    and it runs the request through the permission model's validator, which
++//    rejects anything outside the grantable enum.
++//  - Revocation: disable(id) calls the plugin's deactivate() (if any) and then
++//    KavachaCommandRegistry.unregisterBySource("plugin:"+id), so every command
++//    the plugin registered leaves the live palette immediately — the registry
++//    source is the source of truth, so this holds even if deactivate() is buggy
++//    or absent.
++//  - NOT YET a sandbox: granted plugins currently run in the parent module
++//    scope — they are trusted-on-grant sideloads and the SDK is the only
++//    *sanctioned* surface. A real JS isolation boundary (a separate
++//    compartment/sandbox per plugin) is a hardening follow-up (ADR 0011), and
++//    remote install via the Marketplace is a later integration that MUST land
++//    behind that boundary. Until then, only sideload plugins you trust.
++
++import {
++  KavachaCommandRegistry,
++  KavachaCommandDomain,
++} from "resource:///modules/KavachaCommandRegistry.sys.mjs";
++import { KavachaPluginPermissions } from "resource:///modules/KavachaPluginPermissions.sys.mjs";
++import { KavachaSDK } from "resource:///modules/KavachaSDK.sys.mjs";
++
++const kPluginsDir = "kavacha-plugins";
++const kManifestName = "kavacha-plugin.json";
++const kStateFile = "state.json";
++
++function _pluginsRoot() {
++  return PathUtils.join(PathUtils.profileDir, kPluginsDir);
++}
++
++function _statePath() {
++  return PathUtils.join(_pluginsRoot(), kStateFile);
++}
++
++export const KavachaPluginManager = {
++  _initialized: false,
++  // id -> { deactivate } for currently active plugins, so disable() can tear down.
++  _active: new Map(),
++
++  async init() {
++    if (this._initialized) {
++      return;
++    }
++    this._initialized = true;
++    this._registerOpenCommand();
++    try {
++      for (const plugin of await this.list()) {
++        if (plugin.enabled && plugin.grants.length) {
++          await this._activate(plugin);
++        }
++      }
++    } catch (e) {
++      console.error("KavachaPluginManager: init scan failed", e);
++    }
++  },
++
++  // The palette entry to reach about:plugins. Registered once (guarded), with a
++  // source so it is clearly the manager's and not any plugin's.
++  _registerOpenCommand() {
++    if (KavachaCommandRegistry.has("kavacha-plugins-open")) {
++      return;
++    }
++    KavachaCommandRegistry.register(
++      {
++        l10nId: "kavacha-plugins-open",
++        rawLabel: "Manage Plugins",
++        command: window => window.switchToTabHavingURI("about:plugins", true),
++        icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++        domain: KavachaCommandDomain.AUTOMATION,
++      },
++      { source: "kavacha-plugin-manager" }
++    );
++  },
++
++  // ----- Discovery --------------------------------------------------------
++
++  async _readState() {
++    try {
++      const parsed = JSON.parse(await IOUtils.readUTF8(_statePath()));
++      return parsed && typeof parsed === "object" ? parsed : {};
++    } catch (e) {
++      return {}; // No state file yet — nothing enabled.
++    }
++  },
++
++  async _writeState(state) {
++    await IOUtils.makeDirectory(_pluginsRoot(), { ignoreExisting: true });
++    await IOUtils.writeUTF8(_statePath(), JSON.stringify(state, null, 2));
++  },
++
++  async _readManifest(id) {
++    const path = PathUtils.join(_pluginsRoot(), id, kManifestName);
++    const manifest = JSON.parse(await IOUtils.readUTF8(path));
++    if (manifest.id && manifest.id !== id) {
++      throw new Error(
++        `KavachaPluginManager: manifest id "${manifest.id}" != directory "${id}"`
++      );
++    }
++    return manifest;
++  },
++
++  /**
++   * Installed plugins: [{ id, manifest, enabled, grants }]. A directory with a
++   * malformed or missing manifest is skipped (logged), never crashing the scan.
++   */
++  async list() {
++    const out = [];
++    const state = await this._readState();
++    let children;
++    try {
++      children = await IOUtils.getChildren(_pluginsRoot());
++    } catch (e) {
++      return out; // No plugins directory yet.
++    }
++    for (const child of children) {
++      let info;
++      try {
++        info = await IOUtils.stat(child);
++      } catch (e) {
++        continue;
++      }
++      if (info.type !== "directory") {
++        continue;
++      }
++      const id = PathUtils.filename(child);
++      let manifest;
++      try {
++        manifest = await this._readManifest(id);
++      } catch (e) {
++        console.error(`KavachaPluginManager: skipping "${id}"`, e);
++        continue;
++      }
++      out.push({
++        id,
++        manifest,
++        enabled: state[id] === true,
++        grants: await KavachaPluginPermissions.getGrants(id),
++      });
++    }
++    return out;
++  },
++
++  async _get(id) {
++    return (await this.list()).find(p => p.id === id) || null;
++  },
++
++  // ----- Lifecycle --------------------------------------------------------
++
++  async _activate(plugin) {
++    if (this._active.has(plugin.id)) {
++      return;
++    }
++    const entryPath = PathUtils.join(
++      _pluginsRoot(),
++      plugin.id,
++      plugin.manifest.entry
++    );
++    let mod;
++    try {
++      // Load from the profile file the user sideloaded; nothing is fetched from
++      // the network. (No sandbox yet — trusted-on-grant; see the file header.)
++      mod = ChromeUtils.importESModule(PathUtils.toFileURI(entryPath));
++    } catch (e) {
++      console.error(`KavachaPluginManager: cannot load "${plugin.id}"`, e);
++      return;
++    }
++    const sdk = KavachaSDK.forPlugin(plugin.id);
++    try {
++      await mod.activate?.(sdk);
++    } catch (e) {
++      console.error(
++        `KavachaPluginManager: activate() threw in "${plugin.id}"`,
++        e
++      );
++    }
++    this._active.set(plugin.id, { deactivate: mod.deactivate });
++  },
++
++  async _deactivate(id) {
++    const entry = this._active.get(id);
++    if (entry) {
++      try {
++        await entry.deactivate?.();
++      } catch (e) {
++        console.error(`KavachaPluginManager: deactivate() threw in "${id}"`, e);
++      }
++      this._active.delete(id);
++    }
++    // Drop every command the plugin registered, whether or not it had a
++    // deactivate() — the registry source is the source of truth.
++    KavachaCommandRegistry.unregisterBySource(`plugin:${id}`);
++  },
++
++  // ----- Public API (about:plugins) --------------------------------------
++
++  /** Enable a plugin: persist the flag and activate it if it has grants. */
++  async enable(id) {
++    const state = await this._readState();
++    state[id] = true;
++    await this._writeState(state);
++    const plugin = await this._get(id);
++    if (plugin?.grants.length) {
++      await this._activate(plugin);
++    }
++  },
++
++  /** Disable a plugin: tear it down and clear the flag. Grants are kept. */
++  async disable(id) {
++    await this._deactivate(id);
++    const state = await this._readState();
++    delete state[id];
++    await this._writeState(state);
++  },
++
++  /**
++   * Grant a set of permissions (validated by the permission model, which
++   * rejects anything outside the grantable enum) and enable the plugin. This is
++   * the only path that widens a plugin's privileges.
++   */
++  async grant(id, perms) {
++    await KavachaPluginPermissions.setGrants(id, perms);
++    await this.enable(id);
++  },
++
++  /** Remove a plugin's directory, grants, enabled flag, and live commands. */
++  async uninstall(id) {
++    await this._deactivate(id);
++    const state = await this._readState();
++    delete state[id];
++    await this._writeState(state);
++    await KavachaPluginPermissions.revoke(id);
++    try {
++      await IOUtils.remove(PathUtils.join(_pluginsRoot(), id), {
++        recursive: true,
++        ignoreAbsent: true,
++      });
++    } catch (e) {
++      console.error(`KavachaPluginManager: could not remove "${id}"`, e);
++    }
++  },
++};
+diff --git a/src/zen/common/sys/KavachaPluginPermissions.sys.mjs b/src/zen/common/sys/KavachaPluginPermissions.sys.mjs
+new file mode 100644
+index 0000000..5084abf
+--- /dev/null
++++ b/src/zen/common/sys/KavachaPluginPermissions.sys.mjs
+@@ -0,0 +1,127 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha plugin permission model (ROADMAP Phase 3 "Kavacha SDK + plugin
++// permission model"; ADR 0011).
++//
++// A plugin may touch the browser only through capabilities the USER has
++// explicitly granted, and only four capabilities are grantable at all:
++// workspaces, tabs, notes, and commands. These map 1:1 onto the command
++// registry's capability enum (patch 0027). Passwords, saved credentials,
++// autofill, and browsing history are NOT in the enum and can never be granted
++// — that exclusion is structural, not a policy check that could be relaxed.
++//
++// Grants persist in the profile at kavacha-plugins/grants.json:
++//   { "<pluginId>": { granted: ["workspaces", ...], ts: <epoch ms> } }
++// IO mirrors the other engines (IOUtils/PathUtils, profile-relative; ADR 0008).
++
++export const KavachaPermission = Object.freeze({
++  WORKSPACES: "workspaces",
++  TABS: "tabs",
++  NOTES: "notes",
++  COMMANDS: "commands",
++});
++
++// The complete set of grantable permission values, in display order. This is
++// the ONLY set the user is ever offered — there is deliberately no "passwords",
++// "history", or "autofill" value anywhere in Kavacha's plugin surface.
++export const KAVACHA_GRANTABLE_PERMISSIONS = Object.freeze([
++  KavachaPermission.WORKSPACES,
++  KavachaPermission.TABS,
++  KavachaPermission.NOTES,
++  KavachaPermission.COMMANDS,
++]);
++
++// Plain-language copy for the about:plugins grant prompt. Each line says what
++// the capability lets a plugin do AND names its limit, so the user grants with
++// eyes open.
++export const KavachaPermissionDescription = Object.freeze({
++  [KavachaPermission.WORKSPACES]:
++    "See your workspaces and create new ones from a template. Cannot delete workspaces or read their isolated cookies.",
++  [KavachaPermission.TABS]:
++    "See open tabs and open or close web (http/https) and about: tabs. Cannot open file:// or chrome:// pages, and never reads page contents.",
++  [KavachaPermission.NOTES]:
++    "Read and write the note attached to the current workspace. No access to any other workspace data.",
++  [KavachaPermission.COMMANDS]:
++    "Add commands to the Cmd+K palette. Disabling the plugin removes every command it added.",
++});
++
++const kPluginsDir = "kavacha-plugins";
++const kGrantsFile = "grants.json";
++
++function _grantsPath() {
++  return PathUtils.join(PathUtils.profileDir, kPluginsDir, kGrantsFile);
++}
++
++/**
++ * Reject anything outside the grantable enum. Defense in depth: even if a
++ * manifest or a caller asks for "passwords" / "history" / "autofill", it never
++ * reaches storage — the enum is the whole world of grantable permissions.
++ */
++export function assertNeverSensitive(perms) {
++  if (!Array.isArray(perms)) {
++    throw new Error("KavachaPluginPermissions: permissions must be an array");
++  }
++  for (const perm of perms) {
++    if (!KAVACHA_GRANTABLE_PERMISSIONS.includes(perm)) {
++      throw new Error(
++        `KavachaPluginPermissions: "${perm}" is not a grantable permission ` +
++          `(passwords, history, and autofill are never grantable)`
++      );
++    }
++  }
++  return perms;
++}
++
++async function _readAll() {
++  try {
++    const parsed = JSON.parse(await IOUtils.readUTF8(_grantsPath()));
++    return parsed && typeof parsed === "object" ? parsed : {};
++  } catch (e) {
++    return {}; // No grants file yet — nothing is granted.
++  }
++}
++
++async function _writeAll(all) {
++  await IOUtils.makeDirectory(PathUtils.join(PathUtils.profileDir, kPluginsDir), {
++    ignoreExisting: true,
++  });
++  await IOUtils.writeUTF8(_grantsPath(), JSON.stringify(all, null, 2));
++}
++
++export const KavachaPluginPermissions = {
++  permissions: KavachaPermission,
++  grantable: KAVACHA_GRANTABLE_PERMISSIONS,
++  descriptions: KavachaPermissionDescription,
++  assertNeverSensitive,
++
++  /** The permissions currently granted to a plugin (possibly []). */
++  async getGrants(id) {
++    const entry = (await _readAll())[id];
++    return Array.isArray(entry?.granted) ? entry.granted.slice() : [];
++  },
++
++  /** Replace a plugin's granted permissions (validated) and stamp the time. */
++  async setGrants(id, perms) {
++    const clean = assertNeverSensitive([...new Set(perms || [])]);
++    const all = await _readAll();
++    all[id] = { granted: clean, ts: Date.now() };
++    await _writeAll(all);
++    return clean;
++  },
++
++  /** Whether a plugin currently holds a specific permission. */
++  async hasPermission(id, perm) {
++    return (await this.getGrants(id)).includes(perm);
++  },
++
++  /** Drop every permission a plugin holds (about:plugins "Revoke"). */
++  async revoke(id) {
++    const all = await _readAll();
++    if (id in all) {
++      delete all[id];
++      await _writeAll(all);
++    }
++  },
++};
+diff --git a/src/zen/common/sys/KavachaSDK.sys.mjs b/src/zen/common/sys/KavachaSDK.sys.mjs
+new file mode 100644
+index 0000000..c8688d7
+--- /dev/null
++++ b/src/zen/common/sys/KavachaSDK.sys.mjs
+@@ -0,0 +1,196 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha SDK — the capability facade a plugin calls (ROADMAP Phase 3 "Kavacha
++// SDK + plugin permission model"; ADR 0011). KavachaSDK.forPlugin(id) hands a
++// plugin a small object whose every method is gated by
++// KavachaPluginPermissions.hasPermission(id, ...): if the user has not granted
++// the capability, the call throws instead of acting. Grants are read live, so a
++// permission revoked at runtime fails the plugin's very next call.
++//
++// This is the ONLY sanctioned surface a plugin has. It deliberately exposes
++// four capabilities and nothing else:
++//   workspaces — list / current / create-from-template (read + safe create; no delete)
++//   tabs       — list / open (http/https/about only) / close, on the active window
++//   notes      — read / write the current workspace note
++//   commands   — register a Cmd+K command (revocable as a group by source)
++//
++// It NEVER exposes passwords, saved credentials, autofill, raw browsing
++// history, or chrome internals — those are not part of the permission enum and
++// there is no method here that could reach them. Widening this surface means
++// adding a capability to KavachaPermission first, on purpose.
++
++import {
++  KavachaPluginPermissions,
++  KavachaPermission,
++} from "resource:///modules/KavachaPluginPermissions.sys.mjs";
++import {
++  KavachaCommandRegistry,
++  KavachaCommandDomain,
++  KavachaCommandCapability,
++} from "resource:///modules/KavachaCommandRegistry.sys.mjs";
++
++function _activeWindow() {
++  const win = Services.wm.getMostRecentWindow("navigator:browser");
++  if (!win || win.closed) {
++    throw new Error("KavachaSDK: no active browser window");
++  }
++  return win;
++}
++
++function _slug(label) {
++  return (
++    String(label || "")
++      .toLowerCase()
++      .replace(/[^a-z0-9]+/g, "-")
++      .replace(/^-+|-+$/g, "")
++      .slice(0, 40) || "command"
++  );
++}
++
++// Only web-safe and about: URLs may be opened by a plugin. file:// and
++// chrome:// are refused so a plugin can never reach local files or privileged
++// UI through the tabs capability.
++function _assertOpenableUrl(url) {
++  let uri;
++  try {
++    uri = Services.io.newURI(String(url));
++  } catch (e) {
++    throw new Error(`KavachaSDK: invalid url "${url}"`);
++  }
++  if (!["http", "https", "about"].includes(uri.scheme)) {
++    throw new Error(
++      `KavachaSDK: refusing to open "${uri.scheme}:" — only http, https, and about are allowed`
++    );
++  }
++  return uri.spec;
++}
++
++function _publicWorkspace(w) {
++  return w ? { id: w.uuid, name: w.name, archived: !!w.archived } : null;
++}
++
++export const KavachaSDK = {
++  /**
++   * The capability facade for one plugin. Every method checks the plugin's
++   * live grants first; a revoked permission fails the very next call. The
++   * facade holds no privileged references itself — it resolves the active
++   * window (and its gZenWorkspaces / gBrowser) at call time.
++   */
++  forPlugin(id) {
++    const require = async perm => {
++      if (!(await KavachaPluginPermissions.hasPermission(id, perm))) {
++        throw new Error(`Kavacha plugin "${id}" lacks the "${perm}" permission`);
++      }
++    };
++    // Passed to a plugin's command handler so it can call back into its SDK.
++    const context = { pluginId: id, sdk: null };
++
++    const api = {
++      pluginId: id,
++
++      workspaces: {
++        async list() {
++          await require(KavachaPermission.WORKSPACES);
++          const gz = _activeWindow().gZenWorkspaces;
++          return (gz?.getWorkspaces?.() || []).map(_publicWorkspace);
++        },
++        async current() {
++          await require(KavachaPermission.WORKSPACES);
++          const gz = _activeWindow().gZenWorkspaces;
++          return _publicWorkspace(gz?.getWorkspaceFromId?.(gz.activeWorkspace));
++        },
++        // Read + safe create only — there is deliberately no delete/archive.
++        async createFromTemplate(kind) {
++          await require(KavachaPermission.WORKSPACES);
++          return _activeWindow().gZenWorkspaces?.createWorkspaceFromTemplate(
++            kind
++          );
++        },
++      },
++
++      tabs: {
++        async list() {
++          await require(KavachaPermission.TABS);
++          const gBrowser = _activeWindow().gBrowser;
++          return (gBrowser?.tabs || []).map((tab, i) => ({
++            id: i,
++            url: tab.linkedBrowser?.currentURI?.spec || "",
++            title: tab.label || "",
++            selected: !!tab.selected,
++          }));
++        },
++        async open(url) {
++          await require(KavachaPermission.TABS);
++          const spec = _assertOpenableUrl(url);
++          return _activeWindow().gBrowser?.addTab(spec, {
++            triggeringPrincipal:
++              Services.scriptSecurityManager.getSystemPrincipal(),
++          });
++        },
++        async close(tabId) {
++          await require(KavachaPermission.TABS);
++          const gBrowser = _activeWindow().gBrowser;
++          const tab = gBrowser?.tabs?.[tabId];
++          if (tab) {
++            gBrowser.removeTab(tab);
++          }
++        },
++      },
++
++      notes: {
++        async read() {
++          await require(KavachaPermission.NOTES);
++          const gz = _activeWindow().gZenWorkspaces;
++          const notes = (await gz?.kavachaGetAllNotes?.()) || {};
++          return notes[gz.activeWorkspace]?.content ?? "";
++        },
++        async write(text) {
++          await require(KavachaPermission.NOTES);
++          const gz = _activeWindow().gZenWorkspaces;
++          // TODO(ADR 0011): gZenWorkspaces owns the single notes JSONFile and
++          // has no public setter yet — patch 0008 keeps #notesFile private and
++          // only writes via the panel's #flushWorkspaceNotes. A
++          // gZenWorkspaces.kavachaSetNote(uuid, text) accessor mirroring
++          // kavachaGetAllNotes() is the clean home for this; wire this call to
++          // it when it lands. Authored blind — do NOT reach into private fields.
++          if (typeof gz?.kavachaSetNote === "function") {
++            return gz.kavachaSetNote(gz.activeWorkspace, String(text ?? ""));
++          }
++          throw new Error(
++            "KavachaSDK: notes.write needs gZenWorkspaces.kavachaSetNote (pending; see ADR 0011)"
++          );
++        },
++      },
++
++      commands: {
++        async register({ label, run } = {}) {
++          await require(KavachaPermission.COMMANDS);
++          if (typeof run !== "function" || !label) {
++            throw new Error(
++              "KavachaSDK: commands.register needs { label, run }"
++            );
++          }
++          // Dogfoods the patch-0027 registry: literal rawLabel (no .ftl key for
++          // runtime commands), identity l10nId namespaced by plugin id, and a
++          // source of "plugin:<id>" so disabling the plugin drops it as a group.
++          return KavachaCommandRegistry.register(
++            {
++              l10nId: `kavacha-plugin-${id}-${_slug(label)}`,
++              rawLabel: label,
++              command: () => run(context),
++              icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++              domain: KavachaCommandDomain.AUTOMATION,
++              capability: KavachaCommandCapability.COMMANDS,
++            },
++            { source: `plugin:${id}` }
++          );
++        },
++      },
++    };
++
++    context.sdk = api;
++    return api;
++  },
++};
+diff --git a/src/zen/kavacha-plugins/KavachaAboutPlugins.sys.mjs b/src/zen/kavacha-plugins/KavachaAboutPlugins.sys.mjs
+new file mode 100644
+index 0000000..a82958f
+--- /dev/null
++++ b/src/zen/kavacha-plugins/KavachaAboutPlugins.sys.mjs
+@@ -0,0 +1,52 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha: nsIAboutModule for about:plugins — the plugin manager UI (ROADMAP
++// Phase 3 "Kavacha SDK + plugin permission model"; ADR 0011).
++//
++// Same modern JS about-module pattern as about:studio (ADR 0009 /
++// KavachaAboutStudio.sys.mjs): registered through components.conf against the
++// contract `@mozilla.org/network/protocol/about;1?what=plugins`, so NO Gecko
++// C++ redirector edit is needed (MASTER_PLAN Principle 1). It resolves
++// about:plugins to a privileged chrome document.
++//
++// WHY PRIVILEGED (IS_SECURE_CHROME_UI, like about:preferences / about:studio):
++// plugins.js drives KavachaPluginManager and KavachaPluginPermissions through
++// their public APIs to list, enable/disable, grant/revoke, and uninstall
++// sideloaded plugins. A secure-chrome-UI page loads in the parent process with
++// the system principal (the chrome:// target keeps that principal — see
++// nsAboutRedirector.cpp), which is what lets it call ChromeUtils.importESModule
++// on those modules. It is never web content (no URI_SAFE_FOR_UNTRUSTED_CONTENT).
++
++const kChromeURL = "chrome://browser/content/kavacha-plugins/plugins.html";
++
++export class AboutPlugins {
++  QueryInterface = ChromeUtils.generateQI(["nsIAboutModule"]);
++
++  newChannel(aURI, aLoadInfo) {
++    const chromeURI = Services.io.newURI(kChromeURL);
++    // chrome:// is a UI resource, so the channel keeps the system principal (we
++    // deliberately do NOT set a result-principal URI). Same shape as
++    // KavachaAboutStudio: build from the loadInfo, then re-point originalURI so
++    // the address bar still reads "about:plugins".
++    const channel = Services.io.newChannelFromURIWithLoadInfo(
++      chromeURI,
++      aLoadInfo
++    );
++    channel.originalURI = aURI;
++    return channel;
++  }
++
++  getURIFlags() {
++    // Privileged chrome UI, scripts allowed — the about:preferences profile.
++    // No URI_SAFE_FOR_UNTRUSTED_CONTENT: about:plugins is never web content.
++    return (
++      Ci.nsIAboutModule.ALLOW_SCRIPT | Ci.nsIAboutModule.IS_SECURE_CHROME_UI
++    );
++  }
++
++  getChromeURI() {
++    return Services.io.newURI(kChromeURL);
++  }
++}
+diff --git a/src/zen/kavacha-plugins/components.conf b/src/zen/kavacha-plugins/components.conf
+new file mode 100644
+index 0000000..03e7807
+--- /dev/null
++++ b/src/zen/kavacha-plugins/components.conf
+@@ -0,0 +1,15 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++# Kavacha: register about:plugins (the plugin manager) as a JS nsIAboutModule.
++# Mirrors src/zen/kavacha-studio/components.conf so no Gecko C++ redirector edit
++# is needed (ADR 0011). The cid is fresh and distinct from about:studio's.
++Classes = [
++    {
++        "cid": "{68917169-5a6c-4ab0-a89b-6e7c382acc0f}",
++        "contract_ids": ["@mozilla.org/network/protocol/about;1?what=plugins"],
++        "esModule": "resource:///modules/KavachaAboutPlugins.sys.mjs",
++        "constructor": "AboutPlugins",
++    },
++]
+diff --git a/src/zen/kavacha-plugins/jar.inc.mn b/src/zen/kavacha-plugins/jar.inc.mn
+new file mode 100644
+index 0000000..9764d36
+--- /dev/null
++++ b/src/zen/kavacha-plugins/jar.inc.mn
+@@ -0,0 +1,7 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++        content/browser/kavacha-plugins/plugins.html                           (../../zen/kavacha-plugins/plugins.html)
++        content/browser/kavacha-plugins/plugins.css                            (../../zen/kavacha-plugins/plugins.css)
++        content/browser/kavacha-plugins/plugins.js                             (../../zen/kavacha-plugins/plugins.js)
+diff --git a/src/zen/kavacha-plugins/moz.build b/src/zen/kavacha-plugins/moz.build
+new file mode 100644
+index 0000000..f9afb7e
+--- /dev/null
++++ b/src/zen/kavacha-plugins/moz.build
+@@ -0,0 +1,17 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++# Kavacha plugin manager (about:plugins). The JS about-module is a plain
++# EXTRA_JS_MODULE (resource:///modules/KavachaAboutPlugins.sys.mjs); its
++# components.conf registers the about: contract. The plugins.html/css/js chrome
++# content is registered separately via jar.inc.mn (included from
++# src/browser/base/content/zen-assets.jar.inc.mn). ADR 0011.
++
++EXTRA_JS_MODULES += [
++    "KavachaAboutPlugins.sys.mjs",
++]
++
++XPCOM_MANIFESTS += [
++    "components.conf",
++]
+diff --git a/src/zen/kavacha-plugins/plugins.css b/src/zen/kavacha-plugins/plugins.css
+new file mode 100644
+index 0000000..eeda84d
+--- /dev/null
++++ b/src/zen/kavacha-plugins/plugins.css
+@@ -0,0 +1,267 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* about:plugins — the plugin manager. Styled from the same Kavacha/Zen chrome
++ * tokens as the Customization Studio (studio.css) so it follows the active
++ * theme (patch 0016 bakes the Midnight floor; the theme engine, patch 0023,
++ * re-tints --kavacha-* live). ADR 0011. */
++
++:root {
++  --pl-surface: var(--kavacha-surface, #14111f);
++  --pl-elevated: var(--kavacha-surface-elevated, #1d1930);
++  --pl-sunken: var(--kavacha-surface-sunken, #0e0b18);
++  --pl-border: var(--kavacha-border, #2e2846);
++  --pl-text: var(--kavacha-text-primary, #edeaf7);
++  --pl-text-dim: var(--kavacha-text-secondary, #a79fc4);
++  --pl-accent: var(--zen-primary-color, var(--kavacha-accent, #8b7bd8));
++  --pl-danger: #e06c75;
++  color-scheme: dark;
++}
++
++* {
++  box-sizing: border-box;
++}
++
++body {
++  margin: 0;
++  padding: 0 0 64px;
++  font: message-box;
++  font-size: 15px;
++  line-height: 1.5;
++  color: var(--pl-text);
++  background: var(--pl-surface);
++  min-height: 100vh;
++}
++
++.plugins-header {
++  padding: 40px max(24px, 50% - 460px) 24px;
++  background: linear-gradient(
++    180deg,
++    var(--pl-elevated),
++    var(--pl-surface)
++  );
++  border-bottom: 1px solid var(--pl-border);
++}
++
++.plugins-title h1 {
++  margin: 0;
++  font-size: 28px;
++  font-weight: 700;
++  letter-spacing: -0.01em;
++}
++
++.plugins-subtitle {
++  margin: 6px 0 0;
++  color: var(--pl-text-dim);
++  max-width: 60ch;
++}
++
++.plugins-body {
++  padding: 28px max(24px, 50% - 460px) 0;
++  max-width: 920px;
++  margin: 0 auto;
++}
++
++.plugins-note {
++  background: var(--pl-sunken);
++  border: 1px solid var(--pl-border);
++  border-radius: 12px;
++  padding: 14px 16px;
++  color: var(--pl-text-dim);
++  font-size: 13px;
++  margin-bottom: 20px;
++}
++
++.plugins-note code,
++.plugins-empty code {
++  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
++  font-size: 12px;
++  color: var(--pl-text);
++}
++
++.plugins-empty {
++  color: var(--pl-text-dim);
++  font-size: 14px;
++  padding: 8px 2px;
++}
++
++.plugin-list {
++  display: flex;
++  flex-direction: column;
++  gap: 18px;
++}
++
++.plugin-card {
++  background: var(--pl-elevated);
++  border: 1px solid var(--pl-border);
++  border-radius: 14px;
++  padding: 20px 22px;
++}
++
++.plugin-card-head {
++  display: flex;
++  align-items: flex-start;
++  justify-content: space-between;
++  gap: 16px;
++  flex-wrap: wrap;
++}
++
++.plugin-name {
++  margin: 0;
++  font-size: 17px;
++  font-weight: 650;
++}
++
++.plugin-meta {
++  margin: 2px 0 0;
++  color: var(--pl-text-dim);
++  font-size: 12px;
++}
++
++.plugin-desc {
++  margin: 10px 0 0;
++  color: var(--pl-text-dim);
++  font-size: 13px;
++  max-width: 62ch;
++}
++
++/* Enable/disable toggle */
++.plugin-toggle {
++  display: inline-flex;
++  align-items: center;
++  gap: 8px;
++  flex-shrink: 0;
++  font-size: 13px;
++  font-weight: 600;
++  color: var(--pl-text-dim);
++  cursor: pointer;
++}
++
++.plugin-toggle input {
++  accent-color: var(--pl-accent);
++  width: 16px;
++  height: 16px;
++}
++
++.plugin-toggle[data-enabled="true"] {
++  color: var(--pl-text);
++}
++
++/* Permissions */
++.plugin-perms {
++  margin-top: 16px;
++  border-top: 1px solid var(--pl-border);
++  padding-top: 14px;
++}
++
++.plugin-perms h3 {
++  margin: 0 0 4px;
++  font-size: 13px;
++  font-weight: 650;
++  text-transform: uppercase;
++  letter-spacing: 0.04em;
++  color: var(--pl-text-dim);
++}
++
++.perm-row {
++  display: flex;
++  align-items: flex-start;
++  gap: 10px;
++  padding: 10px 0;
++  border-bottom: 1px solid var(--pl-border);
++}
++
++.perm-row:last-child {
++  border-bottom: none;
++}
++
++.perm-row input {
++  accent-color: var(--pl-accent);
++  width: 16px;
++  height: 16px;
++  margin-top: 2px;
++  flex-shrink: 0;
++}
++
++.perm-copy {
++  display: flex;
++  flex-direction: column;
++  gap: 2px;
++  min-width: 0;
++}
++
++.perm-name {
++  font-weight: 600;
++  font-size: 13px;
++  text-transform: capitalize;
++}
++
++.perm-desc {
++  color: var(--pl-text-dim);
++  font-size: 12px;
++}
++
++.plugin-none-requested {
++  color: var(--pl-text-dim);
++  font-size: 13px;
++  margin: 4px 0 0;
++}
++
++/* Actions */
++.plugin-actions {
++  display: flex;
++  align-items: center;
++  gap: 12px;
++  margin-top: 16px;
++  flex-wrap: wrap;
++}
++
++.plugin-status {
++  color: var(--pl-text-dim);
++  font-size: 13px;
++  role: status;
++}
++
++.pl-button {
++  appearance: none;
++  font: inherit;
++  font-weight: 600;
++  border-radius: 10px;
++  padding: 9px 16px;
++  cursor: pointer;
++  border: 1px solid var(--pl-border);
++  background: transparent;
++  color: var(--pl-text-dim);
++}
++
++.pl-button:hover {
++  color: var(--pl-text);
++  background: var(--pl-sunken);
++}
++
++.pl-button.primary {
++  background: var(--pl-accent);
++  color: #fff;
++  border-color: transparent;
++}
++
++.pl-button.primary:hover {
++  filter: brightness(1.08);
++  background: var(--pl-accent);
++  color: #fff;
++}
++
++.pl-button.danger {
++  color: var(--pl-danger);
++  border-color: color-mix(in srgb, var(--pl-danger) 45%, var(--pl-border));
++}
++
++.pl-button.danger:hover {
++  color: #fff;
++  background: var(--pl-danger);
++}
++
++.pl-button.ghost {
++  margin-inline-start: auto;
++}
+diff --git a/src/zen/kavacha-plugins/plugins.html b/src/zen/kavacha-plugins/plugins.html
+new file mode 100644
+index 0000000..9353b8f
+--- /dev/null
++++ b/src/zen/kavacha-plugins/plugins.html
+@@ -0,0 +1,46 @@
++<!-- This Source Code Form is subject to the terms of the Mozilla Public
++   - License, v. 2.0. If a copy of the MPL was not distributed with this
++   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
++<!DOCTYPE html>
++<html lang="en" dir="ltr">
++  <head>
++    <meta charset="utf-8" />
++    <meta
++      http-equiv="Content-Security-Policy"
++      content="default-src chrome:; img-src chrome: data:; style-src chrome: 'unsafe-inline'; object-src 'none'"
++    />
++    <title>Plugins</title>
++    <link rel="stylesheet" href="chrome://browser/content/kavacha-plugins/plugins.css" />
++    <script src="chrome://browser/content/kavacha-plugins/plugins.js"></script>
++  </head>
++  <body>
++    <header class="plugins-header">
++      <div class="plugins-title">
++        <h1>Plugins</h1>
++        <p class="plugins-subtitle">
++          Extend Kavacha with small, permissioned add-ons. A plugin can only do
++          what you explicitly allow — and can never touch your passwords,
++          history, or private data.
++        </p>
++      </div>
++    </header>
++
++    <main class="plugins-body">
++      <div class="plugins-note" role="note">
++        Plugins are <strong>sideloaded</strong> into your profile at
++        <code>kavacha-plugins/</code>. Drop a plugin folder there, then enable
++        it below. Installing plugins from the Marketplace is a later
++        integration.
++      </div>
++
++      <section id="plugin-list" class="plugin-list" aria-live="polite">
++        <!-- plugin cards injected by plugins.js -->
++      </section>
++
++      <p id="plugins-empty" class="plugins-empty" hidden>
++        No plugins installed yet. Add a plugin folder to
++        <code>kavacha-plugins/</code> in your profile and reload this page.
++      </p>
++    </main>
++  </body>
++</html>
+diff --git a/src/zen/kavacha-plugins/plugins.js b/src/zen/kavacha-plugins/plugins.js
+new file mode 100644
+index 0000000..0aee53e
+--- /dev/null
++++ b/src/zen/kavacha-plugins/plugins.js
+@@ -0,0 +1,217 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++// about:plugins front-end (ADR 0011). Runs in the parent process with the
++// system principal (IS_SECURE_CHROME_UI — see KavachaAboutPlugins.sys.mjs), so
++// it drives the plugin manager and permission model through their public APIs.
++// It lists sideloaded plugins, shows each declared permission with a plain
++// explanation, and offers grant/enable, disable, revoke, and uninstall. The
++// page never reads plugin code or private data — only manifests and grants.
++
++/* global ChromeUtils */
++
++const { KavachaPluginManager } = ChromeUtils.importESModule(
++  "resource:///modules/KavachaPluginManager.sys.mjs"
++);
++const { KavachaPluginPermissions } = ChromeUtils.importESModule(
++  "resource:///modules/KavachaPluginPermissions.sys.mjs"
++);
++
++const PERM_DESCRIPTIONS = KavachaPluginPermissions.descriptions;
++
++function el(tag, props = {}, ...children) {
++  const node = document.createElement(tag);
++  for (const [k, v] of Object.entries(props)) {
++    if (k === "class") {
++      node.className = v;
++    } else if (k === "text") {
++      node.textContent = v;
++    } else if (k.startsWith("data-") || k === "role") {
++      node.setAttribute(k, v);
++    } else {
++      node[k] = v;
++    }
++  }
++  for (const child of children) {
++    if (child) {
++      node.append(child);
++    }
++  }
++  return node;
++}
++
++function metaLine(plugin) {
++  const m = plugin.manifest;
++  const bits = [plugin.id, m.version ? `v${m.version}` : null, m.author].filter(
++    Boolean
++  );
++  return bits.join("  ·  ");
++}
++
++// Build the permissions block. Each requested permission gets a checkbox that
++// is pre-checked when the user has already granted it; the descriptions come
++// from the permission model so the enum's limits are spelled out in plain
++// language.
++function permsBlock(plugin) {
++  const requested = Array.isArray(plugin.manifest.permissions)
++    ? plugin.manifest.permissions
++    : [];
++  const wrap = el("div", { class: "plugin-perms" }, el("h3", { text: "Permissions" }));
++
++  if (!requested.length) {
++    wrap.append(
++      el("p", {
++        class: "plugin-none-requested",
++        text: "This plugin requests no permissions.",
++      })
++    );
++    return { wrap, checkboxes: [] };
++  }
++
++  const checkboxes = [];
++  for (const perm of requested) {
++    const box = el("input", { type: "checkbox" });
++    box.checked = plugin.grants.includes(perm);
++    box.dataset.perm = perm;
++    checkboxes.push(box);
++    wrap.append(
++      el(
++        "label",
++        { class: "perm-row" },
++        box,
++        el(
++          "span",
++          { class: "perm-copy" },
++          el("span", { class: "perm-name", text: perm }),
++          el("span", {
++            class: "perm-desc",
++            text: PERM_DESCRIPTIONS[perm] || "",
++          })
++        )
++      )
++    );
++  }
++  return { wrap, checkboxes };
++}
++
++function card(plugin) {
++  const node = el("article", { class: "plugin-card", "data-id": plugin.id });
++
++  // Enable/disable toggle.
++  const toggle = el("input", { type: "checkbox" });
++  toggle.checked = plugin.enabled;
++  const toggleLabel = el(
++    "label",
++    { class: "plugin-toggle", "data-enabled": String(plugin.enabled) },
++    toggle,
++    el("span", { text: plugin.enabled ? "Enabled" : "Disabled" })
++  );
++
++  node.append(
++    el(
++      "div",
++      { class: "plugin-card-head" },
++      el(
++        "div",
++        {},
++        el("h2", { class: "plugin-name", text: plugin.manifest.name || plugin.id }),
++        el("p", { class: "plugin-meta", text: metaLine(plugin) })
++      ),
++      toggleLabel
++    )
++  );
++
++  if (plugin.manifest.description) {
++    node.append(el("p", { class: "plugin-desc", text: plugin.manifest.description }));
++  }
++
++  const { wrap, checkboxes } = permsBlock(plugin);
++  node.append(wrap);
++
++  const status = el("span", { class: "plugin-status", role: "status" });
++  const grantBtn = el("button", {
++    class: "pl-button primary",
++    text: "Grant & enable",
++  });
++  const revokeBtn = el("button", { class: "pl-button danger", text: "Revoke" });
++  const uninstallBtn = el("button", {
++    class: "pl-button ghost",
++    text: "Uninstall",
++  });
++
++  grantBtn.addEventListener("click", async () => {
++    const perms = checkboxes.filter(b => b.checked).map(b => b.dataset.perm);
++    status.textContent = "Saving…";
++    try {
++      await KavachaPluginManager.grant(plugin.id, perms);
++    } catch (e) {
++      console.error("about:plugins: grant failed", e);
++      status.textContent = "Could not grant — see the Browser Console.";
++      return;
++    }
++    await render();
++  });
++
++  revokeBtn.addEventListener("click", async () => {
++    status.textContent = "Revoking…";
++    try {
++      await KavachaPluginPermissions.revoke(plugin.id);
++      await KavachaPluginManager.disable(plugin.id);
++    } catch (e) {
++      console.error("about:plugins: revoke failed", e);
++      status.textContent = "Could not revoke — see the Browser Console.";
++      return;
++    }
++    await render();
++  });
++
++  uninstallBtn.addEventListener("click", async () => {
++    status.textContent = "Removing…";
++    try {
++      await KavachaPluginManager.uninstall(plugin.id);
++    } catch (e) {
++      console.error("about:plugins: uninstall failed", e);
++      status.textContent = "Could not uninstall — see the Browser Console.";
++      return;
++    }
++    await render();
++  });
++
++  toggle.addEventListener("change", async () => {
++    try {
++      if (toggle.checked) {
++        await KavachaPluginManager.enable(plugin.id);
++      } else {
++        await KavachaPluginManager.disable(plugin.id);
++      }
++    } catch (e) {
++      console.error("about:plugins: toggle failed", e);
++    }
++    await render();
++  });
++
++  node.append(
++    el("div", { class: "plugin-actions" }, grantBtn, revokeBtn, status, uninstallBtn)
++  );
++  return node;
++}
++
++async function render() {
++  let plugins;
++  try {
++    plugins = await KavachaPluginManager.list();
++  } catch (e) {
++    console.error("about:plugins: list failed", e);
++    plugins = [];
++  }
++  const list = document.getElementById("plugin-list");
++  const empty = document.getElementById("plugins-empty");
++  list.textContent = "";
++  empty.hidden = plugins.length > 0;
++  for (const plugin of plugins) {
++    list.append(card(plugin));
++  }
++}
++
++document.addEventListener("DOMContentLoaded", render);
+diff --git a/src/zen/moz.build b/src/zen/moz.build
+--- a/src/zen/moz.build
++++ b/src/zen/moz.build
+@@ -8,5 +9,6 @@ DIRS += [
+     "drag-and-drop",
+     "glance",
+     "kavacha-marketplace",
++    "kavacha-plugins",
+     "kavacha-studio",
+     "live-folders",

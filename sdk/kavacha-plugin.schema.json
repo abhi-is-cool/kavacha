@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kavacha.app/schemas/kavacha-plugin.schema.json",
+  "title": "Kavacha Plugin Manifest",
+  "description": "kavacha-plugin.json at the root of a plugin package, sideloaded into the profile at kavacha-plugins/<id>/. A plugin reaches the browser ONLY through the Kavacha SDK (KavachaSDK.forPlugin(id)), and only for capabilities the user has explicitly granted. The permission enum is deliberately limited to workspaces/tabs/notes/commands: passwords, saved credentials, autofill, browsing history, and other private data are structurally excluded and can never be requested or granted.",
+  "type": "object",
+  "required": ["id", "name", "version", "entry"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "description": "Unique kebab-case plugin id, e.g. 'zotero-bridge'. Also the profile directory name (kavacha-plugins/<id>/) and the command-registry source key (plugin:<id>)."
+    },
+    "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semver; the marketplace uses this for updates."
+    },
+    "entry": {
+      "type": "string",
+      "description": "Relative path (within the plugin directory) to the plugin's ES module entry point. It must export activate(sdk) and may export deactivate()."
+    },
+    "author": { "type": "string" },
+    "description": { "type": "string", "maxLength": 500 },
+    "permissions": {
+      "type": "array",
+      "description": "Capabilities the plugin requests. Each must be granted by the user (about:plugins) before it takes effect. NOTE: passwords, saved credentials, autofill, and browsing history are NEVER grantable — the enum has no value for them by design, and the permission model rejects anything outside it.",
+      "items": {
+        "type": "string",
+        "enum": ["workspaces", "tabs", "notes", "commands"]
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "kavachaMinVersion": {
+      "type": "string",
+      "description": "Minimum Kavacha version this plugin supports."
+    }
+  }
+}

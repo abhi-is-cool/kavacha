@@ -6,7 +6,9 @@
 # Usage:
 #   ./build/bootstrap.sh          # setup: check prereqs, clone upstream, npm i, init source
 #   ./build/bootstrap.sh build    # full browser build (first run: 1-3 hours)
-#   ./build/bootstrap.sh ui       # fast rebuild after UI-only changes
+#   ./build/bootstrap.sh fast     # import + repackage front end only, no C++/Rust
+#                                 # compile. Use for CSS/FTL/XHTML/prefs/about: pages.
+#   ./build/bootstrap.sh ui       # raw build:ui, NO import -- prefer `fast`
 #   ./build/bootstrap.sh start    # launch the built browser
 #   ./build/bootstrap.sh package  # produce installers (DMG/tar/exe) in browser/zen-upstream/dist/
 #   ./build/bootstrap.sh update   # pull latest upstream and re-apply Kavacha patches
@@ -160,6 +162,33 @@ build_all() {
     (cd "$UPSTREAM_DIR" && npm run build)
 }
 
+# Repackage the front end without recompiling C++/Rust.
+#
+# A full `build` is ~27 minutes and is only necessary when compiled code
+# changes. CSS, FTL, XHTML, prefs and about: pages only need re-importing and
+# repackaging, which takes minutes. Three consecutive full rebuilds were spent
+# on one FTL string and two CSS values before this existed.
+#
+# This is NOT the same as the bare `ui` case below. `ui` runs `build:ui` alone,
+# with no import -- which is exactly D0d, the defect where a change under src/
+# never reaches the binary while every check still passes. Anything delivered
+# as src/**/*.patch (0021/0031/0032/0038 among others) reaches engine/ only via
+# import, so skipping it produces a build that silently lacks the change you
+# are trying to test. The import and locale sync below are load-bearing.
+#
+# Still use the full `build` when C++/Rust or anything needing compilation
+# changed. When in doubt, `build`: a wrong `fast` costs a confusing debugging
+# session, a needless `build` costs 27 minutes.
+build_fast() {
+    restore_mozbuild
+    log "Importing source into the engine (skipping import here would be D0d)..."
+    (cd "$UPSTREAM_DIR" && npm run import)
+    sync_locales
+    apply_branding
+    log "Repackaging front end only (no C++/Rust compile)..."
+    (cd "$UPSTREAM_DIR" && npm run build:ui)
+}
+
 case "${1:-setup}" in
     setup)  setup ;;
     build)  build_all ;;
@@ -168,7 +197,13 @@ case "${1:-setup}" in
         # only when you know nothing under src/ changed.
         (cd "$UPSTREAM_DIR" && npm run build)
         ;;
-    ui)     (cd "$UPSTREAM_DIR" && npm run build:ui) ;;
+    fast)   build_fast ;;
+    ui)
+        # Raw build:ui with NO import. Reintroduces D0d for anything delivered
+        # under src/ -- prefer `fast`, which imports first. Kept only for the
+        # case where you have already imported by hand this cycle.
+        (cd "$UPSTREAM_DIR" && npm run build:ui)
+        ;;
     start)
         # A running instance silently absorbs new launches (Firefox remoting
         # opens a window in the OLD process — stale code after rebuilds).

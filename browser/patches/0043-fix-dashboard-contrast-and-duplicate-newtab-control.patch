@@ -1,0 +1,160 @@
+Fix D2 (dashboard contrast) and D7 (duplicate new-tab control)
+
+D2 -- WCAG AA on the dashboard.
+The dashboard paints text over a Wikimedia photo behind a gradient scrim, so
+there is no fixed background colour and therefore no single contrast ratio.
+The honest measure is the WORST case: the same text over the brightest pixel a
+photo can supply, with the scrim composited on top. Measured that way, every
+text element on the page failed:
+
+  .name-label  1.12:1  (need 3.0 -- 48px large text)
+  .name-skip   1.10:1  (need 4.5)
+  .settings    1.84:1  (need 4.5)
+  .credit      2.36:1  (need 4.5)
+
+On the dark page background they all "passed" (5.29-16.82:1), which is why
+this went unnoticed -- a probe that measures the page background rather than
+the worst-case photo reports the page as fine.
+
+.settings was the worst offender because `opacity: 0.85` multiplied into an
+already-translucent colour (0.6 x 0.85 = 0.51 effective alpha). text-shadow
+does not count toward WCAG and could not rescue any of them.
+
+Fixing this by darkening the global .scrim would need alpha ~0.80 and bury the
+wallpaper the page exists to show. Instead each affected element gets a LOCAL
+backdrop, which bounds the worst case while leaving the photo alone:
+
+  .credit / .settings  pill backdrop 0.55, text 0.92  ->  8.59:1
+  .name-form           panel backdrop 0.55            ->  5.17:1 / 4.68:1
+
+Alphas were solved numerically, not chosen by eye; the sweep is recorded in
+documentation/VERIFICATION.md D2. Whether the result looks right is still a
+human call (BLOCKED.md B7) -- this patch only guarantees the floor.
+
+D7 -- one pref, two contradictory checkboxes.
+`zen.urlbar.replace-newtab` was bound by two live controls with OPPOSITE
+polarity: kavachaNewtabFloatingSearch in Zen's Looks and Feel pane (direct)
+and kavachaAppearanceNewtabDashboard in Kavacha's Appearance pane (inverse).
+Ticking either silently unticked the other, and they read as contradicting
+each other because one is phrased positively and the other negatively. Both
+were Kavacha's own additions (0011 and 0031 respectively), so this is not a
+question of overriding upstream.
+
+The Appearance pane keeps it: Kavacha owns that pane, settings consolidation
+into Kavacha panes was the 0030-0032 decision, and 0041/0042 settled the
+wording there. The Looks and Feel checkbox is removed, with a comment at the
+removal site so the next person does not re-add it.
+
+Verified: all 42 preceding patches plus this one apply cleanly at the pin.
+--- aa/src/zen/kavacha-newtab/newtab.css
++++ bb/src/zen/kavacha-newtab/newtab.css
+@@ -85,14 +85,31 @@ body {
+   );
+ }
+ 
++/* D2 (WCAG AA over an arbitrary photo).
++   The .scrim above is a gradient over the wallpaper, so there is no fixed
++   background colour and no single contrast ratio -- the honest measure is the
++   WORST case, the same text over the brightest pixel a photo can supply.
++   Measured there, these two corners were 2.36:1 (.credit) and 1.84:1
++   (.settings) against a 4.5:1 requirement: unreadable over any bright photo.
++   text-shadow does not count toward WCAG and cannot rescue them.
++
++   Darkening the global .scrim enough to fix this needs alpha ~0.80, which
++   would bury the wallpaper. A local backdrop on just these small elements
++   bounds the worst case at 8.59:1 and leaves the photo alone. The sweep
++   behind these alphas is in documentation/VERIFICATION.md D2 -- recompute it
++   before retuning them rather than adjusting by eye. */
+ .credit {
+   position: fixed;
+   bottom: 1rem;
+   right: 1.4rem;
+   font-size: 0.8rem;
+-  color: rgba(255, 255, 255, 0.75);
++  color: rgba(255, 255, 255, 0.92);
+   text-decoration: none;
+   text-shadow: 0 1px 10px rgba(0, 0, 0, 0.6);
++  background: rgba(0, 0, 0, 0.55);
++  padding: 0.25rem 0.65rem;
++  border-radius: 999px;
++  backdrop-filter: blur(6px);
+   max-width: 44vw;
+   overflow: hidden;
+   text-overflow: ellipsis;
+@@ -109,18 +126,21 @@ body {
+   bottom: 1rem;
+   left: 1.4rem;
+   font-size: 0.8rem;
+-  color: rgba(255, 255, 255, 0.6);
++  color: rgba(255, 255, 255, 0.92);
+   text-decoration: none;
+   text-shadow: 0 1px 10px rgba(0, 0, 0, 0.6);
+-  opacity: 0.85;
+-  transition:
+-    color 0.2s,
+-    opacity 0.2s;
++  background: rgba(0, 0, 0, 0.55);
++  padding: 0.25rem 0.65rem;
++  border-radius: 999px;
++  backdrop-filter: blur(6px);
++  /* the old opacity: 0.85 multiplied INTO the text alpha (0.6 x 0.85 = 0.51),
++     which is what put this furthest under AA of anything on the page.
++     Hover keeps its emphasis through colour alone. */
++  transition: color 0.2s;
+ }
+ 
+ .settings:hover {
+   color: #fff;
+-  opacity: 1;
+ }
+ 
+ /* ---- onboarding ---- */
+@@ -136,6 +156,15 @@ body {
+ .name-form {
+   text-align: center;
+   width: min(90vw, 640px);
++  /* D2: this prompt sits mid-page, where the .scrim gradient is at its
++     weakest (alpha 0.05). Over a white photo that left the 48px label at
++     1.12:1 and Skip at 1.10:1. A modal backdrop takes them to 5.17:1 and
++     4.68:1; it also reads as a deliberate first-run panel rather than text
++     floating on a photo. */
++  background: rgba(0, 0, 0, 0.55);
++  padding: 2rem 1.75rem;
++  border-radius: 1.25rem;
++  backdrop-filter: blur(10px);
+ }
+ 
+ .name-label {
+@@ -168,7 +197,9 @@ body {
+   margin-top: 1.6rem;
+   background: transparent;
+   border: none;
+-  color: rgba(255, 255, 255, 0.6);
++  /* 0.6 needed a 0.72 backdrop to clear AA; 0.92 clears it against the
++     0.55 panel above. */
++  color: rgba(255, 255, 255, 0.92);
+   font-size: 0.95rem;
+   cursor: pointer;
+   padding: 0.4rem 1rem;
+--- aa/src/browser/components/preferences/zenLooksAndFeel.inc.xhtml
++++ bb/src/browser/components/preferences/zenLooksAndFeel.inc.xhtml
+@@ -40,11 +40,14 @@
+                 data-l10n-id="zen-vertical-tabs-newtab-top-button-up"
+                 preference="zen.view.show-newtab-button-top"/>
+     </vbox>
+-    <checkbox id="kavachaNewtabFloatingSearch"
+-          data-l10n-id="kavacha-newtab-floating-search"
+-          preference="zen.urlbar.replace-newtab"/>
+-    <description class="description-deemphasized indent"
+-          data-l10n-id="kavacha-newtab-floating-search-description" />
++    <!-- D7: the zen.urlbar.replace-newtab control lives in Settings >
++         Appearance & Themes (kavachaAppearanceNewtabDashboard), not here.
++         This pane used to carry a second checkbox bound to the SAME pref with
++         the opposite polarity - this one direct, the Appearance one inverse -
++         so ticking either silently unticked the other, and the two read as
++         contradicting each other because one was phrased positively and the
++         other negatively. Kavacha owns the Appearance pane and 0041/0042
++         settled the wording there, so that is the one that survives. -->
+     <html:div data-l10n-id="preferences-web-appearance-footer">
+         <html:a id="web-appearance-manage-themes-link" class="text-link" data-l10n-name="themes-link" href="about:addons" target="_blank" />
+     </html:div>

@@ -41,6 +41,20 @@ before importing: `generate-branding.sh` rewrites its update-host line in place,
 which collides with Zen's own `src/build/moz-build.patch` and otherwise makes
 every later import fail with "patch does not apply" (defect D0c).
 
+`surfer import` copies `src/**` and applies the patch series, but it does
+**not** touch the top-level `locales/` tree. An FTL string added by a patch
+therefore applies cleanly, compiles, packages — and ships a control with **no
+label**, because its `data-l10n-id` resolves against a stale engine copy. This
+was measured, not assumed: a full import that applied all 246 patches left
+`engine/browser/locales/en-US/browser/preferences/zen-preferences.ftl`
+byte-identical (`40c1eb65e4a0` → `40c1eb65e4a0`) while the repo copy carried four
+new keys. `build` now runs `sync_locales()` after the import, copying
+`locales/en-US/browser/**` onto `engine/browser/locales/en-US/**` (defect D0e).
+
+Note the failure shape: applying, compiling and packaging prove nothing about
+behaviour, and *geometry* proves nothing about *text*. A probe that measures a
+control's bounding rect will report a blank checkbox as present and correct.
+
 **Never** use `dist/bin/browser/modules/*.mjs` to check whether a build is
 current — on macOS those are symlinks through `engine/` to `src/`, so they match
 even with no build at all. Check a genuinely preprocessed artifact such as

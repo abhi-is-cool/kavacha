@@ -125,10 +125,35 @@ restore_mozbuild() {
 # of this. surfer's own patchCheck() cannot catch it: it compares only the COUNT
 # of .patch files, so edits *within* an existing patch are invisible to it.
 # Importing before every build makes that class of failure impossible.
+# D0e: `surfer import` copies src/** into the engine and applies the .patch
+# series, but it never touches the top-level locales/ tree — measured 2026-08-01
+# by running a full import and comparing hashes: engine's zen-preferences.ftl
+# came back byte-identical (40c1eb65e4a0 -> 40c1eb65e4a0) while the repo copy
+# carried four new keys. Every patch that adds an FTL string therefore applies
+# cleanly, builds, packages, and ships a control with NO LABEL, because its
+# data-l10n-id resolves against a stale engine copy. Layout is l10n-central
+# (locales/<locale>/<component>/<path>), so repo locales/en-US/browser/** maps
+# onto engine/browser/locales/en-US/**.
+sync_locales() {
+    local src="$UPSTREAM_DIR/locales/en-US/browser"
+    local dst="$UPSTREAM_DIR/engine/browser/locales/en-US"
+    [ -d "$src" ] && [ -d "$dst" ] || return 0
+    log "Syncing en-US locales into the engine (D0e: import skips locales/)..."
+    (cd "$src" && find . -type f -name '*.ftl' -print0) |
+        while IFS= read -r -d '' rel; do
+            if ! cmp -s "$src/$rel" "$dst/$rel"; then
+                log "  updating ${rel#./}"
+                mkdir -p "$(dirname "$dst/$rel")"
+                cp "$src/$rel" "$dst/$rel"
+            fi
+        done
+}
+
 build_all() {
     restore_mozbuild
     log "Importing source into the engine (D0d: surfer build never does this)..."
     (cd "$UPSTREAM_DIR" && npm run import)
+    sync_locales
     # Branding MUST come after import: import overwrites the generated branding
     # dir and reverts the moz.build update host.
     apply_branding

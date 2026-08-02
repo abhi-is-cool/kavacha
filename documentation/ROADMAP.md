@@ -3,6 +3,12 @@
 Working checklist derived from the [Master Plan](MASTER_PLAN.md). Dates are relative to
 project start (2026-07-09).
 
+> **Looking for what to do next?** [REMAINING_WORK.md](REMAINING_WORK.md) holds the open
+> defects and features; [SHIPPING.md](SHIPPING.md) holds everything that gates a release —
+> blockers, gate readiness, required verification, and what is blocked on you. This
+> document keeps the full history — what shipped, when, and why — which is what makes it
+> long. Year-2+ products live in [ECOSYSTEM.md](ECOSYSTEM.md) and are not current work.
+
 ## End Goal — North Star (added 2026-07-14)
 
 > Tabs remain a core part of the browsing experience, but the browser treats
@@ -405,14 +411,35 @@ branch relationships become early edges of the Phase 6 knowledge graph.
 - [ ] Tab assistant via command palette ("group tabs by topic", "close duplicates",
       "save this research session")
 
-## Phase 7 — Ecosystem (Year 2+)
+## Phase 7 — Browser, later (post-v1.0)
 
-Kavacha Mail (+ email aliases, identity containers) · Kavacha Drive · Kavacha Identity
-(password manager, passkeys) · Knowledge management (notes, web clipper, knowledge
-graph) · Search aggregator · Enterprise (team workspaces, admin controls, compliance
-mode) · Automation, focus mode, offline mode
+Browser work deliberately scheduled after v1.0. Still browser features — patches in
+`browser/patches/`, no servers, no accounts:
+
+- [ ] Knowledge management — per-page notes, web clipper, personal knowledge graph.
+      On the north-star path: the Phase 6 personal search index is what grows into
+      the graph (see [PLATFORM_PLAN.md](PLATFORM_PLAN.md) row 3)
+- [ ] Automation framework — workflow builder (trigger → actions), tab manipulation,
+      data extraction, scheduled workflows, reusable templates; the `automation`
+      command domain is already reserved in the patch-0027 registry
+- [ ] Power-user tooling — capture, annotation, citations, REST client, JSON viewer,
+      writing mode. Candidates for marketplace *bundles* rather than core
+- [ ] Focus mode — block distracting sites + notifications
+- [ ] Offline mode — save pages, notes, documents (pairs with the web clipper)
+- [ ] Tab history tree (FEATURES 7.1) and named/saved tab sessions (7.2)
+
+## Ecosystem (Year 2+) — separate document, deliberately
+
+Kavacha Mail, Drive, Identity, the search aggregator and Enterprise are **separate
+products**, not browser features: each needs servers, an account, and a business
+model, and all of them depend on Phase 5 existing first. They have been moved out of
+this roadmap so they cannot be mistaken for current work — see
+[ECOSYSTEM.md](ECOSYSTEM.md), which is explicitly gated on the browser having shipped.
 
 ## Release gates
+
+Requirements below; **current readiness against each is tracked in
+[SHIPPING.md](SHIPPING.md) §1**, which is the file to read before claiming a gate.
 
 | Gate | Requirement |
 |---|---|

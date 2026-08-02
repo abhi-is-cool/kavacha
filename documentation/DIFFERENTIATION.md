@@ -69,8 +69,11 @@ workspace data lives under Mozilla's account system. Kavacha replaces the depend
   sync service ships as a container anyone can run.
 - **Data sovereignty:** complete export/import of workspaces, themes, layouts, settings
   as documented, schema-validated files (the schemas already exist in this repo).
-- **Ecosystem runway (Phase 7):** mail + aliases, drive, identity/passkeys — all under
-  the same account and encryption model. This is the "ecosystem, not a fork" play.
+- **Ecosystem runway (Year 2+):** mail + aliases, drive, identity/passkeys — all under
+  the same account and encryption model. This is the "ecosystem, not a fork" play, and
+  it is *positioning, not plan*: those are separate products, gated on the browser
+  having shipped and on Phase 5 defining the shared model. See
+  [ECOSYSTEM.md](ECOSYSTEM.md).
 
 ### 4. Customizable — authoring, not just installing
 

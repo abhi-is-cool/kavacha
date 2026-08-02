@@ -29,7 +29,13 @@
 # today granted plugins are trusted-on-grant and the SDK is the only sanctioned
 # surface.
 #
-# NOT BUILD-VERIFIED: authored against the post-0028 tree; run
+# STATUS 2026-08-01: the 'no local Zen checkout / NOT BUILD-VERIFIED' caveat below is
+# STALE and retired -- browser/zen-upstream IS checked out and the full chain
+# builds, packages and launches. What remains is functional (L4) verification.
+# PARTIAL: modules import and list() == []; no plugin ever sideloaded.
+# Authoritative per-patch status: documentation/VERIFICATION.md section 3.
+#
+# (historical) NOT BUILD-VERIFIED: authored against the post-0028 tree; run
 # `git -C browser/zen-upstream apply --check` + a Marionette pass (sideload a
 # plugin under profile kavacha-plugins/<id>/, open about:plugins, grant a
 # permission and enable, watch its command reach Cmd+K, disable and watch it

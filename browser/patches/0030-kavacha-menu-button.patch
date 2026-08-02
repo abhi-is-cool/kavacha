@@ -24,7 +24,13 @@
 # no duplicate strip. This does NOT add a preferences pane (that is patch 0031)
 # and does NOT edit KavachaCommandRegistry (it only READS it).
 #
-# NOT BUILD-VERIFIED: authored against the post-0029 tree without a build. Adds
+# STATUS 2026-08-01: the 'no local Zen checkout / NOT BUILD-VERIFIED' caveat below is
+# STALE and retired -- browser/zen-upstream IS checked out and the full chain
+# builds, packages and launches. What remains is functional (L4) verification.
+# PARTIAL: panel opens, Settings first + 6 domain sections; row-invoke unproven.
+# Authoritative per-patch status: documentation/VERIFICATION.md section 3.
+#
+# (historical) NOT BUILD-VERIFIED: authored against the post-0029 tree without a build. Adds
 # src/zen/common/sys/KavachaMenu.sys.mjs and
 # src/zen/common/styles/kavacha-menu.inc.css; touches
 # src/zen/common/modules/ZenStartup.mjs, src/zen/common/moz.build,

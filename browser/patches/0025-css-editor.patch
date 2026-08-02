@@ -19,7 +19,13 @@
 # itself — the editor stays usable even while the user's CSS is (mis)styling the
 # surrounding chrome.
 #
-# NOT BUILD-VERIFIED: authored against the post-0024 tree. Run `git apply --check`
+# STATUS 2026-08-01: the 'no local Zen checkout / NOT BUILD-VERIFIED' caveat below is
+# STALE and retired -- browser/zen-upstream IS checked out and the full chain
+# builds, packages and launches. What remains is functional (L4) verification.
+# L4 OUTSTANDING: no runtime probe has applied a rule or tripped safe mode.
+# Authoritative per-patch status: documentation/VERIFICATION.md section 3.
+#
+# (historical) NOT BUILD-VERIFIED: authored against the post-0024 tree. Run `git apply --check`
 # + Marionette (apply a rule, see the chrome change; toggle safe mode; revert
 # from history) before marking verified. Adds KavachaUserCSS.sys.mjs; touches
 # src/zen/common/moz.build, ZenStartup.mjs, KavachaCommandRegistry.sys.mjs,

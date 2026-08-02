@@ -19,6 +19,16 @@
 # Fix: overflows="false", the CustomizableUI opt-out that pins a toolbar button
 # in place and excludes it from overflow relocation.
 #
+# STATUS 2026-08-01: L4 CONFIRMED POST-CHANGE. This header previously claimed
+# only that the overflow placement had been *captured* from the live build; the
+# fix itself is now verified in the running binary. #kavacha-menu-button
+# parentElement.id == "zen-sidebar-top-buttons-customization-target",
+# closest("#widget-overflow-list") == null, rect 31x29 at (1218, 52),
+# visibility: visible, display: flex, and clicking it puts kavacha-menu-panel
+# into state "open". Resolves VERIFICATION.md section 3.1 -- commit e2d288f's
+# "confirmed functionally in the running build" was substantively right, though
+# it could not have been supported by evidence at the time it was written.
+#
 # NOTE: validated by git-apply against browser/zen-upstream. The overflow
 # placement above was captured from the live build via build/marionette-verify.py.
 #

@@ -59,7 +59,30 @@ jobs:
           shopt -s nullglob
           patches=(browser/patches/*.patch)
           if [ ${#patches[@]} -eq 0 ]; then echo "no patches yet"; exit 0; fi
-          git clone --depth 10 https://github.com/zen-browser/desktop.git /tmp/zen
+          # Validate against the PINNED upstream commit, never the moving tip.
+          # This step used to `git clone --depth 10` the default branch, so it
+          # patched whatever Zen had merged that day. bootstrap.sh:19-23 already
+          # documents why that is wrong ("cloning an unpinned tip means upstream
+          # drift silently breaks patches"), and the build itself does use the
+          # pin — so a red run here meant "Zen moved", not "Kavacha broke".
+          #
+          # Read the pin from bootstrap.sh so there is exactly one source of
+          # truth. A second literal here would drift from the real one, which is
+          # the same class of bug this step exists to catch.
+          pin="$(sed -n 's/^UPSTREAM_COMMIT="\([0-9a-f]\{40\}\)".*/\1/p' build/bootstrap.sh)"
+          if [ -z "$pin" ]; then
+            echo "could not read UPSTREAM_COMMIT from build/bootstrap.sh"; exit 1
+          fi
+          echo "validating against pinned upstream $pin"
+
+          # Fetch one arbitrary SHA at depth 1 (GitHub permits this; it is how
+          # actions/checkout pins) rather than a shallow clone of the branch,
+          # because the pin is normally far more than 10 commits behind tip.
+          git init -q /tmp/zen
+          git -C /tmp/zen remote add origin https://github.com/zen-browser/desktop.git
+          git -C /tmp/zen fetch -q --depth 1 origin "$pin"
+          git -C /tmp/zen checkout -q FETCH_HEAD
+
           # Patches are ordered and may build on each other (e.g. 0001 and 0002
           # both touch surfer.json), so apply each one for real, in sequence.
           for p in "${patches[@]}"; do

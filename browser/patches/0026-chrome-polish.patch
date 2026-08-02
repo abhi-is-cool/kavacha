@@ -20,7 +20,13 @@
 # WHY NOT A PREF: color-scheme selection is per-surface logic, and the polish is
 # presentational chrome CSS. All local; NO DATA collected. Privacy-preserving.
 #
-# NOT BUILD-VERIFIED IN-PATCH: authored from a post-0025 tree and verified via
+# STATUS 2026-08-01: the 'no local Zen checkout / NOT BUILD-VERIFIED' caveat below is
+# STALE and retired -- browser/zen-upstream IS checked out and the full chain
+# builds, packages and launches. What remains is functional (L4) verification.
+# L3 only: builds and launches clean; contrast/reduced-motion unprobed.
+# Authoritative per-patch status: documentation/VERIFICATION.md section 3.
+#
+# (historical) NOT BUILD-VERIFIED IN-PATCH: authored from a post-0025 tree and verified via
 # `mach build faster` + launch (no engine errors). The KavachaThemeEngine hunk
 # applies over the file created by 0023. Applies on top of 0025.
 diff --git a/src/zen/common/styles/kavacha-polish.inc.css b/src/zen/common/styles/kavacha-polish.inc.css

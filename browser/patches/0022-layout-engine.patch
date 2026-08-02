@@ -23,7 +23,13 @@
 # change — the KavachaTabMemory (singleton) + KavachaUniversalSearch
 # (per-window) pattern.
 #
-# NOT BUILD-VERIFIED: authored without a local Zen checkout
+# STATUS 2026-08-01: the 'no local Zen checkout / NOT BUILD-VERIFIED' caveat below is
+# STALE and retired -- browser/zen-upstream IS checked out and the full chain
+# builds, packages and launches. What remains is functional (L4) verification.
+# L4 verified 2026-08-01 (core): density / sidebar side / sidebar width apply live.
+# Authoritative per-patch status: documentation/VERIFICATION.md section 3.
+#
+# (historical) NOT BUILD-VERIFIED: authored without a local Zen checkout
 # (browser/zen-upstream is fetched by build/bootstrap.sh). The modified-file
 # hunks are reconstructed against the post-0021 tree; run
 # `git -C browser/zen-upstream apply --check` and a Marionette pass before

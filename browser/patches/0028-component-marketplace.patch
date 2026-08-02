@@ -32,7 +32,13 @@
 # yet. No installer ships for them and the bundled catalog carries none — an
 # install() of such a type throws until a host engine lands (ADR 0010).
 #
-# NOT BUILD-VERIFIED: authored against the post-0027 tree; run
+# STATUS 2026-08-01: the 'no local Zen checkout / NOT BUILD-VERIFIED' caveat below is
+# STALE and retired -- browser/zen-upstream IS checked out and the full chain
+# builds, packages and launches. What remains is functional (L4) verification.
+# L4 verified 2026-08-01: install/uninstall registers and revokes Apply: commands.
+# Authoritative per-patch status: documentation/VERIFICATION.md section 3.
+#
+# (historical) NOT BUILD-VERIFIED: authored against the post-0027 tree; run
 # `git -C browser/zen-upstream apply --check` + a Marionette pass (open
 # about:marketplace, install/apply/remove a theme, layout, and the Research Mode
 # bundle; confirm the palette gains/loses "Apply: ..." commands) before marking

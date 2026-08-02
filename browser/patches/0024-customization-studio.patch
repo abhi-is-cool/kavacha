@@ -21,7 +21,13 @@
 # the page assets (jar.inc.mn), and moz.build — wired via src/zen/moz.build DIRS
 # and zen-assets.jar.inc.mn.
 #
-# NOT BUILD-VERIFIED: authored against the post-0023 tree; hunks reconstructed
+# STATUS 2026-08-01: the 'no local Zen checkout / NOT BUILD-VERIFIED' caveat below is
+# STALE and retired -- browser/zen-upstream IS checked out and the full chain
+# builds, packages and launches. What remains is functional (L4) verification.
+# L4 OUTSTANDING: builds and packages, but about:studio has never been probed.
+# Authoritative per-patch status: documentation/VERIFICATION.md section 3.
+#
+# (historical) NOT BUILD-VERIFIED: authored against the post-0023 tree; hunks reconstructed
 # there. Run `git -C browser/zen-upstream apply --check` + a Marionette pass
 # (open about:studio, toggle each control, confirm chrome updates, switch theme)
 # before marking the ROADMAP item verified. Adds src/zen/kavacha-studio/*;

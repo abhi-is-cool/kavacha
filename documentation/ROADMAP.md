@@ -36,7 +36,7 @@ depth (Phase 2) grows into branching + time travel, and the AI layer stays a
 local interface to the user's own data. Universal search is the first
 user-visible surface of the index and starts now (see Phase 3 checklist).
 
-## Phase 1 — Foundation (Weeks 1–4) ← **current**
+## Phase 1 — Foundation (Weeks 1–4)
 
 - [x] Repository created; structure, license (MPL-2.0), docs, ADRs
 - [x] Update strategy defined (overlay repo + ordered patches — see build/README.md)
@@ -61,6 +61,16 @@ user-visible surface of the index and starts now (see Phase 3 checklist).
       Windows native is upstream-broken at this pin (libwebrtc rule missing when
       linking xul.dll; Zen only cross-compiles Windows) — stays experimental
       until we adopt Zen's win-cross recipe.
+- [ ] **Update service (`updates.kavacha.app`) — blocker for any public release**
+      (added 2026-07-31). `build/generate-branding.sh` points `MOZ_APPUPDATE_HOST`
+      at `updates.kavacha.app` and CI already produces update MARs — but nothing
+      serves them, so a shipped build checks a host that answers nothing. Kavacha
+      inherits Firefox's CVE stream through the Zen pin, so until this exists there
+      is **no path to deliver a security fix to a user**. Needs: an AUS-compatible
+      update endpoint (XML per version/platform/channel), MAR signing keys plus the
+      signing step in CI, and a channel scheme (nightly/beta/release). Patch 0002
+      deliberately stripped the upstream phone-home endpoints; this is the
+      first-party replacement that has to exist before shipping to anyone.
 
 > **Note (2026-07-09):** the Zen source audit ([DIFFERENTIATION.md](DIFFERENTIATION.md))
 > showed Zen already ships workspaces (spaces), vertical tabs, tab groups (folders),
@@ -98,6 +108,29 @@ split view, command palette, session store.
       current-Space option; history gets per-space ATTRIBUTION (side table,
       tab-layer recording, badges in universal search) — organization, not a
       privacy boundary, by design; passwords stay global (user decision)
+- [x] **Cross-workspace identity — shared sign-in by default** (patch
+      `0038-optional-space-containers.patch`, 2026-07-31). Correction to an earlier
+      claim here: spaces do **not** all sit on their own containers.
+      `ZenSpaceCreation.mjs:260` assigns no container to a normally-created space;
+      only the three *templates* forced one, which is why a Google / GitHub / Slack
+      login made in a template space did not carry anywhere else. Per-Space
+      containers are now a pref, `kavacha.workspaces.isolate-containers`, **default
+      off**, with a checkbox in Settings › Workspaces. Off means one set of logins
+      across all spaces. The Private template is exempt and always gets a container —
+      isolation is the only thing it promises. Non-retroactive by design: the pref
+      governs space *creation*, so existing spaces keep their container rather than
+      being silently signed out. Costs no tracking protection either way, because
+      `network.cookie.cookieBehavior=5` (Total Cookie Protection) already partitions
+      third-party state by top-level site independently of containers; what
+      containers uniquely provide is *simultaneous distinct first-party logins to
+      the same site*. See the Phase 5 note on Google sync for why this — not a
+      Google integration — is the right fix. **Not yet L4-verified** (VERIFICATION.md §3).
+- [ ] **Named container sharing across spaces** — the remaining half of the above.
+      With isolation *on*, let chosen spaces share one named container, so "these
+      three spaces are all me at work" is expressible, rather than the current
+      all-or-nothing switch. Migration gotcha to design for: moving a space to a
+      different container leaves its existing cookies behind, which reads to the
+      user as being logged out — warn before switching.
 - [ ] Per-workspace AI settings (schema shipped; wiring in Phase 6)
 - [x] Workspace templates (patch `0006-workspace-templates.patch`, 2026-07-12):
       "New Space from Template" → Student / Developer / Private, each composing a
@@ -160,6 +193,20 @@ branch relationships become early edges of the Phase 6 knowledge graph.
 
 ## Phase 3 — Customization Studio & Marketplace (Months 4–6) — Y1
 
+- [x] **Universal search** (patch `0012-universal-search.patch`; ADR 0004): one query
+      surface over open tabs, history, bookmarks, workspace notes and downloads,
+      opened from the palette as "Search Everything"; results grouped by source and
+      workspace-badged, URL-level dedup (tab > bookmark > history). Federated, not
+      indexed — each source is queried through its existing store, and Phase 6's
+      personal content index plugs in as one more source behind the same
+      `{title, detail, workspaceId, score, action}` contract. Checkbox added
+      2026-07-31: the phase intro promised universal search here and the Developer
+      Preview gate names "basic universal search", but no item tracked it, so the
+      gate could not be read. Follow-ups: dedicated shortcut, workspace filter
+      toggle. Functional (L4) verification outstanding — see
+      [VERIFICATION.md](VERIFICATION.md); note XUL panels do not appear in Marionette
+      screenshots, so verify with computed styles and rects, not pixels.
+
 - [x] **Distinct default look — must not read as a Zen fork** (see
       [DIFFERENTIATION.md](DIFFERENTIATION.md) § Visual identity)
   - [x] ~~Kavacha gold accent by default~~ reverted 2026-07-13 (user decision:
@@ -195,15 +242,20 @@ branch relationships become early edges of the Phase 6 knowledge graph.
       and applies it live to chrome — tab orientation (via `zen.tabs.vertical`), interface
       density, sidebar side/width, hidden elements — with palette commands (Toggle Tab
       Layout, Cycle Sidebar, Cycle Density, Reload Layout). `default-layout.json` reconciled
-      to the horizontal default. **Build/Marionette verification pending** — authored without
-      a local Zen checkout; hunks need `git apply --check` against upstream first
+      to the horizontal default. **L4 verified 2026-08-01** (core): density, sidebar side
+      and sidebar width all applied live without restart. `hiddenElements` /
+      `componentSizes` and the four palette commands remain unexercised — see
+      [VERIFICATION.md](VERIFICATION.md) §3.
 - [x] **Theme engine loads theme packages** (patch `0023-theme-engine.patch`, 2026-07-15;
       ADR 0008): KavachaThemeEngine loads packages (manifest + colors + optional style.css)
       and applies the active one (`kavacha.theme.active`) live by overriding patch 0016's
       base tokens so Zen re-tints; default stays the baked Midnight floor (zero flash). Ships
       a second bundled dark theme (Kavacha Forest) + user themes from the profile
       `kavacha-themes/`; "Switch Theme" palette command. Surfaces-only (accent stays
-      user-owned); light themes a follow-up. Same build-verification caveat
+      user-owned); light themes a follow-up. **L4 verified 2026-08-01** (core): switching
+      to Forest retinted 19 `--kavacha-*` tokens live and restoring returned to Midnight.
+      Zero-flash and profile `kavacha-themes/` discovery still unexercised, and the probe
+      found defect D5 (Midnight leaves `--kavacha-accent` empty).
 - [x] **Visual Browser Builder** (`about:studio`, patch `0024-customization-studio.patch`,
       2026-07-16; ADR 0009): redesign the browser without CSS — a Layout tab (tab
       orientation, sidebar side/width, density, toolbar) driving KavachaLayoutEngine and
@@ -211,15 +263,17 @@ branch relationships become early edges of the Phase 6 knowledge graph.
       nsIAboutModule → privileged chrome page (IS_SECURE_CHROME_UI) whose script calls
       the engines' public APIs, so the preview IS the live browser; "Open Customization
       Studio" palette command. Arc-style tabs deferred (not yet an engine capability).
-      **Build/Marionette verification pending** — `git apply`-clean on the post-0023
-      tree, authored without a local build.
+      **Functional (L4) verification outstanding** — the chain builds and packages; no
+      runtime probe has yet opened about:studio.
 - [x] **Live CSS editor with history + safe mode** (Advanced tier; patch
       `0025-css-editor.patch`, 2026-07-16; ADR 0009): KavachaUserCSS applies the user's
       chrome CSS as an AUTHOR_SHEET (chrome only, never web content), snapshots every
       save to `kavacha-usercss-history.json` so any change reverts, and a safe-mode pref
       + "Toggle Custom CSS Safe Mode" palette command disable all custom CSS so a bad
       rule can never brick the UI. Ships as the Advanced tab in about:studio. Same
-      build-verify gate. Marketplace is the next Phase-3 brick.
+      functional (L4) gate — no runtime probe has applied a rule, tripped safe mode, or
+      confirmed the escape-hatch palette command works while the chrome is broken.
+      Marketplace is the next Phase-3 brick.
 - [x] **Command registry** on Zen's palette (Cmd+K): every Kavacha feature exposes
       commands — navigation / organization / productivity / appearance / privacy,
       with automation reserved for Phase 7 (see [PLATFORM_PLAN.md](PLATFORM_PLAN.md)).
@@ -231,8 +285,9 @@ branch relationships become early edges of the Phase 6 knowledge graph.
       sink so revoked commands leave the palette, `getByDomain`/`has`/capability
       metadata, and `rawLabel` for runtime (plugin/marketplace) commands that
       can't add `.ftl` keys. No new feature commands — the registry mechanism
-      itself. Build/Marionette verification pending (authored without a local
-      Zen checkout).
+      itself. **L4 verified 2026-08-01**: 22 commands registered, domains emit in order
+      with `clusteredByDomain: true`, and runtime `register()`/`unregister()` move the
+      palette count 22 -> 23 -> 22.
 - [x] **Component marketplace** (supersedes theme-only marketplace; patch
       `0028-component-marketplace.patch`, 2026-07-17; ADR 0010): `about:marketplace`
       — an offline-first bundled catalog of themes / layouts / bundles ("Research
@@ -241,7 +296,9 @@ branch relationships become early edges of the Phase 6 knowledge graph.
       commands through the patch-0027 registry (source-attributed, revoked on
       uninstall). Sidebar widgets / tool panels are reserved component types
       pending a widget host; remote install + ratings + auto-update land with
-      Kavacha accounts (Phase 5). Build/Marionette verification pending.
+      Kavacha accounts (Phase 5). **L4 verified 2026-08-01**: installing `theme-forest`
+      registered its `Apply:` command and uninstalling revoked it; an unknown component
+      id throws. Bundle install and the reserved `widget`/`panel` rejection untested.
 - [x] Kavacha SDK + plugin permission model (patch `0029-kavacha-sdk-plugins.patch`,
       2026-07-17; ADR 0011): a permissioned SDK exposing only
       workspaces / tabs / notes / commands — never passwords or private data —
@@ -250,7 +307,9 @@ branch relationships become early edges of the Phase 6 knowledge graph.
       plugin commands register through the patch-0027 registry (source `plugin:<id>`)
       and are revoked on disable. Compartment isolation is a hardening follow-up;
       remote plugin distribution via the marketplace is a later integration.
-      Build/Marionette verification pending.
+      **Partially verified 2026-08-01**: both modules import in the running build and
+      `list()` returns `[]`, but no plugin has been sideloaded, so the grant / enable /
+      command / revoke lifecycle is untested.
 - [x] **Unified settings menu + discoverability** (patches `0030`–`0032`, 2026-07-17):
       closes the "every feature is hidden in Cmd+K" gap that made the browser feel
       empty. `0030` adds a top-right ⚙ **menu button** whose panel is *generated from
@@ -262,13 +321,38 @@ branch relationships become early edges of the Phase 6 knowledge graph.
       marketplace / plugins (via the patch-0021 pane recipe). `0032` adds a
       **Workspaces** pane, a **Restore Archived Space** command with a picker (closes
       the 0018/0027 gap; uses `gZenWorkspaces.unarchiveWorkspace`), and first-run
-      pointers to the menu (dashboard ⚙ link + welcome closing line). Build/Marionette
-      verification pending. Follow-ups noted while building: a grouped palette-result
+      pointers to the menu (dashboard ⚙ link + welcome closing line). **Partially verified 2026-08-01**: the
+      panel opens and lists Settings first then all six domain sections (21 items), and
+      the Workspaces pane renders with non-zero rects; still unproven that invoking a
+      panel row runs its command, and the 0031 panes have never been probed at runtime.
+      Follow-ups noted while building: a grouped palette-result
       renderer (0027 already stamps `group` labels); per-space context-menu entries
       for snapshot/branch/timeline; a first-launch coach-mark on the ⚙ button; and a
       dashboard contrast pass (low-opacity links likely below WCAG AA).
 
-## Phase 4 — Privacy Center (Months 6–8) — Y1
+- [x] **Post-build fix series** (patches `0033`–`0037`, 2026-07-18 → 2026-07-31).
+      These landed after the first local build made runtime probing possible and
+      were previously absent from this roadmap entirely.
+      `0033-menu-visibility-and-theme-contrast` gives the ⚙ button a painted glyph
+      (`-moz-context-properties: fill`) and darkens the theme tokens — **L4 verified
+      2026-08-01** for the glyph; contrast is subjective and still needs a human look.
+      `0034-clear-unpinned-tabs-on-quit` is a **user-facing behaviour change** that had
+      no roadmap entry: with it on, a quit keeps only pinned tabs. It shipped
+      **broken and destroying pinned tabs** (defect D0) and its pref was declared in no
+      prefs file at all (D0b); both are addressed in the 2026-08-01 session — see
+      [VERIFICATION.md](VERIFICATION.md) §4.
+      `0035-content-edge-inset-horizontal-tabs` removes Zen's content inset in
+      horizontal mode — cause measured live, **fix still unconfirmed**.
+      `0036-menu-button-no-overflow` keeps the ⚙ button out of `widget-overflow-list`
+      and `0037-menu-panel-scrolling` makes the panel scroll — both **L4 verified
+      2026-08-01**.
+- [x] **Optional per-Space containers** (patch `0038-optional-space-containers.patch`,
+      2026-07-31; Phase 2 identity follow-up): `kavacha.workspaces.isolate-containers`,
+      default **off**, so Spaces share one set of logins; the Private template stays
+      exempt. **L4 verified 2026-08-01** across all three arms, including that the
+      Settings checkbox follows an externally-set pref.
+
+## Phase 4 — Privacy Center (Months 6–8) — Y1 ← **current**
 
 - [x] Cookie intelligence base: Firefox Cookie Banner Blocker on by default
       (`cookiebanners.service.mode=1`)
@@ -285,6 +369,22 @@ branch relationships become early edges of the Phase 6 knowledge graph.
 - [ ] Later: privacy score, per-site trust profiles
 
 ## Phase 5 — Kavacha Account & Ownership (Months 8–10) — Y1
+
+> **Ruled out (2026-07-31): Google account sync.** Considered as an opt-in setting,
+> rejected on two independent grounds — recorded here so it is not re-litigated.
+> **(1) Not available.** Chrome Sync's OAuth scopes are restricted to Google's own
+> client IDs; Google cut third-party Chromium builds off from them in 2021, which is
+> precisely why Brave and Vivaldi each built their own sync instead of reusing it.
+> The browser-level account binding (Mirror / `X-Chrome-Connected` account-consistency
+> headers) is likewise Chrome-proprietary and not an open protocol. **(2) Contradicts
+> the north star.** It would ship bookmarks/history to Google and stand up a second,
+> non-E2E sync path competing with the one this phase exists to build; being opt-in
+> does not fix that, it just makes the familiar path the default choice. What users
+> actually want from it — "sign into Google once and Gmail/Docs/Drive all work" — is
+> cookie-based SSO across `*.google.com` and **already works in any browser**. The
+> only thing breaking it in Kavacha is per-space containers, addressed by
+> cross-workspace identity in Phase 2. Google Takeout import (one-time, local) is the
+> honest substitute for bookmark/history migration.
 
 - [ ] Auth service (Rust): signup, login, device management
 - [ ] E2E-encrypted sync: settings, themes, bookmarks, workspaces (replaces Zen's
@@ -316,6 +416,6 @@ mode) · Automation, focus mode, offline mode
 
 | Gate | Requirement |
 |---|---|
-| Developer Preview | MVP scope in [PLATFORM_PLAN.md](PLATFORM_PLAN.md): Phase 1–2 complete incl. workspace notes + archiving, command registry, basic universal search, distinct default look; signed builds |
+| Developer Preview | MVP scope in [PLATFORM_PLAN.md](PLATFORM_PLAN.md): Phase 1–2 complete incl. workspace notes + archiving, command registry, basic universal search, distinct default look; signed builds; **update service live** (a build that cannot receive a security fix does not ship); L4 functional verification per [VERIFICATION.md](VERIFICATION.md) |
 | Beta | + Phases 3–4; reproducible builds; disclosure program live |
 | v1.0 Public | MVP checklist in MASTER_PLAN.md fully checked; startup < 2 s; crash rate < 0.5 % |

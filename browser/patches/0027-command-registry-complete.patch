@@ -27,7 +27,13 @@
 # mechanism itself. Restore-archived-space stays menu-driven (0018's note: it
 # needs a picker and has no clean single-call opener).
 #
-# NOT BUILD-VERIFIED: authored without a local Zen checkout; the
+# STATUS 2026-08-01: the 'no local Zen checkout / NOT BUILD-VERIFIED' caveat below is
+# STALE and retired -- browser/zen-upstream IS checked out and the full chain
+# builds, packages and launches. What remains is functional (L4) verification.
+# L4 verified 2026-08-01: 22 commands, domain clustering, register/unregister.
+# Authoritative per-patch status: documentation/VERIFICATION.md section 3.
+#
+# (historical) NOT BUILD-VERIFIED: authored without a local Zen checkout; the
 # KavachaCommandRegistry.sys.mjs rewrite is exact (its pre-image blob matches the
 # post-0025 tree) but the ZenUBGlobalActions.sys.mjs and .ftl hunks are
 # reconstructed against the post-0026 tree. Run `git -C browser/zen-upstream

@@ -6,7 +6,9 @@
 # Usage:
 #   ./build/bootstrap.sh          # setup: check prereqs, clone upstream, npm i, init source
 #   ./build/bootstrap.sh build    # full browser build (first run: 1-3 hours)
-#   ./build/bootstrap.sh ui       # fast rebuild after UI-only changes
+#   ./build/bootstrap.sh fast     # import + repackage front end only, no C++/Rust
+#                                 # compile. Use for CSS/FTL/XHTML/prefs/about: pages.
+#   ./build/bootstrap.sh ui       # raw build:ui, NO import -- prefer `fast`
 #   ./build/bootstrap.sh start    # launch the built browser
 #   ./build/bootstrap.sh package  # produce installers (DMG/tar/exe) in browser/zen-upstream/dist/
 #   ./build/bootstrap.sh update   # pull latest upstream and re-apply Kavacha patches
@@ -103,10 +105,105 @@ setup() {
     log "Setup complete. Next: ./build/bootstrap.sh build"
 }
 
+# D0c: apply_branding rewrites engine/build/moz.build IN PLACE, and Zen's own
+# src/build/moz-build.patch changes the same line. Once branding has run, every
+# later `surfer import` fails with "patch does not apply". The engine tree is a
+# git checkout whose HEAD is pristine Firefox, so restoring just that one file
+# lets the Zen patch apply again; apply_branding re-applies the Kavacha host
+# immediately afterwards, so nothing is lost.
+restore_mozbuild() {
+    local mozbuild="$UPSTREAM_DIR/engine/build/moz.build"
+    [ -f "$mozbuild" ] || return 0
+    if ! git -C "$UPSTREAM_DIR/engine" diff --quiet -- build/moz.build 2>/dev/null; then
+        log "Restoring engine/build/moz.build to pristine before import (D0c)..."
+        git -C "$UPSTREAM_DIR/engine" checkout -- build/moz.build
+    fi
+}
+
+# D0d: `surfer build` calls patchCheck(), applyConfig() and genericBuild() but
+# never applyPatches(), so files under src/**/*.patch reach engine/ ONLY via
+# `surfer import`. Skipping the import produces a silently WRONG binary —
+# patches 0031, 0032 and 0038 never shipped in any build for two weeks because
+# of this. surfer's own patchCheck() cannot catch it: it compares only the COUNT
+# of .patch files, so edits *within* an existing patch are invisible to it.
+# Importing before every build makes that class of failure impossible.
+# D0e: `surfer import` copies src/** into the engine and applies the .patch
+# series, but it never touches the top-level locales/ tree — measured 2026-08-01
+# by running a full import and comparing hashes: engine's zen-preferences.ftl
+# came back byte-identical (40c1eb65e4a0 -> 40c1eb65e4a0) while the repo copy
+# carried four new keys. Every patch that adds an FTL string therefore applies
+# cleanly, builds, packages, and ships a control with NO LABEL, because its
+# data-l10n-id resolves against a stale engine copy. Layout is l10n-central
+# (locales/<locale>/<component>/<path>), so repo locales/en-US/browser/** maps
+# onto engine/browser/locales/en-US/**.
+sync_locales() {
+    local src="$UPSTREAM_DIR/locales/en-US/browser"
+    local dst="$UPSTREAM_DIR/engine/browser/locales/en-US"
+    [ -d "$src" ] && [ -d "$dst" ] || return 0
+    log "Syncing en-US locales into the engine (D0e: import skips locales/)..."
+    (cd "$src" && find . -type f -name '*.ftl' -print0) |
+        while IFS= read -r -d '' rel; do
+            if ! cmp -s "$src/$rel" "$dst/$rel"; then
+                log "  updating ${rel#./}"
+                mkdir -p "$(dirname "$dst/$rel")"
+                cp "$src/$rel" "$dst/$rel"
+            fi
+        done
+}
+
+build_all() {
+    restore_mozbuild
+    log "Importing source into the engine (D0d: surfer build never does this)..."
+    (cd "$UPSTREAM_DIR" && npm run import)
+    sync_locales
+    # Branding MUST come after import: import overwrites the generated branding
+    # dir and reverts the moz.build update host.
+    apply_branding
+    (cd "$UPSTREAM_DIR" && npm run build)
+}
+
+# Repackage the front end without recompiling C++/Rust.
+#
+# A full `build` is ~27 minutes and is only necessary when compiled code
+# changes. CSS, FTL, XHTML, prefs and about: pages only need re-importing and
+# repackaging, which takes minutes. Three consecutive full rebuilds were spent
+# on one FTL string and two CSS values before this existed.
+#
+# This is NOT the same as the bare `ui` case below. `ui` runs `build:ui` alone,
+# with no import -- which is exactly D0d, the defect where a change under src/
+# never reaches the binary while every check still passes. Anything delivered
+# as src/**/*.patch (0021/0031/0032/0038 among others) reaches engine/ only via
+# import, so skipping it produces a build that silently lacks the change you
+# are trying to test. The import and locale sync below are load-bearing.
+#
+# Still use the full `build` when C++/Rust or anything needing compilation
+# changed. When in doubt, `build`: a wrong `fast` costs a confusing debugging
+# session, a needless `build` costs 27 minutes.
+build_fast() {
+    restore_mozbuild
+    log "Importing source into the engine (skipping import here would be D0d)..."
+    (cd "$UPSTREAM_DIR" && npm run import)
+    sync_locales
+    apply_branding
+    log "Repackaging front end only (no C++/Rust compile)..."
+    (cd "$UPSTREAM_DIR" && npm run build:ui)
+}
+
 case "${1:-setup}" in
     setup)  setup ;;
-    build)  (cd "$UPSTREAM_DIR" && npm run build) ;;
-    ui)     (cd "$UPSTREAM_DIR" && npm run build:ui) ;;
+    build)  build_all ;;
+    build-only)
+        # Escape hatch: compile whatever is already in engine/, no import. Use
+        # only when you know nothing under src/ changed.
+        (cd "$UPSTREAM_DIR" && npm run build)
+        ;;
+    fast)   build_fast ;;
+    ui)
+        # Raw build:ui with NO import. Reintroduces D0d for anything delivered
+        # under src/ -- prefer `fast`, which imports first. Kept only for the
+        # case where you have already imported by hand this cycle.
+        (cd "$UPSTREAM_DIR" && npm run build:ui)
+        ;;
     start)
         # A running instance silently absorbs new launches (Firefox remoting
         # opens a window in the OLD process — stale code after rebuilds).
@@ -153,5 +250,5 @@ case "${1:-setup}" in
         apply_branding
         log "Upstream updated to $(git -C "$UPSTREAM_DIR" log -1 --format='%h (%cd)' --date=short); patches re-applied. Re-run: ./build/bootstrap.sh build"
         ;;
-    *) fail "Unknown command: $1 (expected: setup | build | ui | start | package | update)" ;;
+    *) fail "Unknown command: $1 (expected: setup | build | build-only | ui | start | package | brand | update)" ;;
 esac

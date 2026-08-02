@@ -20,7 +20,13 @@
 #    derived chrome deepens; accent tokens untouched. First pass, tune to taste.
 #    Removing the light/dark toggle + a brightness control is a follow-up.
 #
-# NOT BUILD-VERIFIED beyond git-apply. Adds
+# STATUS 2026-08-01: the 'no local Zen checkout / NOT BUILD-VERIFIED' caveat below is
+# STALE and retired -- browser/zen-upstream IS checked out and the full chain
+# builds, packages and launches. What remains is functional (L4) verification.
+# L4 verified 2026-08-01 (glyph): -moz-context-properties fix confirmed painted.
+# Authoritative per-patch status: documentation/VERIFICATION.md section 3.
+#
+# (historical) NOT BUILD-VERIFIED beyond git-apply. Adds
 # src/zen/common/styles/kavacha-theme-fixes.inc.css; modifies KavachaMenu.sys.mjs
 # and zen-theme.css. Applies on top of 0032.
 diff --git a/src/zen/common/styles/zen-theme.css b/src/zen/common/styles/zen-theme.css

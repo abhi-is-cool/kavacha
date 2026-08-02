@@ -25,7 +25,13 @@
 # patch 0017). KNOWN LIMIT: base-token override fills only the dark half of
 # light-dark(), so both bundled themes are dark; light themes are a follow-up.
 #
-# NOT BUILD-VERIFIED: authored without a local Zen checkout; modified-file
+# STATUS 2026-08-01: the 'no local Zen checkout / NOT BUILD-VERIFIED' caveat below is
+# STALE and retired -- browser/zen-upstream IS checked out and the full chain
+# builds, packages and launches. What remains is functional (L4) verification.
+# L4 verified 2026-08-01 (core): 19 theme tokens retint live. Found defect D5.
+# Authoritative per-patch status: documentation/VERIFICATION.md section 3.
+#
+# (historical) NOT BUILD-VERIFIED: authored without a local Zen checkout; modified-file
 # hunks are reconstructed against the post-0022 tree (they include 0022's
 # lines because 0023 applies after it). Run `git apply --check` + Marionette
 # before marking verified. Touches: zen-command-palette.ftl, moz.build,

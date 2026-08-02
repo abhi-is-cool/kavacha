@@ -1,0 +1,46 @@
+# Kavacha patch 0041 — Make the ⌘T / Ctrl+T floating-search setting findable
+#
+# The setting already existed and did the right thing; nobody could find it.
+#
+# zen.urlbar.replace-newtab (Zen's pref, default true) decides what the new-tab
+# shortcut does. ZenUIManager.mjs:531 computes
+#   shouldOpenURLBar = ... (_canReplaceNewTab && !werePassedURL &&
+#                           !searchClipboard && where === "tab")
+# and the branch immediately below is commented "Close the new tab popup on
+# cmd/ctrl + t", so true = floating search bar over the current page, false =
+# an ordinary new tab. Zen's own tests agree: browser_double_click_newtab.js
+# and browser_issue_12112.js both set it false as the precondition for normal
+# new-tab behaviour.
+#
+# Two controls are already bound to that pref:
+#   kavachaAppearanceNewtabDashboard  (Kavacha Appearance pane, inverse, live
+#                                      observer in kavacha-appearance.js)
+#   kavachaNewtabFloatingSearch       (Zen Looks and Feel pane, direct binding)
+# so NO third control is added here — see the duplication note in
+# documentation/VERIFICATION.md.
+#
+# What changes is only wording. The old label ("Open the Kavacha dashboard
+# instead of the floating search bar") never mentioned the shortcut, so
+# searching Settings for "new tab" or "Ctrl+T" did not surface it. about:
+# preferences indexes Fluent strings, so naming the shortcut makes the existing
+# control reachable by search.
+#
+# Files: locales/en-US/browser/browser/preferences/zen-preferences.ftl
+diff --git aa/locales/en-US/browser/browser/preferences/zen-preferences.ftl bb/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+index 5a02df4..ac820bd 100644
+--- aa/locales/en-US/browser/browser/preferences/zen-preferences.ftl
++++ bb/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+@@ -410,10 +410,10 @@ kavacha-appearance-accent-header = Accent color
+ kavacha-appearance-accent-description = The accent is yours — it stays put when you switch themes.
+ kavacha-appearance-accent-label = Accent color
+ kavacha-appearance-accent-system = Use system accent
+-kavacha-appearance-newtab-header = New tab
++kavacha-appearance-newtab-header = New tab and the ⌘T / Ctrl+T shortcut
+ kavacha-appearance-newtab-dashboard =
+-    .label = Open the Kavacha dashboard instead of the floating search bar
+-kavacha-appearance-newtab-description = Choose what a new tab shows: the full Kavacha dashboard, or a minimal floating search bar.
++    .label = Open a full new tab instead of the floating search bar
++kavacha-appearance-newtab-description = Controls what the new-tab shortcut (⌘T on macOS, Ctrl+T on Windows and Linux) does. Off, it opens a floating search bar over the page you are on. On, it opens an ordinary new tab showing the Kavacha dashboard, the way Firefox behaves.
+ kavacha-appearance-studio-link = Customize visually in the Studio →
+ 
+ # Kavacha Customization pane (patch 0031)

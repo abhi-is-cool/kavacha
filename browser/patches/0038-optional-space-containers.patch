@@ -1,0 +1,214 @@
+# Kavacha patch 0038 — Per-Space containers become opt-in, default OFF
+# (ROADMAP Phase 2 "Cross-workspace identity"; user decision 2026-07-31).
+#
+# WHAT: a new pref kavacha.workspaces.isolate-containers (default FALSE, set in
+# ui/defaults/kavacha-ux.js) gates whether a template-created Space gets its own
+# Firefox container, plus a "Space isolation" checkbox in the Workspaces
+# Settings pane (patch 0032) that drives it.
+#
+# WHY: patch 0006's templates each forced a dedicated container. Containers are
+# separate FIRST-PARTY cookie jars, so a Google / GitHub / Slack sign-in in one
+# Space did not carry into another and the user re-authenticated per Space.
+# Defaulting off restores "sign in once, signed in everywhere" — which is what
+# people actually mean when they ask for Chrome-style Google sign-in (that is
+# cookie SSO across *.google.com, not Chrome Sync; see the ROADMAP Phase 5 note
+# for why Google account sync itself is ruled out).
+#
+# SECURITY: defaulting off costs no tracking protection. Firefox's Total Cookie
+# Protection (network.cookie.cookieBehavior=5, privacy/tracker-controls/kavacha.js)
+# already partitions THIRD-PARTY state by top-level site in every Space,
+# container or not. A container's unique contribution is a separate first-party
+# session — i.e. two accounts on the same site at once. That capability is what
+# the pref restores when turned on, and nothing else is lost by it being off.
+# This is consistent with ADR 0005, which already established that Spaces are an
+# organizational boundary and not a privacy boundary.
+#
+# EXEMPTION: the "privacy" template ALWAYS gets a container regardless of the
+# pref. Isolation is the only thing that template promises; honouring the pref
+# there would make it lie. Keyed on template.id so no template-table edit is
+# needed.
+#
+# NON-RETROACTIVE: the pref governs Space CREATION only. Existing Spaces keep
+# whatever containerTabId they already hold — clearing it would orphan the
+# cookies inside that container and read to the user as being signed out
+# everywhere. Turning the pref on later likewise affects only new Spaces.
+#
+# NOTE: validated by git-apply against browser/zen-upstream; both touched JS
+# STATUS 2026-08-01: the 'no local Zen checkout / NOT BUILD-VERIFIED' caveat below is
+# STALE and retired -- browser/zen-upstream IS checked out and the full chain
+# builds, packages and launches. What remains is functional (L4) verification.
+# L4 verified 2026-08-01: all three container arms + live pref observer.
+# Authoritative per-patch status: documentation/VERIFICATION.md section 3.
+#
+# (historical) files pass `node --check`. NOT yet build- or Marionette-verified — see
+# documentation/VERIFICATION.md. L4 test: with the pref off, create a Student
+# Space and confirm containerTabId is 0 and a google.com login carries into it;
+# create a Private Space and confirm it still gets its own container; flip the
+# checkbox on and confirm a new Student Space gets one.
+#
+# Touches: src/zen/spaces/ZenSpaceManager.mjs (gate the container creation),
+# src/browser/components/preferences/kavachaWorkspaces.inc.xhtml (checkbox),
+# src/browser/components/preferences/kavacha-workspaces.js (pref wiring),
+# locales/en-US/browser/browser/preferences/zen-preferences.ftl (strings).
+# The pref DEFAULT lives in ui/defaults/kavacha-ux.js (repo-level, appended to
+# branding prefs by build/generate-branding.sh) — not in this patch.
+# Applies on top of 0037.
+diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+index 53c632e..b57049f 100644
+--- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
++++ b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+@@ -473,3 +473,8 @@ kavacha-workspaces-archived-header = Archived spaces
+ kavacha-workspaces-archived-description = Archived Spaces keep all their tabs and notes — they are just hidden from the strip. Bring one back at any time.
+ kavacha-workspaces-restore = Restore an archived space…
+ kavacha-workspaces-more-description = Snapshot, branch, and timeline for a Space live on the ⚙ menu (top right) and in the command palette (Cmd+K).
++kavacha-workspaces-isolation-header = Space isolation
++kavacha-workspaces-isolation-description = By default, Spaces share one set of logins — sign into Google, GitHub or Slack once and every Space is signed in. Turn this on to give each new template Space its own container instead, so it can hold a separate account for the same site.
++kavacha-workspaces-isolate-checkbox =
++    .label = Give new template Spaces their own container
++kavacha-workspaces-isolation-note = Tracking protection does not depend on this. Total Cookie Protection already separates third-party cookies per site in every Space. Existing Spaces keep whatever container they already have, and the Private template is always isolated.
+diff --git a/src/browser/components/preferences/kavacha-workspaces.js b/src/browser/components/preferences/kavacha-workspaces.js
+index 0075cf0..8a58fae 100644
+--- a/src/browser/components/preferences/kavacha-workspaces.js
++++ b/src/browser/components/preferences/kavacha-workspaces.js
+@@ -21,6 +21,11 @@
+ const kUnloadPref = "kavacha.tabs.unload-after-minutes";
+ // Mirrors KavachaTabMemory's own code default (patch 0013).
+ const kUnloadDefaultMinutes = 30;
++// Patch 0038: opt-in per-Space containers. Default OFF so one Google/GitHub
++// sign-in carries across Spaces; Total Cookie Protection keeps third-party
++// state partitioned either way. Read with the same `false` fallback the space
++// manager uses, so pane and behaviour cannot disagree if the pref is missing.
++const kIsolatePref = "kavacha.workspaces.isolate-containers";
+ 
+ var gKavachaWorkspaces = {
+   _initted: false,
+@@ -33,6 +38,8 @@ var gKavachaWorkspaces = {
+ 
+     this._unload = document.getElementById("kavachaWorkspacesUnloadMinutes");
+     this._unload.addEventListener("change", () => this._onUnloadChange());
++    this._isolate = document.getElementById("kavachaWorkspacesIsolateContainers");
++    this._isolate.addEventListener("command", () => this._onIsolateChange());
+     document
+       .getElementById("kavachaWorkspacesSleepNow")
+       .addEventListener("command", () => this._sleepNow());
+@@ -50,20 +57,28 @@ var gKavachaWorkspaces = {
+       .addEventListener("command", () => this._restoreArchived());
+ 
+     Services.prefs.addObserver(kUnloadPref, this);
++    Services.prefs.addObserver(kIsolatePref, this);
+     window.addEventListener("unload", () => this._uninit(), { once: true });
+ 
+     this._renderUnload();
++    this._renderIsolate();
+     this._renderArchivedAvailability();
+   },
+ 
+   observe(subject, topic, data) {
+-    if (topic === "nsPref:changed" && data === kUnloadPref) {
++    if (topic !== "nsPref:changed") {
++      return;
++    }
++    if (data === kUnloadPref) {
+       this._renderUnload();
++    } else if (data === kIsolatePref) {
++      this._renderIsolate();
+     }
+   },
+ 
+   _uninit() {
+     Services.prefs.removeObserver(kUnloadPref, this);
++    Services.prefs.removeObserver(kIsolatePref, this);
+   },
+ 
+   // The top chrome window owns gZenWorkspaces; about:preferences does not.
+@@ -91,6 +106,18 @@ var gKavachaWorkspaces = {
+     Services.prefs.setIntPref(kUnloadPref, minutes);
+   },
+ 
++  _renderIsolate() {
++    this._isolate.checked = Services.prefs.getBoolPref(kIsolatePref, false);
++  },
++
++  _onIsolateChange() {
++    // Only governs Spaces created from here on: existing Spaces keep whatever
++    // container they already hold, because clearing containerTabId would orphan
++    // the cookies inside that container and read to the user as being signed
++    // out everywhere. The Private template ignores this pref entirely.
++    Services.prefs.setBoolPref(kIsolatePref, this._isolate.checked);
++  },
++
+   _sleepNow() {
+     // patch 0018: discard every eligible background tab now, ignoring the
+     // inactivity threshold.
+diff --git a/src/browser/components/preferences/kavachaWorkspaces.inc.xhtml b/src/browser/components/preferences/kavachaWorkspaces.inc.xhtml
+index 69ecbce..6a4f79b 100644
+--- a/src/browser/components/preferences/kavachaWorkspaces.inc.xhtml
++++ b/src/browser/components/preferences/kavachaWorkspaces.inc.xhtml
+@@ -25,6 +25,13 @@
+   </hbox>
+ </groupbox>
+ 
++<groupbox id="kavachaWorkspacesIsolationGroup" data-category="paneKavachaWorkspaces" hidden="true" class="highlighting-group">
++  <label><html:h2 data-l10n-id="kavacha-workspaces-isolation-header"/></label>
++  <description class="description-deemphasized" data-l10n-id="kavacha-workspaces-isolation-description"/>
++  <checkbox id="kavachaWorkspacesIsolateContainers" data-l10n-id="kavacha-workspaces-isolate-checkbox"/>
++  <description class="description-deemphasized" data-l10n-id="kavacha-workspaces-isolation-note"/>
++</groupbox>
++
+ <groupbox id="kavachaWorkspacesTemplatesGroup" data-category="paneKavachaWorkspaces" hidden="true" class="highlighting-group">
+   <label><html:h2 data-l10n-id="kavacha-workspaces-templates-header"/></label>
+   <description class="description-deemphasized" data-l10n-id="kavacha-workspaces-templates-description"/>
+diff --git a/src/zen/spaces/ZenSpaceManager.mjs b/src/zen/spaces/ZenSpaceManager.mjs
+index 3eb56d2..8a2b278 100644
+--- a/src/zen/spaces/ZenSpaceManager.mjs
++++ b/src/zen/spaces/ZenSpaceManager.mjs
+@@ -3570,20 +3570,37 @@ class nsZenWorkspaces {
+     // Reuse a same-named container if one exists (e.g. template re-created
+     // after deleting the space) — containers are cheap but duplicates confuse.
+     let containerTabId = 0;
+-    try {
+-      const existing = ContextualIdentityService.getPublicIdentities().find(
+-        identity => identity.name === template.container.name
++    // Kavacha (patch 0038): dedicated per-Space containers are OPT-IN and
++    // default OFF. Firefox's Total Cookie Protection
++    // (network.cookie.cookieBehavior=5, set in privacy/tracker-controls) already
++    // partitions THIRD-PARTY state by top-level site for every site, container
++    // or not — so a container's unique contribution is a separate FIRST-PARTY
++    // session, which is precisely what stops one Google / GitHub / Slack
++    // sign-in from carrying between Spaces. Defaulting off buys shared sign-in
++    // and costs no tracking protection. The Private template is exempt:
++    // isolation is the only thing it promises, so it always gets a container.
++    const isolate =
++      template.id === "privacy" ||
++      Services.prefs.getBoolPref(
++        "kavacha.workspaces.isolate-containers",
++        false
+       );
+-      const identity =
+-        existing ||
+-        ContextualIdentityService.create(
+-          template.container.name,
+-          template.container.icon,
+-          template.container.color
++    if (isolate) {
++      try {
++        const existing = ContextualIdentityService.getPublicIdentities().find(
++          identity => identity.name === template.container.name
+         );
+-      containerTabId = identity.userContextId;
+-    } catch (e) {
+-      console.error("gZenWorkspaces: could not create template container", e);
++        const identity =
++          existing ||
++          ContextualIdentityService.create(
++            template.container.name,
++            template.container.icon,
++            template.container.color
++          );
++        containerTabId = identity.userContextId;
++      } catch (e) {
++        console.error("gZenWorkspaces: could not create template container", e);
++      }
+     }
+     return this.createAndSaveWorkspace(
+       template.name,

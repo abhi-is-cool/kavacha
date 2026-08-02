@@ -29,7 +29,13 @@
 # ADR 0021's recipe exactly — the register_module template-inline guard already
 # matches categoryName.startsWith("paneKavacha"), so both paneKavacha* ids render.
 #
-# NOT BUILD-VERIFIED (no Firefox tree built in this environment). The two
+# STATUS 2026-08-01: the 'no local Zen checkout / NOT BUILD-VERIFIED' caveat below is
+# STALE and retired -- browser/zen-upstream IS checked out and the full chain
+# builds, packages and launches. What remains is functional (L4) verification.
+# L3: first build to contain it (2026-08-01). Pane controls never probed.
+# Authoritative per-patch status: documentation/VERIFICATION.md section 3.
+#
+# (historical) NOT BUILD-VERIFIED (no Firefox tree built in this environment). The two
 # controllers pass `node --check`; the meta-patch edits keep their inner unified
 # diffs count-consistent; the outer diff applies cleanly on top of 0030 with
 # `git apply --check`. Applies on top of 0030.

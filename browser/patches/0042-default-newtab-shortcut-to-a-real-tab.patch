@@ -1,0 +1,67 @@
+# Kavacha patch 0042 — Default Cmd/Ctrl+T to opening a real new tab
+#
+# User decision 2026-08-02: a new tab should actually open a new tab. Zen ships
+# zen.urlbar.replace-newtab = true, which makes the shortcut raise a floating
+# search bar over the current page instead. Kavacha now defaults it OFF.
+#
+# TWO changes are required; changing only the pref would look correct and do
+# nothing for real users:
+#
+#   1. prefs/zen/zen-urlbar.yaml — the ffprefs source that generates
+#      engine/browser/app/profile/zen.js:469. npm run import runs ffprefs, so
+#      the generated default follows automatically.
+#
+#   2. src/zen/welcome/ZenWelcome.mjs — the welcome flow WRITES this pref
+#      directly in fadeOut() from a radio group, so for anyone who completes
+#      welcome the radio decides the value, not the pref default. The
+#      "floating" radio carried checked="true"; it moves to "dashboard".
+#      fadeOut() still computes !dashboard, so its logic is untouched.
+#
+# Semantics were read, not assumed: ZenUIManager.mjs:531 computes
+# shouldOpenURLBar from _canReplaceNewTab and the branch below it is commented
+# "Close the new tab popup on cmd/ctrl + t". Zen's own tests agree —
+# browser_double_click_newtab.js and browser_issue_12112.js both set the pref
+# false as the precondition for normal new-tab behaviour.
+#
+# This is a default, not a lock. Settings > Appearance still offers it (patch
+# 0041 made that control findable), and the welcome screen still asks.
+#
+# Files: prefs/zen/zen-urlbar.yaml
+#        src/zen/welcome/ZenWelcome.mjs
+diff --git aa/prefs/zen/zen-urlbar.yaml bb/prefs/zen/zen-urlbar.yaml
+index fefa24e..1f60c1d 100644
+--- aa/prefs/zen/zen-urlbar.yaml
++++ bb/prefs/zen/zen-urlbar.yaml
+@@ -2,8 +2,13 @@
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+ # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ 
++# Kavacha default (2026-08-02, user decision): OFF. Zen ships this true, which
++# makes Cmd/Ctrl+T open a floating search bar over the current page instead of
++# opening a tab. Kavacha's default is ordinary browser behaviour — a new tab
++# actually opens a new tab. Users who prefer the floating bar can turn it back
++# on in Settings > Appearance, or choose it at the welcome screen.
+ - name: zen.urlbar.replace-newtab
+-  value: true
++  value: false
+ 
+ - name: zen.urlbar.show-protections-icon
+   value: false
+diff --git aa/src/zen/welcome/ZenWelcome.mjs bb/src/zen/welcome/ZenWelcome.mjs
+index 5ef22b9..209389f 100644
+--- aa/src/zen/welcome/ZenWelcome.mjs
++++ bb/src/zen/welcome/ZenWelcome.mjs
+@@ -616,11 +616,11 @@
+         fadeIn() {
+           const xul = `
+             <html:label for="kavacha-welcome-newtab-floating">
+-              <html:input checked="true" type="radio" id="kavacha-welcome-newtab-floating" name="kavacha-welcome-newtab"></html:input>
++              <html:input type="radio" id="kavacha-welcome-newtab-floating" name="kavacha-welcome-newtab"></html:input>
+               <html:span data-l10n-id="kavacha-welcome-newtab-floating"></html:span>
+             </html:label>
+             <html:label for="kavacha-welcome-newtab-dashboard">
+-              <html:input type="radio" id="kavacha-welcome-newtab-dashboard" name="kavacha-welcome-newtab"></html:input>
++              <html:input checked="true" type="radio" id="kavacha-welcome-newtab-dashboard" name="kavacha-welcome-newtab"></html:input>
+               <html:span data-l10n-id="kavacha-welcome-newtab-dashboard"></html:span>
+             </html:label>
+           `;

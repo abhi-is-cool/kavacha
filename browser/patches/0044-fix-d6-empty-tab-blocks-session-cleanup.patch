@@ -1,0 +1,112 @@
+Fix D6: the tab that would not close was Zen's empty-tab placeholder
+
+Patch 0034's feature has been blocked since 2026-08-01 by a tab that
+gBrowser.removeTab() would not remove. It stayed in gBrowser.tabs with
+`closing: true` and a null linkedBrowser, so anything that later walked the
+tab list dereferenced that null browser -- surfacing as `browserElement is
+null` and a window the user would find broken.
+
+The zombie is Zen's `zen-empty-tab`: the placeholder shown when a workspace
+holds nothing. It is furniture, not content, and was never part of the
+restored session. Zen treats it that way itself -- `#isLastTabInWindow` skips
+`zen-empty-tab` when deciding whether a window still has anything in it
+(tabbrowser-js.patch). Handing it to removeTab() does not remove it; it
+half-destroys it. The cleanup was trying to close Zen's own furniture.
+
+The fix is to exclude structural tabs from the sweep, from the "is the window
+now empty" count, and from survivor selection -- focusing the placeholder
+would leave the user on a blank workspace with their pinned tabs unselected
+beside it. `zen-glance-tab` (a transient preview overlay) is excluded by the
+same reasoning; only the empty tab was actually measured.
+
+Two corrections to the earlier diagnosis, both worth carrying forward:
+
+  * D6 was recorded as a STARTUP failure. It is not. The zombie reproduces
+    mid-session with no restart involved, which is how it was finally caught
+    -- the restart cycle had made every iteration cost minutes and hidden how
+    ordinary the trigger was.
+  * The earlier work went looking for what `_endRemoveTab` was waiting on.
+    Nothing was waiting. removeTab was being handed a tab it was never meant
+    to receive, and the animation gate was a red herring.
+
+Measured, mid-session, five tabs: every real tab closed cleanly while the
+`zen-empty-tab` came back `stillInTabs: true`. After the fix, the same
+scenario gives zombieCount 0, the pinned tab survives and takes focus, and
+the placeholder is left alone.
+
+Full quit/relaunch acceptance test, the one 0034's header asks for:
+
+  before quit    about:robots/PIN, about:license/PIN, and four unpinned tabs
+  after relaunch about:robots/PIN, about:license/PIN, and the placeholder
+  zombies 0, selectedBrowser valid, sessionstore.jsonlz4 written (3021 bytes)
+
+That last number matters: D0's signature failure was `sessionstore.jsonlz4`
+being ABSENT, so its presence is what separates this from the data-loss bug.
+
+The pref `kavacha.session.clear-unpinned-on-quit` still defaults to FALSE and
+should stay that way until a human has lived with it. This is the only
+Kavacha behaviour that discards user data on an ordinary action, and the
+feature working is not the same as the feature being wanted on by default.
+--- aa/src/zen/common/sys/KavachaSessionCleanup.sys.mjs
++++ bb/src/zen/common/sys/KavachaSessionCleanup.sys.mjs
+@@ -99,14 +99,43 @@ export const KavachaSessionCleanup = {
+       if (!gBrowser || win.closed) {
+         continue;
+       }
++      // Zen keeps structural tabs in gBrowser.tabs that are not user tabs:
++      // `zen-empty-tab` is the placeholder shown when a workspace holds
++      // nothing, and `zen-glance-tab` is a transient preview overlay. Neither
++      // came from the restored session, so neither is ours to close.
++      //
++      // This is D6. Passing the empty tab to gBrowser.removeTab() does not
++      // remove it - it half-destroys it. Measured 2026-08-02: of five tabs,
++      // every real one closed cleanly while the `zen-empty-tab` came back
++      // `stillInTabs: true` with `closing: true` and a null linkedBrowser, and
++      // stayed that way. Anything that later walks gBrowser.tabs then hits
++      // that null browser, which is exactly the `browserElement is null` that
++      // made windows look broken and blocked this feature.
++      //
++      // Zen itself treats this tab as furniture rather than content - its
++      // `#isLastTabInWindow` skips `zen-empty-tab` when deciding whether a
++      // window still has anything in it (tabbrowser-js.patch).
++      //
++      // Note D6 was previously recorded as a STARTUP failure. It is not: the
++      // zombie reproduces mid-session with no restart involved, which is how
++      // it was finally caught. The glance-tab exclusion is precautionary by
++      // the same reasoning; only the empty tab was measured.
++      const isStructural = tab =>
++        tab.hasAttribute("zen-empty-tab") || tab.hasAttribute("zen-glance-tab");
+       // Snapshot first: removeTab mutates gBrowser.tabs while we iterate.
+       const unpinned = Array.prototype.filter.call(
+         gBrowser.tabs,
+-        tab => !tab.pinned && !tab.closing
++        tab => !tab.pinned && !tab.closing && !isStructural(tab)
+       );
+       // Never leave a window with nothing in it: if every restored tab was
+       // unpinned, keep the last one rather than closing into an empty window.
+-      const keepOne = unpinned.length === gBrowser.tabs.length;
++      // Structural tabs do not count towards "the window still has content",
++      // for the same reason Zen excludes them above.
++      const realTabCount = Array.prototype.filter.call(
++        gBrowser.tabs,
++        tab => !isStructural(tab)
++      ).length;
++      const keepOne = unpinned.length === realTabCount;
+       const doomed = keepOne ? unpinned.slice(0, -1) : unpinned;
+       if (!doomed.length) {
+         continue;
+@@ -115,10 +144,13 @@ export const KavachaSessionCleanup = {
+       // selected tab mid-startup can leave the window with no linked browser —
+       // observed on buildID 20260801154708 as Marionette failing to attach with
+       // `browserElement is null`, i.e. a window the user would find broken.
++      // Also skip structural tabs here: focusing Zen's empty-tab placeholder
++      // would leave the user staring at a blank workspace with their pinned
++      // tabs sitting unselected beside it.
+       const survivor =
+         Array.prototype.find.call(
+           gBrowser.tabs,
+-          tab => !doomed.includes(tab) && !tab.closing
++          tab => !doomed.includes(tab) && !tab.closing && !isStructural(tab)
+         ) || null;
+       if (!survivor) {
+         continue;

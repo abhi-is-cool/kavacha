@@ -1,0 +1,48 @@
+# Kavacha patch 0040 — Fix D1: the ⚙ panel overhangs the window bottom by 6px
+#
+# Measured over Marionette against buildID 20260801193154 (not guessed):
+#   panel rect bottom = 764, window.innerHeight = 758  ->  overhang 6px
+#   panel y = 94, height = 670, 22 entries
+#
+# Patch 0037 capped the panel against the viewport to stop it running off the
+# bottom, but computed the cap from an assumed anchor of y=81. The panel really
+# anchors at y=94, so every cap was 13px too generous and 6px of that survived
+# as a visible overhang once the entry count settled at 22.
+#
+# Both caps tighten by 1rem, putting the bottom at ~748 in a 758px window.
+# The comment records the anchor as the input to re-measure, so the next person
+# does not tune the symptom.
+#
+# Files: src/zen/common/styles/kavacha-menu.inc.css
+diff --git aa/src/zen/common/styles/kavacha-menu.inc.css bb/src/zen/common/styles/kavacha-menu.inc.css
+index 6ecdb62..14ff546 100644
+--- aa/src/zen/common/styles/kavacha-menu.inc.css
++++ bb/src/zen/common/styles/kavacha-menu.inc.css
+@@ -86,16 +86,24 @@
+    over Marionette at 27 entries: 722px tall in a 758px window, anchored at
+    y=81, so it ran 44px past the viewport with overflow visible and no
+    max-height -- the bottom entries were unreachable and nothing scrolled.
+-   Cap it against the viewport and let the overflow scroll. */
++   Cap it against the viewport and let the overflow scroll.
++
++   D1 (measured 2026-08-01, buildID 20260801193154): the original cap was
++   computed against an assumed anchor of y=81, but the panel actually anchors
++   at y=94. At 22 entries that left it 670px tall, ending at 764 in a 758px
++   window -- a 6px overhang. The caps below are each 1rem tighter, which puts
++   the bottom at ~748 and restores the intended clearance. If this drifts
++   again, re-measure the ANCHOR rather than the overhang: the overhang is the
++   symptom, the anchor is the input. */
+ #kavacha-menu-panel {
+-  max-height: calc(100vh - 8rem);
++  max-height: calc(100vh - 9rem);
+ }
+ 
+ /* The scrollbox owns the scrolling; it is capped so the panel, anchored just
+    below the toolbar, still ends above the window bottom. */
+ .kavacha-menu-scrollbox {
+   display: block;
+-  max-height: calc(100vh - 9rem);
++  max-height: calc(100vh - 10rem);
+   overflow-y: auto;
+   overflow-x: hidden;
+ }

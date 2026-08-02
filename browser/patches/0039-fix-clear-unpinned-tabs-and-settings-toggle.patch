@@ -1,0 +1,393 @@
+# Kavacha patch 0039 — Fix D0 (0034 destroyed pinned tabs) + Settings toggle
+#
+# !!! READ THIS FIRST — THE FEATURE IS NOT FINISHED !!!
+#
+# What this patch DOES fix, verified: the DATA LOSS. Pinned tabs no longer die
+# on quit, sessionstore.jsonlz4 is written normally, and the TabState crash is
+# gone. Confirmed on three separate binaries (2993 / 3011 / 3014 bytes written,
+# both pinned tabs restored, zero TypeErrors).
+#
+# What is STILL BROKEN: turning the pref ON leaves the window with no browser
+# element on the NEXT start. Measured on buildID 20260801161436 — Marionette
+# cannot attach: `TypeError: can't access property "namespaceURI",
+# browserElement is null` at driver.sys.mjs #registerBrowser. The control arm on
+# the SAME binary with the pref off relaunches perfectly (5 tabs, 0 errors,
+# sessionstore.jsonlz4 3031 bytes), so this is caused by the cleanup itself, not
+# by the harness or by startup timing.
+#
+# Moving selection to a survivor before closing, and deferring a turn with
+# dispatchToMainThread, did NOT fix it — so the cause is something other than
+# "we closed the selected tab", and is not yet diagnosed.
+#
+# THEREFORE: kavacha.session.clear-unpinned-on-quit defaults to FALSE and MUST
+# STAY FALSE until this is diagnosed. Do not advertise the feature, and do not
+# flip the default. See documentation/BLOCKED.md B6 — whether to finish 0034 or
+# drop it is an open product decision.
+#
+# WHAT: patch 0034 shipped a feature that DESTROYED PINNED TABS on every quit.
+# This rewrites its mechanism, and adds the Settings checkbox it never had.
+#
+# ---------------------------------------------------------------------------
+# D0 — why 0034's approach could never have worked
+# ---------------------------------------------------------------------------
+# 0034 observed "quit-application-granted" and called gBrowser.removeTab() on
+# every unpinned tab, on the theory that "SessionStore keeps its in-memory state
+# live as tabs close, so the final write already excludes them". That theory is
+# wrong on three counts, all read out of engine/:
+#
+#  1. SessionStore registers its observers in init(), before any browser window
+#     exists (SessionStore.sys.mjs:1310). Its "quit-application-granted" handler
+#     therefore always runs FIRST and snapshots every window via
+#     _collectWindowData(). Kavacha's observer, registered per-window from
+#     ZenStartup, always runs after that snapshot.
+#  2. getCurrentState() re-collects window data only `if (RunState.isRunning)`
+#     (SessionStore.sys.mjs:5630). Once shutdown begins the state that will be
+#     written is frozen. Removing tabs after the snapshot cannot influence what
+#     is saved.
+#  3. Removing them actively CORRUPTS the save. The removed tab elements remain
+#     in gZenWorkspaces.allStoredTabs with a null linkedBrowser, and the next
+#     _collectWindowData() dereferences `browser.audioMuted` with no null guard
+#     (TabState.sys.mjs:79). Because _collectWindowData assigns
+#     `winData.tabs = []` BEFORE its loop, the throw leaves the tab array
+#     truncated and aborts the shutdown save entirely.
+#
+# Net effect: sessionstore.jsonlz4 is never produced, so the next start restores
+# nothing and every pinned tab is gone. The ~2 KB "pinned-only" recovery.jsonlz4
+# that made this look half-working is not the feature succeeding — it is the
+# crash truncating the array mid-loop, with the pinned tabs simply collected
+# first.
+#
+# Measured on buildID 20260731235720, fresh profile, full process-exit waits:
+#   pref ON  (3 runs): NO sessionstore.jsonlz4; recovery 2018/2024/2018 bytes;
+#                      exactly 2 TabState TypeErrors per quit
+#   pref OFF (control): sessionstore.jsonlz4 3010 bytes; ZERO errors
+#
+# Moving the work earlier, to "quit-application-requested", does NOT fix it:
+# nsAppStartup::Quit fires "requested" and "granted" in one synchronous
+# sequence, so the detached tabs are still there when SessionStore collects.
+# Measured on buildID 20260801085833: 4 TypeErrors, still no sessionstore file,
+# and startup parsed zero windows. There is no safe point during shutdown.
+#
+# ---------------------------------------------------------------------------
+# The fix
+# ---------------------------------------------------------------------------
+# Do the work at STARTUP instead. KavachaSessionCleanup now awaits
+# SessionStore.promiseAllWindowsRestored and closes the non-pinned tabs the
+# session just restored. The user-visible contract is unchanged — after a quit
+# you get only your pinned tabs — but nothing touches SessionStore during
+# shutdown, so the session file is written normally and pinned tabs survive.
+#
+# It awaits the PROMISE rather than observing "sessionstore-windows-restored",
+# and that distinction is load-bearing. The notification is a one-shot, and
+# init() runs from ZenStartup, which can be late: measured on buildID
+# 20260801151610, the observer registered AFTER the notification had already
+# fired, so the cleanup never ran. That build fixed the data loss but left the
+# feature a silent no-op — pinned tabs survived, and so did every unpinned one.
+# The promise resolves at exactly the same three sites the notification fires
+# (SessionStore.sys.mjs:2149/2177/7817 vs :2144/2171/7815) and can be awaited
+# after the fact, so it cannot be missed however init() is ordered.
+#
+# This is cheap: browser.sessionstore.restore_on_demand defaults to true
+# (firefox.js:1491), so restored background tabs are lazy and are discarded
+# before they ever hit the network. They land in the normal "recently closed"
+# list, so a mistake is undoable. A window that restored ONLY unpinned tabs
+# keeps its last tab rather than closing into an empty window.
+#
+# ---------------------------------------------------------------------------
+# D0b — the pref existed nowhere
+# ---------------------------------------------------------------------------
+# kavacha.session.clear-unpinned-on-quit was declared in NO prefs file:
+# getPrefType() returned 0 (PREF_INVALID) and the destructive path was on solely
+# because of the hardcoded `true` fallback in getBoolPref(PREF, true). It is now
+# declared in ui/defaults/kavacha-ux.js (that part of the change is outside this
+# patch, in the Kavacha repo proper) and defaults to FALSE — this is the only
+# Kavacha behaviour that discards user data on an ordinary action, so it is
+# opt-in. The code default here matches.
+#
+# This patch adds the Settings UI it never had: a "Tabs kept after quitting"
+# group in the Workspaces pane with checkbox kavachaWorkspacesClearUnpinned,
+# wired with the same live pref observer the 0038 checkbox uses, so it reflects
+# an externally-set pref.
+#
+# Touches: src/zen/common/sys/KavachaSessionCleanup.sys.mjs (rewrite),
+# src/browser/components/preferences/kavachaWorkspaces.inc.xhtml (new groupbox),
+# src/browser/components/preferences/kavacha-workspaces.js (wiring),
+# locales/en-US/browser/browser/preferences/zen-preferences.ftl (5 strings).
+#
+# Two further traps this fix had to clear, both found by measurement:
+#
+#  * Awaiting the promise means init() ordering no longer matters, but the
+#    cleanup then runs from INSIDE SessionStore's restore path. Closing tabs
+#    synchronously from there races its bookkeeping, so the work is deferred one
+#    turn with Services.tm.dispatchToMainThread.
+#  * Closing the restored SELECTED tab mid-startup can leave the window with no
+#    linked browser. Observed on buildID 20260801154708 as Marionette refusing
+#    to attach: `TypeError: can't access property "namespaceURI", browserElement
+#    is null` -- a window the user would find broken. Selection is now moved to
+#    a surviving tab BEFORE anything is closed, and the whole pass is skipped if
+#    no survivor exists.
+diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+index b57049f..5a02df4 100644
+--- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
++++ b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+@@ -478,3 +478,8 @@ kavacha-workspaces-isolation-description = By default, Spaces share one set of l
+ kavacha-workspaces-isolate-checkbox =
+     .label = Give new template Spaces their own container
+ kavacha-workspaces-isolation-note = Tracking protection does not depend on this. Total Cookie Protection already separates third-party cookies per site in every Space. Existing Spaces keep whatever container they already have, and the Private template is always isolated.
++kavacha-workspaces-session-header = Tabs kept after quitting
++kavacha-workspaces-session-description = By default Kavacha restores every tab you had open, like other browsers. Turn this on to keep only the tabs you pinned, so ordinary browsing tabs do not pile up across sessions.
++kavacha-workspaces-clear-unpinned-checkbox =
++    .label = After quitting, restore only pinned tabs
++kavacha-workspaces-session-note = Pinning becomes the explicit "keep this" gesture. Discarded tabs still appear under Recently Closed for the rest of the session, so a mistake is undoable.
+diff --git a/src/browser/components/preferences/kavacha-workspaces.js b/src/browser/components/preferences/kavacha-workspaces.js
+index 8a58fae..acbb934 100644
+--- a/src/browser/components/preferences/kavacha-workspaces.js
++++ b/src/browser/components/preferences/kavacha-workspaces.js
+@@ -26,6 +26,11 @@ const kUnloadDefaultMinutes = 30;
+ // state partitioned either way. Read with the same `false` fallback the space
+ // manager uses, so pane and behaviour cannot disagree if the pref is missing.
+ const kIsolatePref = "kavacha.workspaces.isolate-containers";
++// Patch 0034 / defect D0b: "restore only pinned tabs after quitting". Declared
++// in ui/defaults/kavacha-ux.js and default FALSE -- it discards tabs, so it is
++// opt-in. Same `false` fallback KavachaSessionCleanup uses, so the pane and the
++// behaviour cannot disagree if the pref is somehow missing.
++const kClearUnpinnedPref = "kavacha.session.clear-unpinned-on-quit";
+ 
+ var gKavachaWorkspaces = {
+   _initted: false,
+@@ -40,6 +45,10 @@ var gKavachaWorkspaces = {
+     this._unload.addEventListener("change", () => this._onUnloadChange());
+     this._isolate = document.getElementById("kavachaWorkspacesIsolateContainers");
+     this._isolate.addEventListener("command", () => this._onIsolateChange());
++    this._clearUnpinned = document.getElementById("kavachaWorkspacesClearUnpinned");
++    this._clearUnpinned.addEventListener("command", () =>
++      this._onClearUnpinnedChange()
++    );
+     document
+       .getElementById("kavachaWorkspacesSleepNow")
+       .addEventListener("command", () => this._sleepNow());
+@@ -58,10 +67,12 @@ var gKavachaWorkspaces = {
+ 
+     Services.prefs.addObserver(kUnloadPref, this);
+     Services.prefs.addObserver(kIsolatePref, this);
++    Services.prefs.addObserver(kClearUnpinnedPref, this);
+     window.addEventListener("unload", () => this._uninit(), { once: true });
+ 
+     this._renderUnload();
+     this._renderIsolate();
++    this._renderClearUnpinned();
+     this._renderArchivedAvailability();
+   },
+ 
+@@ -73,12 +84,15 @@ var gKavachaWorkspaces = {
+       this._renderUnload();
+     } else if (data === kIsolatePref) {
+       this._renderIsolate();
++    } else if (data === kClearUnpinnedPref) {
++      this._renderClearUnpinned();
+     }
+   },
+ 
+   _uninit() {
+     Services.prefs.removeObserver(kUnloadPref, this);
+     Services.prefs.removeObserver(kIsolatePref, this);
++    Services.prefs.removeObserver(kClearUnpinnedPref, this);
+   },
+ 
+   // The top chrome window owns gZenWorkspaces; about:preferences does not.
+@@ -110,6 +124,20 @@ var gKavachaWorkspaces = {
+     this._isolate.checked = Services.prefs.getBoolPref(kIsolatePref, false);
+   },
+ 
++  _renderClearUnpinned() {
++    this._clearUnpinned.checked = Services.prefs.getBoolPref(
++      kClearUnpinnedPref,
++      false
++    );
++  },
++
++  _onClearUnpinnedChange() {
++    // Takes effect on the NEXT start: KavachaSessionCleanup drops the restored
++    // unpinned tabs at "sessionstore-windows-restored". Nothing is discarded at
++    // quit time, so toggling this never destroys what is currently open.
++    Services.prefs.setBoolPref(kClearUnpinnedPref, this._clearUnpinned.checked);
++  },
++
+   _onIsolateChange() {
+     // Only governs Spaces created from here on: existing Spaces keep whatever
+     // container they already hold, because clearing containerTabId would orphan
+diff --git a/src/browser/components/preferences/kavachaWorkspaces.inc.xhtml b/src/browser/components/preferences/kavachaWorkspaces.inc.xhtml
+index 6a4f79b..5f6bb6f 100644
+--- a/src/browser/components/preferences/kavachaWorkspaces.inc.xhtml
++++ b/src/browser/components/preferences/kavachaWorkspaces.inc.xhtml
+@@ -25,6 +25,13 @@
+   </hbox>
+ </groupbox>
+ 
++<groupbox id="kavachaWorkspacesSessionGroup" data-category="paneKavachaWorkspaces" hidden="true" class="highlighting-group">
++  <label><html:h2 data-l10n-id="kavacha-workspaces-session-header"/></label>
++  <description class="description-deemphasized" data-l10n-id="kavacha-workspaces-session-description"/>
++  <checkbox id="kavachaWorkspacesClearUnpinned" data-l10n-id="kavacha-workspaces-clear-unpinned-checkbox"/>
++  <description class="description-deemphasized" data-l10n-id="kavacha-workspaces-session-note"/>
++</groupbox>
++
+ <groupbox id="kavachaWorkspacesIsolationGroup" data-category="paneKavachaWorkspaces" hidden="true" class="highlighting-group">
+   <label><html:h2 data-l10n-id="kavacha-workspaces-isolation-header"/></label>
+   <description class="description-deemphasized" data-l10n-id="kavacha-workspaces-isolation-description"/>
+diff --git a/src/zen/common/sys/KavachaSessionCleanup.sys.mjs b/src/zen/common/sys/KavachaSessionCleanup.sys.mjs
+index 446cef7..d57f90e 100644
+--- a/src/zen/common/sys/KavachaSessionCleanup.sys.mjs
++++ b/src/zen/common/sys/KavachaSessionCleanup.sys.mjs
+@@ -4,22 +4,52 @@
+ 
+ // Kavacha "clear unpinned tabs on quit" (ROADMAP Phase 3 UX). Zen restores the
+ // previous session on launch, which brings back EVERY tab. Kavacha's rule is
+-// the opposite for casual tabs: when you quit, ordinary tabs should be gone and
++// the opposite for casual tabs: ordinary tabs should not survive a quit, and
+ // only the tabs you deliberately PINNED should come back. Pinning is the
+ // explicit "keep this" gesture.
+ //
+-// Mechanism: a process singleton that observes "quit-application-granted" — the
+-// point at which quit is committed but windows are still alive and SessionStore
+-// has not yet written its final state. We close every non-pinned tab in every
+-// browser window. SessionStore keeps its in-memory state live as tabs close, so
+-// the final write (at profile-before-change) already excludes them; pinned tabs
+-// stay in the session and are restored next launch. Closed tabs land in the
+-// normal "recently closed" list (undoable) but are not auto-restored.
++// Mechanism: a process singleton that observes "sessionstore-windows-restored"
++// and closes the non-pinned tabs the session just restored. The user-visible
++// result is the advertised one — after a quit, only pinned tabs are there — but
++// the work happens at STARTUP, with the browser fully running, instead of
++// during shutdown. That is not a stylistic choice; see D0 below.
+ //
+-// Gated on the pref kavacha.session.clear-unpinned-on-quit (default true) so it
+-// can be turned off without a rebuild. skipPermitUnload avoids beforeunload
+-// prompts blocking a quit the user already chose; closeWindowWithLastTab:false
+-// keeps removeTab from tearing a window down mid-quit.
++// D0 (2026-08-01): doing this during shutdown destroyed PINNED tabs, and no
++// shutdown timing works. Three engine facts, all read from engine/:
++//
++//   1. SessionStore registers its observers in init(), before any browser
++//      window exists (SessionStore.sys.mjs:1310), so its
++//      "quit-application-granted" handler always runs FIRST and snapshots every
++//      window via _collectWindowData().
++//   2. getCurrentState() re-collects window data only `if (RunState.isRunning)`
++//      (SessionStore.sys.mjs:5630), so once shutdown starts the state that will
++//      be written is frozen at that snapshot. Removing tabs afterwards cannot
++//      influence the saved session.
++//   3. Removing them actively CORRUPTS it. The removed tab elements stay in
++//      gZenWorkspaces.allStoredTabs with a null linkedBrowser, and the next
++//      _collectWindowData() dereferences `browser.audioMuted` with no null
++//      guard (TabState.sys.mjs:79). Since _collectWindowData assigns
++//      `winData.tabs = []` before its loop, that throw truncates the tab array
++//      and aborts the shutdown save: sessionstore.jsonlz4 is never produced and
++//      the next start restores nothing at all.
++//
++// Moving the work earlier, to "quit-application-requested", does NOT help:
++// nsAppStartup::Quit fires "requested" and "granted" in one synchronous
++// sequence, so the detached tabs are still lingering when SessionStore
++// collects. Measured on buildID 20260801085833, fresh profile, pref on: 4
++// TabState TypeErrors, no sessionstore.jsonlz4, and startup parsed zero
++// windows. The only safe place left is after the restore has completed.
++//
++// Closing restored tabs is cheap because browser.sessionstore.restore_on_demand
++// defaults to true (firefox.js:1491): restored background tabs are lazy, so
++// they are discarded before they ever hit the network. They also land in the
++// normal "recently closed" list, so the user can undo.
++//
++// Gated on the pref kavacha.session.clear-unpinned-on-quit, declared in
++// ui/defaults/kavacha-ux.js and defaulting to FALSE — this discards tabs, so it
++// is opt-in. skipPermitUnload avoids beforeunload prompts on tabs the user
++// never interacted with; closeWindowWithLastTab:false keeps removeTab from
++// tearing down a window that restored nothing but unpinned tabs.
+ 
+ const PREF = "kavacha.session.clear-unpinned-on-quit";
+ 
+@@ -32,22 +62,38 @@ export const KavachaSessionCleanup = {
+       return;
+     }
+     this._initialized = true;
+-    Services.obs.addObserver(this, "quit-application-granted");
+-  },
+ 
+-  observe(subject, topic) {
+-    if (topic !== "quit-application-granted") {
+-      return;
+-    }
+-    // Fire once; nothing to observe after quit is granted.
+-    Services.obs.removeObserver(this, "quit-application-granted");
+-    if (!Services.prefs.getBoolPref(PREF, true)) {
+-      return;
+-    }
+-    this._clearUnpinnedTabs();
++    // Wait on SessionStore.promiseAllWindowsRestored rather than observing
++    // "sessionstore-windows-restored". The notification is a one-shot: init()
++    // runs from ZenStartup, which can be LATE — measured on buildID
++    // 20260801151610, the observer registered after the notification had
++    // already fired, so the cleanup never ran and the feature was a silent
++    // no-op (pinned tabs survived, but so did every unpinned one). The promise
++    // resolves at exactly the same three sites the notification fires
++    // (SessionStore.sys.mjs:2149/2177/7817 vs :2144/2171/7815) and can be
++    // awaited after the fact, so this cannot be missed however init() is
++    // ordered.
++    const { SessionStore } = ChromeUtils.importESModule(
++      "resource:///modules/sessionstore/SessionStore.sys.mjs"
++    );
++    SessionStore.promiseAllWindowsRestored
++      .then(() => {
++        // Read the pref here, not at init: the user may have flipped it in
++        // Settings during startup, and this is the moment it takes effect.
++        if (!Services.prefs.getBoolPref(PREF, false)) {
++          return;
++        }
++        // Yield one turn before touching tabs. promiseAllWindowsRestored
++        // resolves from inside SessionStore's own restore path, and closing
++        // tabs synchronously from there races its bookkeeping.
++        Services.tm.dispatchToMainThread(() =>
++          this._clearRestoredUnpinnedTabs()
++        );
++      })
++      .catch(e => console.error("KavachaSessionCleanup: restore hook failed", e));
+   },
+ 
+-  _clearUnpinnedTabs() {
++  _clearRestoredUnpinnedTabs() {
+     for (const win of Services.wm.getEnumerator("navigator:browser")) {
+       const gBrowser = win.gBrowser;
+       if (!gBrowser || win.closed) {
+@@ -58,7 +104,34 @@ export const KavachaSessionCleanup = {
+         gBrowser.tabs,
+         tab => !tab.pinned && !tab.closing
+       );
+-      for (const tab of unpinned) {
++      // Never leave a window with nothing in it: if every restored tab was
++      // unpinned, keep the last one rather than closing into an empty window.
++      const keepOne = unpinned.length === gBrowser.tabs.length;
++      const doomed = keepOne ? unpinned.slice(0, -1) : unpinned;
++      if (!doomed.length) {
++        continue;
++      }
++      // Move selection off a doomed tab BEFORE closing anything. Closing the
++      // selected tab mid-startup can leave the window with no linked browser —
++      // observed on buildID 20260801154708 as Marionette failing to attach with
++      // `browserElement is null`, i.e. a window the user would find broken.
++      const survivor =
++        Array.prototype.find.call(
++          gBrowser.tabs,
++          tab => !doomed.includes(tab) && !tab.closing
++        ) || null;
++      if (!survivor) {
++        continue;
++      }
++      if (doomed.includes(gBrowser.selectedTab)) {
++        try {
++          gBrowser.selectedTab = survivor;
++        } catch (e) {
++          win.console?.error("KavachaSessionCleanup: could not reselect", e);
++          continue;
++        }
++      }
++      for (const tab of doomed) {
+         try {
+           gBrowser.removeTab(tab, {
+             animate: false,

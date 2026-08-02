@@ -52,3 +52,30 @@ pref("kavacha.layout.revision", 0);
 // its base --kavacha-* tokens live so Zen re-tints. User theme packages live
 // in the profile kavacha-themes/ directory.
 pref("kavacha.theme.active", "kavacha-midnight");
+
+// Per-Space containers (patch 0038; ROADMAP Phase 2 "Cross-workspace identity").
+// OFF by default: Spaces share one set of logins, so signing into Google /
+// GitHub / Slack once signs you in everywhere. Turning it on gives each new
+// TEMPLATE Space its own container, which is what lets two Spaces hold two
+// accounts on the same site — the only thing containers uniquely provide.
+// Costs no tracking protection either way: Total Cookie Protection
+// (network.cookie.cookieBehavior=5, privacy/tracker-controls/kavacha.js) already
+// partitions third-party state per top-level site. Governs Space CREATION only —
+// existing Spaces keep their container, and the Private template always gets one.
+// Code defaults in ZenSpaceManager.mjs / kavacha-workspaces.js match this value.
+pref("kavacha.workspaces.isolate-containers", false);
+
+// Clear unpinned tabs on quit (patch 0034; KavachaSessionCleanup.sys.mjs).
+// When on, quitting discards every non-pinned tab so the next launch restores
+// ONLY the tabs you deliberately pinned; pinning becomes the explicit "keep
+// this" gesture. Closed tabs still land in the undoable "recently closed" list.
+//
+// OFF by default (decision 2026-08-01). This is the one Kavacha behaviour that
+// destroys user data on an ordinary action, and every other browser restores
+// what you left open, so it must be opt-in rather than a surprise. Declaring it
+// here also closes defect D0b: the pref previously existed in no prefs file at
+// all (getPrefType() returned 0 = PREF_INVALID) and the destructive path was
+// enabled solely by a hardcoded `true` fallback in getBoolPref(PREF, true),
+// making it invisible to pref auditing and absent from about:config.
+// The code default in KavachaSessionCleanup.sys.mjs matches this value.
+pref("kavacha.session.clear-unpinned-on-quit", false);

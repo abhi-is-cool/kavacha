@@ -103,9 +103,46 @@ setup() {
     log "Setup complete. Next: ./build/bootstrap.sh build"
 }
 
+# D0c: apply_branding rewrites engine/build/moz.build IN PLACE, and Zen's own
+# src/build/moz-build.patch changes the same line. Once branding has run, every
+# later `surfer import` fails with "patch does not apply". The engine tree is a
+# git checkout whose HEAD is pristine Firefox, so restoring just that one file
+# lets the Zen patch apply again; apply_branding re-applies the Kavacha host
+# immediately afterwards, so nothing is lost.
+restore_mozbuild() {
+    local mozbuild="$UPSTREAM_DIR/engine/build/moz.build"
+    [ -f "$mozbuild" ] || return 0
+    if ! git -C "$UPSTREAM_DIR/engine" diff --quiet -- build/moz.build 2>/dev/null; then
+        log "Restoring engine/build/moz.build to pristine before import (D0c)..."
+        git -C "$UPSTREAM_DIR/engine" checkout -- build/moz.build
+    fi
+}
+
+# D0d: `surfer build` calls patchCheck(), applyConfig() and genericBuild() but
+# never applyPatches(), so files under src/**/*.patch reach engine/ ONLY via
+# `surfer import`. Skipping the import produces a silently WRONG binary —
+# patches 0031, 0032 and 0038 never shipped in any build for two weeks because
+# of this. surfer's own patchCheck() cannot catch it: it compares only the COUNT
+# of .patch files, so edits *within* an existing patch are invisible to it.
+# Importing before every build makes that class of failure impossible.
+build_all() {
+    restore_mozbuild
+    log "Importing source into the engine (D0d: surfer build never does this)..."
+    (cd "$UPSTREAM_DIR" && npm run import)
+    # Branding MUST come after import: import overwrites the generated branding
+    # dir and reverts the moz.build update host.
+    apply_branding
+    (cd "$UPSTREAM_DIR" && npm run build)
+}
+
 case "${1:-setup}" in
     setup)  setup ;;
-    build)  (cd "$UPSTREAM_DIR" && npm run build) ;;
+    build)  build_all ;;
+    build-only)
+        # Escape hatch: compile whatever is already in engine/, no import. Use
+        # only when you know nothing under src/ changed.
+        (cd "$UPSTREAM_DIR" && npm run build)
+        ;;
     ui)     (cd "$UPSTREAM_DIR" && npm run build:ui) ;;
     start)
         # A running instance silently absorbs new launches (Firefox remoting
@@ -153,5 +190,5 @@ case "${1:-setup}" in
         apply_branding
         log "Upstream updated to $(git -C "$UPSTREAM_DIR" log -1 --format='%h (%cd)' --date=short); patches re-applied. Re-run: ./build/bootstrap.sh build"
         ;;
-    *) fail "Unknown command: $1 (expected: setup | build | ui | start | package | update)" ;;
+    *) fail "Unknown command: $1 (expected: setup | build | build-only | ui | start | package | brand | update)" ;;
 esac

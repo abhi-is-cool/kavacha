@@ -55,10 +55,18 @@
 # all four Kavacha categories present and visible; navigating to each expands
 # its template and populates it (7/5/4/7 content nodes, 39 controls total);
 # category-sync visible again.
+# REGENERATED 2026-08-03: the preferences-js.patch section was authored against
+# a pre-0021 image of that file (0021 had already added the paneKavacha template
+# condition and a bare paneKavachaPrivacy registration, and 0022-0058 added three
+# more bare registrations), so the section could never apply and CI was red from
+# the moment 0059 merged. Same intended end state, rebased onto the real
+# post-0058 tree: the 8 bare register_module calls become the defensive
+# kavachaRegister block below.
 diff --git a/src/browser/components/preferences/kavacha-privacy.js b/src/browser/components/preferences/kavacha-privacy.js
+index 0a38588..21c5ab6 100644
 --- a/src/browser/components/preferences/kavacha-privacy.js
 +++ b/src/browser/components/preferences/kavacha-privacy.js
-@@ -19,8 +19,18 @@
+@@ -19,8 +19,18 @@ const { PrivacyMetricsService } = ChromeUtils.importESModule(
  // Services.search no longer exists in Firefox 152 — the service is reached
  // through moz-src, the same way patch 0003's per-workspace engine override
  // does it.
@@ -79,7 +87,7 @@ diff --git a/src/browser/components/preferences/kavacha-privacy.js b/src/browser
    SearchService: "moz-src:///toolkit/components/search/SearchService.sys.mjs",
  });
  
-@@ -650,9 +660,9 @@
+@@ -650,9 +660,9 @@ var gKavachaPrivacyCenter = {
    async _renderSearch() {
      const list = document.getElementById("kavachaPrivacySearchEngine");
      try {
@@ -92,7 +100,7 @@ diff --git a/src/browser/components/preferences/kavacha-privacy.js b/src/browser
        const popup = list.menupopup;
        popup.textContent = "";
        for (const engine of engines) {
-@@ -673,17 +683,17 @@
+@@ -673,17 +683,17 @@ var gKavachaPrivacyCenter = {
  
    async _setSearchEngine(name) {
      try {
@@ -116,19 +124,14 @@ diff --git a/src/browser/components/preferences/kavacha-privacy.js b/src/browser
      } catch (e) {
        console.error("KavachaPrivacyCenter: could not set search engine", e);
 diff --git a/src/browser/components/preferences/preferences-js.patch b/src/browser/components/preferences/preferences-js.patch
-index 4aa64e8..c957587 100644
+index 1745b4b..c957587 100644
 --- a/src/browser/components/preferences/preferences-js.patch
 +++ b/src/browser/components/preferences/preferences-js.patch
-@@ -24,18 +24,41 @@ index 57add34d876fb885275f1147209c6fbeee367a7c..be0ab43b299317c0022a5e719f47a070
-        this._initted = true;
-        let template = document.getElementById("template-" + categoryName);
- -      if (template && !srdSectionPrefs.all) {
--+      if (template && (!srdSectionPrefs.all || categoryName.startsWith("paneZen"))) {
-++      if (template && (!srdSectionPrefs.all || categoryName.startsWith("paneZen") || categoryName.startsWith("paneKavacha"))) {
+@@ -28,18 +28,37 @@ index 57add34d876fb885275f1147209c6fbeee367a7c..be0ab43b299317c0022a5e719f47a070
           // Replace the template element with the nodes inside of it.
           template.replaceWith(template.content);
   
--@@ -522,6 +525,10 @@ function init_all() {
+-@@ -522,6 +525,14 @@ function init_all() {
 +@@ -522,6 +525,33 @@ function init_all() {
     register_module("paneSearch", gSearchPane);
     register_module("panePrivacy", gPrivacyPane);
@@ -137,6 +140,10 @@ index 4aa64e8..c957587 100644
 -+  register_module("paneZenTabManagement", gZenWorkspacesSettings);
 -+  register_module("paneZenCKS", gZenCKSSettings);
 -+  register_module("paneZenMarketplace", gZenMarketplaceManager);
+-+  register_module("paneKavachaPrivacy", gKavachaPrivacyCenter);
+-+  register_module("paneKavachaAppearance", gKavachaAppearance);
+-+  register_module("paneKavachaCustomization", gKavachaCustomization);
+-+  register_module("paneKavachaWorkspaces", gKavachaWorkspaces);
 ++  // Kavacha: register the Zen/Kavacha panes defensively. Each of these globals
 ++  // comes from a separate classic <script> sharing this one global scope, so a
 ++  // parse error in any of those files leaves its global undefined -- and a bare

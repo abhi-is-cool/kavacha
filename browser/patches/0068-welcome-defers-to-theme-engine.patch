@@ -1,0 +1,60 @@
+# Patch 0068 — The welcome flow's "Choose your look" goes through the theme
+# engine, the pref's single authority (audit 2026-08-03; reconciles patch
+# 0017 with patch 0064).
+#
+# 0064 made KavachaThemeEngine the single authority for light/dark: it
+# stamps zen.view.window.scheme from the active theme's measured surface on
+# every apply. The welcome flow still wrote that pref directly (its author
+# predates the engine), which left two writers with opposite ideas:
+#
+#   - A fresh-profile user who picked "Light" kept kavacha-midnight as the
+#     active theme, so the next engine stamp wrote the pref straight back
+#     to dark — the advertised choice was undone with no signal.
+#   - "Match my system" wrote scheme=2, a value the engine never writes
+#     (only 0/1), so it could not survive the first stamp; the real auto
+#     authority is kavacha.theme.follow-system, which nothing set.
+#
+# Now the radio maps to KavachaThemeEngine.setMode("dark"|"light"|"system"):
+# dark/light activates the remembered theme for that side (Midnight/Daylight
+# by default) and the engine stamps the Zen pref itself; "system" flips
+# kavacha.theme.follow-system, which the engine observes and follows. Live
+# preview behind the welcome card is preserved — setMode applies the theme
+# immediately.
+diff --git a/src/zen/welcome/ZenWelcome.mjs b/src/zen/welcome/ZenWelcome.mjs
+index 209389f..d03a917 100644
+--- a/src/zen/welcome/ZenWelcome.mjs
++++ b/src/zen/welcome/ZenWelcome.mjs
+@@ -491,8 +491,13 @@
+       },
+       {
+         // Kavacha: appearance. Midnight (dark) is the default look; the
+-        // choice writes zen.view.window.scheme immediately so it previews
+-        // live behind the welcome card.
++        // choice goes through KavachaThemeEngine.setMode so it previews live
++        // behind the welcome card AND persists. Writing zen.view.window.scheme
++        // directly (what this did before patch 0068) was undone on the next
++        // theme apply: the engine is the single authority for that pref since
++        // patch 0064 and stamps it from the active theme, so a "Light" pick
++        // kept the dark theme and was reverted, and "Match my system" (2)
++        // could never survive because the engine only ever writes 0 or 1.
+         text: [
+           { id: "kavacha-welcome-appearance-title" },
+           { id: "kavacha-welcome-appearance-description" },
+@@ -524,9 +529,14 @@
+           const content = document.getElementById("zen-welcome-page-content");
+           content.appendChild(fragment);
+           content.addEventListener("change", event => {
+-            const value = parseInt(event.target.value, 10);
+-            if (!isNaN(value)) {
+-              Services.prefs.setIntPref("zen.view.window.scheme", value);
++            const mode = { 0: "dark", 1: "light", 2: "system" }[
++              event.target.value
++            ];
++            if (mode) {
++              const { KavachaThemeEngine } = ChromeUtils.importESModule(
++                "resource:///modules/KavachaThemeEngine.sys.mjs"
++              );
++              KavachaThemeEngine.setMode(mode).catch(console.error);
+             }
+           });
+         },

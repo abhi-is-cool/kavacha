@@ -1,0 +1,95 @@
+# Patch 0067 — Blank controls in the Privacy Center: Fluent message shapes
+# must match the XUL element they land on (audit 2026-08-03; fixes strings
+# from patches 0047-0050).
+#
+# XUL <menuitem> and <button> render their `label` ATTRIBUTE. A value-only
+# Fluent message ("id = Text") sets textContent, which those elements never
+# display — so the permission global-default selectors rendered three blank
+# rows, the cookie-rule state menus rendered blank, and the Review/Hide/
+# Clear all/Add-as-session-only buttons rendered blank. Conversely a XUL
+# <label> renders its `value` attribute (or text children), so the two
+# ".label =" messages aimed at labels displayed nothing either.
+#
+# 13 message-shape fixes, no markup or JS changes: the dynamic elements
+# already go through document.l10n.setAttributes, which does the right
+# thing once the message carries the right attribute. The codebase already
+# knew this rule (kavacha-permissions-remove uses .label; patch 0054's ftl
+# has a comment about it) — these were the stragglers.
+diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+index 91d51a5..47bf90d 100644
+--- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
++++ b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+@@ -491,12 +491,13 @@ kavacha-workspaces-session-note = Pinning becomes the explicit "keep this" gestu
+ kavacha-privacy-search-header = Search engine
+ kavacha-privacy-search-description = Kavacha searches with Brave Search by default — an independent index that does not profile you. This is a default, not a lock-in: switch to any engine below and Kavacha will remember it.
+ kavacha-privacy-search-engine-label =
+-    .label = Default search engine
++    .value = Default search engine
+ kavacha-privacy-search-note = Kavacha adds no affiliate or partner code to your searches, whichever engine you pick. Search suggestions stay off until you turn them on, so what you type is not sent anywhere until you press Enter.
+ 
+ kavacha-permissions-header = Site permissions
+ kavacha-permissions-description = Everything you have allowed or blocked, in one place. Set what Kavacha does by default for each capability, and review the sites you have made exceptions for — without opening each site in turn.
+-kavacha-permissions-clear-all = Clear all site exceptions
++kavacha-permissions-clear-all =
++    .label = Clear all site exceptions
+ kavacha-permissions-clipboard-note = Clipboard is missing from this list on purpose. Firefox does not store clipboard access as a site permission — a page asking to read your clipboard gets a one-time Paste confirmation instead, and nothing is remembered. There is no stored grant for Kavacha to show you or revoke.
+ kavacha-permissions-sites =
+     { $count ->
+@@ -504,15 +505,21 @@ kavacha-permissions-sites =
+         [one] { $count } site
+        *[other] { $count } sites
+     }
+-kavacha-permissions-manage = Review…
+-kavacha-permissions-hide = Hide
++kavacha-permissions-manage =
++    .label = Review…
++kavacha-permissions-hide =
++    .label = Hide
+ kavacha-permissions-remove =
+     .label = Remove
+     .tooltiptext = Forget this site's setting and ask again next time
+-kavacha-permissions-clear-type = Clear all
+-kavacha-permission-default-ask = Always ask
+-kavacha-permission-default-allow = Allow
+-kavacha-permission-default-block = Block
++kavacha-permissions-clear-type =
++    .label = Clear all
++kavacha-permission-default-ask =
++    .label = Always ask
++kavacha-permission-default-allow =
++    .label = Allow
++kavacha-permission-default-block =
++    .label = Block
+ kavacha-permission-state-allow = Allowed
+ kavacha-permission-state-block = Blocked
+ kavacha-permission-geo = Location
+@@ -534,12 +541,16 @@ kavacha-cookies-clear-on-close-note = You will be signed out of everything on th
+ kavacha-cookies-rules-header = Site rules
+ kavacha-cookies-add-domain =
+     .placeholder = example.com
+-kavacha-cookies-add-session = Add as session-only
++kavacha-cookies-add-session =
++    .label = Add as session-only
+ kavacha-cookies-add-invalid = That does not look like a site address.
+ kavacha-cookies-empty = No site rules yet. Sites follow the setting above.
+-kavacha-cookies-state-allow = Keep
+-kavacha-cookies-state-session = Session only
+-kavacha-cookies-state-block = Block
++kavacha-cookies-state-allow =
++    .label = Keep
++kavacha-cookies-state-session =
++    .label = Session only
++kavacha-cookies-state-block =
++    .label = Block
+ kavacha-cookies-remove =
+     .label = Remove
+     .tooltiptext = Forget this rule and treat the site like any other
+@@ -569,7 +580,7 @@ kavacha-sites-header = Site trust profiles
+ kavacha-sites-description = Everything Kavacha has stored about one site, in one card — what it may use, and how long its cookies live. Sites appear here once you have allowed, blocked, or set a cookie rule for them.
+ kavacha-sites-empty = No sites have stored settings yet.
+ kavacha-sites-picker-label =
+-    .label = Site
++    .value = Site
+ kavacha-sites-cookie-row = Cookies
+ kavacha-sites-forget =
+     .label = Forget this site

@@ -1,0 +1,101 @@
+# Patch 0066 — The delete-cookies-on-close switch must not wipe history,
+# and must be possible to turn off (audit 2026-08-03; fixes patch 0049's
+# _setClearCookiesOnClose).
+#
+# TWO DEFECTS, one function:
+#
+# 1. SCOPE. Enabling the checkbox armed privacy.sanitize.sanitizeOnShutdown
+#    while Firefox DEFAULTS clearOnShutdown_v2.historyFormDataAndDownloads,
+#    .browsingHistoryAndDownloads and .cache to TRUE (verified in
+#    engine firefox.js:1232-1236) — those prefs sit inert only while the
+#    master switch is off. So a checkbox labeled "cookies and site data"
+#    also erased history, form data, downloads and cache on every quit.
+#
+# 2. NO WAY BACK. The untick path stood the master down only if every
+#    sibling pref read false — but it read them with getBoolPref(p, false),
+#    which returns the DEFAULT-branch value when no user value exists.
+#    Three of them default true, so the guard could never pass: one
+#    experiment with the checkbox cost the user their history on every
+#    quit from then on, with no Kavacha UI showing why.
+#
+# FIX: ownership semantics. When THIS checkbox is what arms the master
+# switch, pin the sibling sweeps the user never touched to false (sweep ==
+# label) and record kavacha.privacy.owns-sanitize-on-shutdown. Untick
+# dismantles exactly that: master down, our false-pins cleared back to
+# (inert) defaults, ownership cleared. A user who configured shutdown
+# clearing in Firefox's own UI first is never touched: we only add/remove
+# cookiesAndStorage from their sweep. If the user enables another sweep
+# while ours is armed, untick leaves the master up (their clearing keeps
+# working) and only stops the cookie part.
+diff --git a/src/browser/components/preferences/kavacha-privacy.js b/src/browser/components/preferences/kavacha-privacy.js
+index 21c5ab6..070dc6f 100644
+--- a/src/browser/components/preferences/kavacha-privacy.js
++++ b/src/browser/components/preferences/kavacha-privacy.js
+@@ -85,6 +85,24 @@ const KAVACHA_PERM_SESSION = 8;
+ // kind of half-wired control this pane exists to avoid.
+ const KAVACHA_SANITIZE_ON_SHUTDOWN = "privacy.sanitize.sanitizeOnShutdown";
+ const KAVACHA_CLEAR_COOKIES = "privacy.clearOnShutdown_v2.cookiesAndStorage";
++// The sibling clearOnShutdown_v2 sweeps. Several DEFAULT TO TRUE and sit inert
++// only while the master switch is off, so arming the master without pinning
++// these off would clear history/downloads/cache the cookie checkbox never
++// mentioned. Firefox's own sanitize machinery re-syncs some of these behind
++// us (formdata was observed flipping back to true), so their live values are
++// not a reliable signal -- ownership tracking, not sibling reads, drives this.
++const KAVACHA_SHUTDOWN_SIBLINGS = [
++  "privacy.clearOnShutdown_v2.historyFormDataAndDownloads",
++  "privacy.clearOnShutdown_v2.browsingHistoryAndDownloads",
++  "privacy.clearOnShutdown_v2.cache",
++  "privacy.clearOnShutdown_v2.siteSettings",
++  "privacy.clearOnShutdown_v2.formdata",
++];
++// Set when it was THIS checkbox that armed sanitizeOnShutdown, so untick knows
++// it may fully stand the sweep back down. If the user had already configured
++// shutdown clearing in Firefox's own UI, the master was on before us, we never
++// take ownership, and untick only removes cookies from their existing sweep.
++const KAVACHA_OWNS_SANITIZE = "kavacha.privacy.owns-sanitize-on-shutdown";
+ 
+ var gKavachaPrivacyCenter = {
+   _initted: false,
+@@ -430,21 +448,28 @@ var gKavachaPrivacyCenter = {
+   _setClearCookiesOnClose(on) {
+     Services.prefs.setBoolPref(KAVACHA_CLEAR_COOKIES, on);
+     if (on) {
+-      Services.prefs.setBoolPref(KAVACHA_SANITIZE_ON_SHUTDOWN, true);
+-    } else {
+-      // Only stand the master switch down if cookies were the only thing it
+-      // was sweeping -- otherwise unticking this box would silently disable
+-      // the user's history or cache clearing too.
+-      const others = [
+-        "privacy.clearOnShutdown_v2.historyFormDataAndDownloads",
+-        "privacy.clearOnShutdown_v2.browsingHistoryAndDownloads",
+-        "privacy.clearOnShutdown_v2.cache",
+-        "privacy.clearOnShutdown_v2.siteSettings",
+-        "privacy.clearOnShutdown_v2.formdata",
+-      ];
+-      if (!others.some(p => Services.prefs.getBoolPref(p, false))) {
+-        Services.prefs.setBoolPref(KAVACHA_SANITIZE_ON_SHUTDOWN, false);
++      if (!Services.prefs.getBoolPref(KAVACHA_SANITIZE_ON_SHUTDOWN, false)) {
++        // Kavacha is arming the master switch: pin the non-cookie sweeps off
++        // so the shutdown sweep matches the checkbox label, and record that
++        // the switch is ours to stand back down.
++        for (const p of KAVACHA_SHUTDOWN_SIBLINGS) {
++          Services.prefs.setBoolPref(p, false);
++        }
++        Services.prefs.setBoolPref(KAVACHA_OWNS_SANITIZE, true);
++        Services.prefs.setBoolPref(KAVACHA_SANITIZE_ON_SHUTDOWN, true);
++      }
++      // Master already on: the user set up shutdown clearing themselves;
++      // adding cookies to their existing sweep is all this checkbox may do.
++    } else if (Services.prefs.getBoolPref(KAVACHA_OWNS_SANITIZE, false)) {
++      // We own the switch -- undo exactly what enabling did, deterministically.
++      // Reading the siblings back to decide is unreliable (Firefox re-syncs
++      // some of them), so ownership is the sole authority: master off, our
++      // pins cleared to their inert defaults, ownership released.
++      Services.prefs.setBoolPref(KAVACHA_SANITIZE_ON_SHUTDOWN, false);
++      for (const p of KAVACHA_SHUTDOWN_SIBLINGS) {
++        Services.prefs.clearUserPref(p);
+       }
++      Services.prefs.clearUserPref(KAVACHA_OWNS_SANITIZE);
+     }
+     this._renderCookies();
+   },

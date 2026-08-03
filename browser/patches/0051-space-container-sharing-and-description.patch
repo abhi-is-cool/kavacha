@@ -1,0 +1,436 @@
+# Kavacha patch 0051 — named container sharing across Spaces, and editing an
+# existing Space's description (REMAINING_WORK.md §3 "Workspaces / identity").
+#
+# CONTAINER SHARING. Patch 0038 made per-Space containers opt-in; what it did
+# not give anyone is a way to say "these three Spaces are all me at work".
+# Mechanically that was always possible — Zen's space actions menu already
+# routed through contextChangeContainerTab, which writes workspace.containerTabId
+# — but the menu was Firefox's generic createUserContextMenu, labelled "Default
+# profile", and it HID the container the Space was already in. So the one fact
+# that matters for sharing (which Spaces are in which container) was the one
+# fact the UI refused to show. Kavacha builds the menu itself now: every public
+# container, radio-checked on the current one, labelled with how many OTHER
+# Spaces share it; "No container" as the shared-sign-ins default; and "New
+# container…", which is why hide-if-usercontext-disabled had to go — with no
+# containers yet, an empty hidden menu is a dead end.
+#
+# THE MIGRATION GOTCHA, which REMAINING_WORK asked for by name: containers are
+# separate FIRST-PARTY cookie jars, so moving a Space between them does not
+# carry its cookies. Every site the user was signed into in that Space reads as
+# signed out. It is fully recoverable — the cookies are still in the old
+# container, and switching back restores them — but it is silent and it looks
+# exactly like data loss, so the switch now goes through a confirm that names
+# the container being left. Nothing is deleted either way; this is a warning,
+# not a guard.
+#
+# DESCRIPTION. Patch 0014 captured a Space description in the creation card and
+# stored it on the space object — and nothing in the browser ever read it back.
+# It was write-once and invisible, which is why "edit it" stayed open. Two
+# halves land together, because either alone is pointless: an "Edit Description…"
+# item in the space actions menu (prefilled, blank DELETES the key rather than
+# storing "", matching 0014's rule so it never rides sync empty), and the Space
+# strip button's tooltip as the place it is finally shown.
+#
+# Why a patch: the menus live in Zen's popupset and the handlers are methods on
+# nsZenWorkspaces; the container submenu's population and command handler are
+# both upstream Zen code being replaced, not extended.
+#
+# Touches: src/zen/spaces/ZenSpaceManager.mjs (menu builder, confirm, create,
+#          description editor), src/zen/spaces/ZenSpaceIcons.mjs (tooltip),
+#          src/browser/base/content/zen-panels/popups.inc (menu items),
+#          locales/en-US/browser/browser/zen-workspaces.ftl (strings).
+# Applies on top of 0050.
+diff --git a/locales/en-US/browser/browser/zen-workspaces.ftl b/locales/en-US/browser/browser/zen-workspaces.ftl
+--- a/locales/en-US/browser/browser/zen-workspaces.ftl
++++ b/locales/en-US/browser/browser/zen-workspaces.ftl
+@@ -182,3 +182,32 @@
+ kavacha-timeline-empty =
+     .value = No snapshots yet. They are taken when you switch away, archive, quit, or run "Snapshot This Space".
+ kavacha-timeline-restore = Restore as branch
++
++# Kavacha patch 0051 — named container sharing across Spaces, and editing an
++# existing Space's description.
++zen-workspaces-panel-context-container =
++    .label = Space Container
++kavacha-space-container-none =
++    .label = No container — shared sign-ins
++kavacha-space-container-shared =
++    .label = { $name } — shared with { $count } other { $count ->
++        [one] Space
++       *[other] Spaces
++    }
++kavacha-space-container-unshared =
++    .label = { $name } — only this Space
++kavacha-space-container-unused =
++    .label = { $name }
++kavacha-space-container-new =
++    .label = New container…
++kavacha-space-container-new-title = New container
++kavacha-space-container-new-prompt = Name this container. Spaces that share it share one set of sign-ins.
++kavacha-space-container-switch-title = Change this Space's container?
++kavacha-space-container-switch-body = Sites you are signed into in “{ $space }” will look signed out. Cookies do not move between containers — they stay in { $from }, and switching back restores them.
++kavacha-space-container-switch-accept = Change container
++kavacha-space-container-none-name = no container
++
++zen-workspaces-panel-context-description =
++    .label = Edit Description…
++kavacha-space-description-title = Space description
++kavacha-space-description-prompt = What is “{ $name }” for? Shown when you hover the Space in the strip. Leave blank to remove it.
+diff --git a/src/browser/base/content/zen-panels/popups.inc b/src/browser/base/content/zen-panels/popups.inc
+--- a/src/browser/base/content/zen-panels/popups.inc
++++ b/src/browser/base/content/zen-panels/popups.inc
+@@ -24,12 +24,17 @@
+           id="context_zenChangeWorkspaceTheme"
+           data-l10n-id="zen-workspaces-change-theme"
+           command="cmd_zenOpenZenThemePicker"/>
++  <menuitem id="context_kavachaEditDescription"
++    data-l10n-id="zen-workspaces-panel-context-description"
++    hide-if-private-browsing="true"/>
++# Kavacha patch 0051 relabels this from "Default profile" to "Space Container":
++# the menu sets which container the SPACE lives in, and Kavacha rebuilds its
++# contents to say which other Spaces share each one. hide-if-usercontext-disabled
++# is dropped deliberately -- the menu now also offers to CREATE the first
++# container, which is exactly the case where none exist yet.
+   <menu id="context_zenWorkspacesOpenInContainerTab"
+-    data-l10n-id="zen-workspaces-panel-context-default-profile"
+-    selection-type="single"
+-    node-type="link"
+-    hide-if-private-browsing="true"
+-    hide-if-usercontext-disabled="true">
++    data-l10n-id="zen-workspaces-panel-context-container"
++    hide-if-private-browsing="true">
+     <menupopup />
+   </menu>
+   <menu id="context_zenWorkspacesSearchEngine"
+diff --git a/src/zen/spaces/ZenSpaceManager.mjs b/src/zen/spaces/ZenSpaceManager.mjs
+--- a/src/zen/spaces/ZenSpaceManager.mjs
++++ b/src/zen/spaces/ZenSpaceManager.mjs
+@@ -1351,6 +1351,15 @@
+     });
+ 
+     document
++      .getElementById("context_kavachaEditDescription")
++      .addEventListener("command", () => {
++        this.kavachaEditSpaceDescription(
++          this.#contextMenuData?.workspaceId
++        ).catch(e =>
++          console.error("gZenWorkspaces: error editing space description", e)
++        );
++      });
++    document
+       .getElementById("context_zenWorkspacesNotes")
+       .addEventListener("command", () => {
+         this.openWorkspaceNotes(this.#contextMenuData?.workspaceId).catch(e =>
+@@ -1441,7 +1450,14 @@
+     const openInContainerMenuItem = document.getElementById(
+       "context_zenWorkspacesOpenInContainerTab"
+     );
+-    if (this.shouldShowContainers) {
++    // Kavacha (patch 0051): gate on the CONTAINERS FEATURE, not on a container
++    // already existing. shouldShowContainers requires
++    // getPublicIdentities().length, which is the right test for a menu that can
++    // only pick from existing containers — but this menu now offers to create
++    // the first one, and hiding it when there are none makes that unreachable
++    // on exactly the profile that needs it. `privacy.userContext.ui.enabled`
++    // stays honoured: a user who has turned containers off sees nothing.
++    if (Services.prefs.getBoolPref("privacy.userContext.ui.enabled", false)) {
+       openInContainerMenuItem.removeAttribute("hidden");
+     } else {
+       openInContainerMenuItem.setAttribute("hidden", "true");
+@@ -1502,21 +1518,117 @@
+       },
+       { once: true }
+     );
++  }
++
++  // ==========================================================================
++  // Kavacha (patch 0051): named container sharing across Spaces.
++  //
++  // Zen populated this submenu with Firefox's generic createUserContextMenu,
++  // which lists containers as a flat "pick one" and HIDES the container the
++  // Space is already in. That is right for "open THIS TAB in a container" --
++  // which is what the menu is called upstream -- but this menu sets which
++  // container the SPACE lives in, and a container shared by several Spaces is
++  // the whole point ("these three Spaces are all me at work"). A flat list
++  // cannot express that, so Kavacha builds the menu itself:
++  //   - every public container, labelled with how many OTHER Spaces share it;
++  //   - a radio check on the one this Space is in (shown, not hidden, so the
++  //     current state is legible);
++  //   - "No container", which is the shared-sign-ins default (patch 0038);
++  //   - "New container...", which is why hide-if-usercontext-disabled had to
++  //     go: with no containers yet, an empty hidden menu is a dead end.
++  // ==========================================================================
++  #spaceForContextMenu() {
++    return this.#contextMenuData?.workspaceId
++      ? this.getWorkspaceFromId(this.#contextMenuData.workspaceId)
++      : this.getActiveWorkspaceFromCache();
+   }
+ 
++  // Localized label for a container id. Built-in containers carry an l10nId
++  // rather than a name, so ask the service rather than reading .name.
++  #containerLabel(userContextId) {
++    if (!userContextId) {
++      return null;
++    }
++    try {
++      return ContextualIdentityService.getUserContextLabel(userContextId);
++    } catch (e) {
++      return null;
++    }
++  }
++
+   updateWorkspaceActionsMenuContainer(event) {
+-    let workspace;
+-    if (this.#contextMenuData?.workspaceId) {
+-      workspace = this.getWorkspaceFromId(this.#contextMenuData.workspaceId);
+-    } else {
+-      workspace = this.getActiveWorkspaceFromCache();
++    const popup = event.target;
++    const workspace = this.#spaceForContextMenu();
++    if (!workspace) {
++      return;
+     }
+-    let containerTabId = workspace.containerTabId;
+-    return window.createUserContextMenu(event, {
+-      isContextMenu: true,
+-      excludeUserContextId: containerTabId,
+-      showDefaultTab: true,
+-    });
++    const current = workspace.containerTabId || 0;
++    // How many OTHER spaces sit in each container.
++    const sharers = new Map();
++    for (const other of this.getWorkspaces()) {
++      const id = other.containerTabId || 0;
++      if (!id || other.uuid === workspace.uuid) {
++        continue;
++      }
++      sharers.set(id, (sharers.get(id) || 0) + 1);
++    }
++
++    popup.textContent = "";
++
++    const none = document.createXULElement("menuitem");
++    none.setAttribute("type", "radio");
++    none.setAttribute("name", "kavachaSpaceContainer");
++    none.setAttribute("data-usercontextid", "0");
++    // XUL reads `checked` as the literal string "true"; setting it to "false"
++    // would leave the attribute present and the radio group with two marks.
++    if (current === 0) {
++      none.setAttribute("checked", "true");
++    }
++    document.l10n.setAttributes(none, "kavacha-space-container-none");
++    popup.appendChild(none);
++    popup.appendChild(document.createXULElement("menuseparator"));
++
++    let identities = [];
++    try {
++      identities = ContextualIdentityService.getPublicIdentities();
++    } catch (e) {
++      console.error("gZenWorkspaces: could not list containers", e);
++    }
++    for (const identity of identities) {
++      const id = identity.userContextId;
++      const item = document.createXULElement("menuitem");
++      item.setAttribute("type", "radio");
++      item.setAttribute("name", "kavachaSpaceContainer");
++      item.setAttribute("data-usercontextid", String(id));
++      if (current === id) {
++        item.setAttribute("checked", "true");
++      }
++      const name = this.#containerLabel(id) || identity.name || "";
++      const count = sharers.get(id) || 0;
++      if (count) {
++        document.l10n.setAttributes(item, "kavacha-space-container-shared", {
++          name,
++          count,
++        });
++      } else if (current === id) {
++        document.l10n.setAttributes(item, "kavacha-space-container-unshared", {
++          name,
++        });
++      } else {
++        document.l10n.setAttributes(item, "kavacha-space-container-unused", {
++          name,
++        });
++      }
++      popup.appendChild(item);
++    }
++
++    if (identities.length) {
++      popup.appendChild(document.createXULElement("menuseparator"));
++    }
++    const create = document.createXULElement("menuitem");
++    create.setAttribute("data-kavacha-new-container", "true");
++    document.l10n.setAttributes(create, "kavacha-space-container-new");
++    popup.appendChild(create);
+   }
+ 
+   saveWorkspace(workspaceData) {
+@@ -3125,17 +3237,143 @@
+   }
+ 
+   // Context menu management
++  //
++  // Kavacha (patch 0051): the same chokepoint, but it now (a) can create the
++  // container it is about to switch to, and (b) WARNS first. Containers are
++  // separate first-party cookie jars, so moving a Space between them does not
++  // carry its cookies across: every site the user is signed into in that Space
++  // reads as signed out. That is recoverable -- the cookies are still in the
++  // old container and switching back restores them -- but it is alarming
++  // enough, and silent enough, to look like data loss. Say so before doing it.
+   async contextChangeContainerTab(event) {
+-    this._organizingWorkspaceStrip = true;
+     let workspaces = this.getWorkspaces();
+     let workspace = workspaces.find(
+       w =>
+         w.uuid === (this.#contextMenuData?.workspaceId || this.activeWorkspace)
+     );
+-    let userContextId = parseInt(
+-      event.target.getAttribute("data-usercontextid")
++    if (!workspace) {
++      return;
++    }
++    const current = workspace.containerTabId || 0;
++
++    let userContextId;
++    if (event.target.hasAttribute("data-kavacha-new-container")) {
++      userContextId = await this.#kavachaCreateContainer();
++      if (userContextId == null) {
++        return; // cancelled at the name prompt
++      }
++    } else {
++      userContextId = parseInt(
++        event.target.getAttribute("data-usercontextid"),
++        10
++      );
++      if (Number.isNaN(userContextId)) {
++        return;
++      }
++    }
++    if (userContextId === current) {
++      return;
++    }
++    if (!(await this.#kavachaConfirmContainerSwitch(workspace, current))) {
++      return;
++    }
++
++    this._organizingWorkspaceStrip = true;
++    workspace.containerTabId = userContextId;
++    this.saveWorkspace(workspace);
++  }
++
++  // Prompt for a name and create a container. Returns its userContextId, or
++  // null if the user cancelled or left the name blank.
++  async #kavachaCreateContainer() {
++    const [title, text] = await document.l10n.formatValues([
++      { id: "kavacha-space-container-new-title" },
++      { id: "kavacha-space-container-new-prompt" },
++    ]);
++    const value = { value: "" };
++    if (!Services.prompt.prompt(window, title, text, value, null, {})) {
++      return null;
++    }
++    const name = value.value.trim();
++    if (!name) {
++      return null;
++    }
++    try {
++      // Icon/colour are cosmetic here; "circle"/"blue" are the neutral pair
++      // Firefox itself falls back to, and both are members of the service's
++      // own allowed sets (see the note at the top of this file).
++      return ContextualIdentityService.create(name, "circle", "blue")
++        .userContextId;
++    } catch (e) {
++      console.error("gZenWorkspaces: could not create container", e);
++      return null;
++    }
++  }
++
++  // True if the switch should go ahead.
++  async #kavachaConfirmContainerSwitch(workspace, fromContextId) {
++    const [title, accept, noneName] = await document.l10n.formatValues([
++      { id: "kavacha-space-container-switch-title" },
++      { id: "kavacha-space-container-switch-accept" },
++      { id: "kavacha-space-container-none-name" },
++    ]);
++    const body = await document.l10n.formatValue(
++      "kavacha-space-container-switch-body",
++      {
++        space: workspace.name || "",
++        from: this.#containerLabel(fromContextId) || noneName,
++      }
+     );
+-    workspace.containerTabId = userContextId + 0; // +0 to convert to number
++    const flags =
++      Services.prompt.BUTTON_TITLE_IS_STRING * Services.prompt.BUTTON_POS_0 +
++      Services.prompt.BUTTON_TITLE_CANCEL * Services.prompt.BUTTON_POS_1;
++    return (
++      Services.prompt.confirmEx(
++        window,
++        title,
++        body,
++        flags,
++        accept,
++        null,
++        null,
++        null,
++        {}
++      ) === 0
++    );
++  }
++
++  // Kavacha (patch 0051): edit an existing Space's description. Patch 0014
++  // captured it at creation time only and nothing ever displayed it, so the
++  // field was write-once and invisible. It is now editable here and surfaced
++  // as the Space button's tooltip (ZenSpaceIcons). Blank REMOVES the key
++  // rather than storing "", matching 0014's rule so it never rides sync empty.
++  async kavachaEditSpaceDescription(workspaceId = null) {
++    if (this.privateWindowOrDisabled) {
++      return;
++    }
++    const workspace = workspaceId
++      ? this.getWorkspaceFromId(workspaceId)
++      : this.getActiveWorkspaceFromCache();
++    if (!workspace) {
++      return;
++    }
++    const title = await document.l10n.formatValue(
++      "kavacha-space-description-title"
++    );
++    const text = await document.l10n.formatValue(
++      "kavacha-space-description-prompt",
++      { name: workspace.name || "" }
++    );
++    const value = { value: workspace.description || "" };
++    if (!Services.prompt.prompt(window, title, text, value, null, {})) {
++      return;
++    }
++    const description = value.value.trim();
++    if (description) {
++      workspace.description = description;
++    } else {
++      delete workspace.description;
++    }
+     this.saveWorkspace(workspace);
+   }
+ 
+diff --git a/src/zen/spaces/ZenSpaceIcons.mjs b/src/zen/spaces/ZenSpaceIcons.mjs
+--- a/src/zen/spaces/ZenSpaceIcons.mjs
++++ b/src/zen/spaces/ZenSpaceIcons.mjs
+@@ -106,7 +106,15 @@
+   #createWorkspaceIcon(workspace) {
+     const button = document.createXULElement("toolbarbutton");
+     button.setAttribute("class", "subviewbutton toolbarbutton-1");
+-    button.setAttribute("tooltiptext", workspace.name);
++    // Kavacha (patch 0051): the Space description (patch 0014) had no reader
++    // anywhere in the browser -- it was captured at creation and never shown.
++    // The strip button's tooltip is where "what is this Space for" belongs.
++    button.setAttribute(
++      "tooltiptext",
++      workspace.description
++        ? `${workspace.name}\n${workspace.description}`
++        : workspace.name
++    );
+     button.setAttribute("zen-workspace-id", workspace.uuid);
+     button.setAttribute("context", "zenWorkspaceMoreActions");
+     const icon = document.createXULElement("label");

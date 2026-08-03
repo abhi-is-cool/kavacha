@@ -3,6 +3,12 @@
 Working checklist derived from the [Master Plan](MASTER_PLAN.md). Dates are relative to
 project start (2026-07-09).
 
+> **Looking for what to do next?** [REMAINING_WORK.md](REMAINING_WORK.md) holds the open
+> defects and features; [SHIPPING.md](SHIPPING.md) holds everything that gates a release —
+> blockers, gate readiness, required verification, and what is blocked on you. This
+> document keeps the full history — what shipped, when, and why — which is what makes it
+> long. Year-2+ products live in [ECOSYSTEM.md](ECOSYSTEM.md) and are not current work.
+
 ## End Goal — North Star (added 2026-07-14)
 
 > Tabs remain a core part of the browsing experience, but the browser treats
@@ -352,7 +358,39 @@ branch relationships become early edges of the Phase 6 knowledge graph.
       exempt. **L4 verified 2026-08-01** across all three arms, including that the
       Settings checkbox follows an externally-set pref.
 
-## Phase 4 — Privacy Center (Months 6–8) — Y1 ← **current**
+### Phase 2 / 2.5 / 3 follow-ups closed 2026-08-02 (patches 0051–0058)
+
+Everything the phases above left as "follow-up" is now built and verified, except two
+items gated on later phases. Full list and reasoning: [REMAINING_WORK.md](REMAINING_WORK.md)
+§3; evidence: [VERIFICATION.md](VERIFICATION.md) §4b (114 Marionette checks, 0 failures).
+
+- **Phase 2** — named container sharing across Spaces with the migration warning
+  (`0051`); an editable *and, for the first time, visible* Space description (`0051`);
+  markdown in workspace notes (`0052`); recommended extensions per template (`0053`).
+- **Phase 2.5** — branch lineage in the switcher, pinned-tab fidelity on branch,
+  compare/discard between a branch and its parent, and step-through replay (`0054`).
+  Two of these were the same shape of bug: 0020 wrote `parentSpaceId` and nothing read
+  it; 0019 captured `pinned` and 0020 ignored it.
+- **Phase 3** — the universal-search shortcut and Space filter, the grouped palette
+  renderer 0027 had been stamping labels for, and per-Space snapshot/branch/timeline
+  entries (`0055`); light themes, CSS syntax highlighting, tab emphasis and the ⚙
+  coach-mark (`0056`); the **widget host** ADR 0010 said was missing, which unblocks the
+  reserved `widget`/`panel` component types and user-arrangeable dashboards (`0057`);
+  Arc-style tabs as a layout-engine capability (`0058`).
+
+Still open, and gated rather than deferred: **per-workspace AI settings** (nothing to
+wire to until the Phase 6 Ollama bridge exists) and **marketplace remote install**
+(needs Phase 5 accounts *and* must land behind plugin compartment isolation, a release
+blocker).
+
+One correction the work forced: patch 0006 deferred extension recommendations "until the
+marketplace could install them", but the marketplace installs Kavacha components, not
+WebExtensions — it was never going to be that installer. Recommendations route through
+Firefox's own install path instead.
+
+---
+
+## Phase 4 — Privacy Center (Months 6–8) — Y1 ← **feature-complete 2026-08-02**
 
 - [x] Cookie intelligence base: Firefox Cookie Banner Blocker on by default
       (`cookiebanners.service.mode=1`)
@@ -362,11 +400,29 @@ branch relationships become early edges of the Phase 6 knowledge graph.
       breakdown read from Firefox's own protections.sqlite ledger (nothing new
       collected), bandwidth saved as a labeled estimate (events x 35 KB), an
       Active Protections list read live from prefs, and clear-statistics.
-      Later: per-site drilldown, blocked-today badge surfaces
+- [x] Session-scoped cookie deletion rules (patch `0049-session-scoped-cookie-rules.patch`,
+      2026-08-02): per-site Keep / Session only / Block over Gecko's own `cookie`
+      permission, plus delete-on-close driving both required prefs
+- [x] Central permission manager (patch `0048-central-permission-manager.patch`,
+      2026-08-02): global default per capability, per-site exceptions, per-type and
+      global clear. **Clipboard was dropped as unimplementable** — Firefox 152 does not
+      persist clipboard access as a site permission, so there is no grant to show or
+      revoke; the pane says so instead of faking a control
+- [x] Brave Search default + bundled alternatives (DDG, Kagi, Startpage, Google)
+      (patch `0047-brave-search-default.patch`, 2026-08-02). Upstream carried neither
+      Brave nor Kagi and defaulted to Google, so Zen's dump merger gained `add`/`patch`
+      operations; a rule matching nothing now fails the build
+- [x] Privacy score + per-site trust profiles, the latter doubling as the per-site
+      drilldown (patch `0050-privacy-score-and-site-profiles.patch`, 2026-08-02).
+      Also adds encrypted DNS and delete-cookies-on-close to the posture list
+- [ ] Blocked-today badge on a chrome surface — needs `KavachaMenu` and chrome markup,
+      so it was left out of 0050 rather than folded in
 - [ ] Network-silence test in CI (fresh idle profile ⇒ zero telemetry requests)
-- [ ] Central permission manager
-- [ ] Brave Search default + bundled alternatives (DDG, Kagi, Startpage, Google)
-- [ ] Later: privacy score, per-site trust profiles
+
+**None of 0047–0050 is build-verified.** Each was checked as far as is possible without
+a build — schema validation, `node --check`, XML well-formedness, and a Fluent-id
+cross-check — but the arms that matter (does a fresh profile search with Brave; do
+cookies vanish across a real quit) need a build. See [SHIPPING.md](SHIPPING.md) §3.
 
 ## Phase 5 — Kavacha Account & Ownership (Months 8–10) — Y1
 
@@ -405,14 +461,35 @@ branch relationships become early edges of the Phase 6 knowledge graph.
 - [ ] Tab assistant via command palette ("group tabs by topic", "close duplicates",
       "save this research session")
 
-## Phase 7 — Ecosystem (Year 2+)
+## Phase 7 — Browser, later (post-v1.0)
 
-Kavacha Mail (+ email aliases, identity containers) · Kavacha Drive · Kavacha Identity
-(password manager, passkeys) · Knowledge management (notes, web clipper, knowledge
-graph) · Search aggregator · Enterprise (team workspaces, admin controls, compliance
-mode) · Automation, focus mode, offline mode
+Browser work deliberately scheduled after v1.0. Still browser features — patches in
+`browser/patches/`, no servers, no accounts:
+
+- [ ] Knowledge management — per-page notes, web clipper, personal knowledge graph.
+      On the north-star path: the Phase 6 personal search index is what grows into
+      the graph (see [PLATFORM_PLAN.md](PLATFORM_PLAN.md) row 3)
+- [ ] Automation framework — workflow builder (trigger → actions), tab manipulation,
+      data extraction, scheduled workflows, reusable templates; the `automation`
+      command domain is already reserved in the patch-0027 registry
+- [ ] Power-user tooling — capture, annotation, citations, REST client, JSON viewer,
+      writing mode. Candidates for marketplace *bundles* rather than core
+- [ ] Focus mode — block distracting sites + notifications
+- [ ] Offline mode — save pages, notes, documents (pairs with the web clipper)
+- [ ] Tab history tree (FEATURES 7.1) and named/saved tab sessions (7.2)
+
+## Ecosystem (Year 2+) — separate document, deliberately
+
+Kavacha Mail, Drive, Identity, the search aggregator and Enterprise are **separate
+products**, not browser features: each needs servers, an account, and a business
+model, and all of them depend on Phase 5 existing first. They have been moved out of
+this roadmap so they cannot be mistaken for current work — see
+[ECOSYSTEM.md](ECOSYSTEM.md), which is explicitly gated on the browser having shipped.
 
 ## Release gates
+
+Requirements below; **current readiness against each is tracked in
+[SHIPPING.md](SHIPPING.md) §1**, which is the file to read before claiming a gate.
 
 | Gate | Requirement |
 |---|---|

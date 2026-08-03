@@ -39,11 +39,11 @@ Priority: **Y1** = first-year must-have · **later** = post-v1.
 
 ## 4. Identity Protection (bigger than a browser)
 
-| Feature | Status vs Zen | Priority |
-|---|---|---|
-| 4.1 **Email alias system** — shopping@kavacha.me, news@kavacha.me; destroy anytime | **new** (needs Kavacha Account + mail infra) | later |
-| 4.2 **Identity containers** — beyond incognito: anonymous identity = no cookies + temp email + temp profile + fresh fingerprint | **new** | later |
-| 4.3 **Password manager** — passwords, passkeys, 2FA codes; encrypted locally | **new** (Firefox's manager as interim) | later |
+Moved to [ECOSYSTEM.md](ECOSYSTEM.md) (2026-08-02) — 4.1 email aliases, 4.2 identity
+containers, 4.3 password manager. The section title was already admitting these are
+bigger than a browser: each needs the Kavacha Account plus mail infrastructure, so
+they are gated on Phase 5 and on the browser having shipped. Firefox's built-in
+password manager is the interim answer and ships today.
 
 ## 5. AI (local-first — Zen has none)
 
@@ -73,7 +73,7 @@ Priority: **Y1** = first-year must-have · **later** = post-v1.
 
 | Feature | Status vs Zen | Priority |
 |---|---|---|
-| 8.1 **Search aggregator** — one query fanned to Brave/Kagi/Bing/Google, combined results | **new** | later |
+| 8.1 ~~Search aggregator~~ — moved to [ECOSYSTEM.md](ECOSYSTEM.md); do not confuse it with universal search (patch 0012, shipped), which searches the user's own data rather than the web | — | — |
 | 8.2 **Personal search index** — local search over history, bookmarks, notes, saved pages ("the silicon battery article from last month") | **new** — also the retrieval backbone for 5.1 and 6.3 | **Y1** |
 
 ## 9. Sync and Ownership
@@ -86,11 +86,10 @@ Priority: **Y1** = first-year must-have · **later** = post-v1.
 
 ## 10. Business / Enterprise
 
-| Feature | Status vs Zen | Priority |
-|---|---|---|
-| 10.1 Team workspaces (org → Marketing/Engineering/Research) | **new** | later |
-| 10.2 Admin controls — extensions, privacy policies, accounts | **new** (Firefox enterprise policies as base) | later |
-| 10.3 Compliance mode — audit logs, policy enforcement, data residency (schools, law firms, government) | **new** | later |
+Moved to [ECOSYSTEM.md](ECOSYSTEM.md) (2026-08-02) — team workspaces, admin controls,
+compliance mode. Recorded there with the tension that has to be resolved before any of
+it starts: compliance mode means audit logs, and audit logs mean recording what users
+do, which is the one thing the consumer product promises never to happen.
 
 ## 11. Small Features That Matter
 
@@ -111,4 +110,8 @@ Priority: **Y1** = first-year must-have · **later** = post-v1.
 6. **Theme/component marketplace** (2.2, 2.3)
 7. **Personal search index** (8.2) — doubles as AI retrieval backbone
 
-Later: email aliases, password manager, notes system, cloud storage, enterprise.
+Later (browser, post-v1.0): notes system, web clipper, knowledge graph, automation,
+focus mode, offline mode, tab history tree — see ROADMAP "Phase 7 — Browser, later".
+
+Later (separate products, gated): email aliases, password manager, cloud storage,
+search aggregator, enterprise — see [ECOSYSTEM.md](ECOSYSTEM.md).

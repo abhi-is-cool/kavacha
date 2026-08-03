@@ -128,9 +128,13 @@ Local AI via Ollama / llama.cpp.
 
 ## Phase 7 — Ecosystem Expansion (Year 2+)
 
-- **Kavacha Mail:** private email, aliases, encryption
-- **Kavacha Drive:** cloud storage, file sharing, encryption
-- **Kavacha Identity:** password manager, passkeys, digital identity
+Kavacha Mail, Drive and Identity are separate products gated on the browser having
+shipped and on Phase 5 defining the account + encryption model they all share. Moved
+to [ECOSYSTEM.md](ECOSYSTEM.md) (2026-08-02) so they are not read as current work.
+
+Browser work scheduled after v1.0 — knowledge management, automation, focus mode,
+offline mode — stays on the roadmap as "Phase 7 — Browser, later"
+([ROADMAP.md](ROADMAP.md)).
 
 ## Testing Strategy
 

@@ -9,8 +9,14 @@ you. Not another Firefox fork, but the foundation of an ecosystem: see
 Zen, Brave, and Firefox, and [FEATURES.md](documentation/FEATURES.md) for the full
 feature inventory.
 
-> **Status: Pre-alpha — Phase 1 (Foundation).** Nothing is shippable yet. See the
-> [Master Plan](documentation/MASTER_PLAN.md) and [Roadmap](documentation/ROADMAP.md).
+> **Status: Pre-alpha — Phase 4 (Privacy Center).** Phases 1–3 are essentially complete;
+> nothing is shippable yet, because no update service exists to deliver a security fix.
+> **[Shipping](documentation/SHIPPING.md)** is what stands between this build and a
+> release; **[Remaining Work](documentation/REMAINING_WORK.md)** is the open defect and
+> feature list. The [Master Plan](documentation/MASTER_PLAN.md) and
+> [Roadmap](documentation/ROADMAP.md) hold the rationale and the record of what is done.
+> Year-2+ products (Mail, Drive, Identity) are gated in
+> [ECOSYSTEM.md](documentation/ECOSYSTEM.md) and are **not** current work.
 
 ## What Kavacha is
 

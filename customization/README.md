@@ -46,10 +46,20 @@ Reference implementation: [kavacha-midnight/](themes/kavacha-midnight/), the def
 dark theme.
 
 **Marketplace (`about:marketplace`, patch 0028; ADR 0010):** a component marketplace
-over themes, layouts, and bundles ("Research Mode"). It is offline-first — a bundled
-catalog installs into the profile and applies through the Layout and Theme engines, and
-each installed component registers palette commands via the command registry (patch 0027).
-Sidebar widgets and tool panels are reserved component types pending a widget host.
+over themes, layouts, bundles ("Research Mode"), widgets and panels. It is offline-first —
+a bundled catalog installs into the profile and applies through the Layout, Theme and
+Widget engines, and each installed component registers palette commands via the command
+registry (patch 0027).
+
+`widget` and `panel` were reserved-but-hostless until **patch 0057** supplied the host.
+A `widget` component adds one card to the dashboard; a `panel` component sets a whole
+arrangement, which is what makes a curated set one click. The widget contract is
+`{ id, name, render(doc, win) -> Node }` and deliberately nothing more: a widget returns
+a node and the host places it, with no hook into chrome layout, no persistent process and
+no way to run at startup. That narrowness is the point — `widget` is a type the
+*marketplace* can install, so the surface a third-party component gets must not be usable
+to reshape the browser. A widget that throws is skipped with its error logged rather than
+taking the dashboard down.
 Submissions are statically validated against the schemas; `style.css` is reviewed/sandboxed
 — theme CSS must never gain script execution or touch web content. Remote upload, ratings,
 install, and auto-update land with Kavacha accounts (Phase 5).

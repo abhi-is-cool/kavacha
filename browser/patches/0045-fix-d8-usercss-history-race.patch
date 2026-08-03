@@ -1,0 +1,224 @@
+Fix D8: two saves in flight lose the CSS history entirely
+
+KavachaUserCSS.listHistory() returned an empty array after two setCSS()
+calls, so revertTo() had nothing to revert to and the history arm of patch
+0025 could not be exercised at all. Live-apply and safe mode both passed,
+which is why this was recorded as isolated to persistence.
+
+Root cause is a time-of-check/time-of-use race in setCSS(), not the write:
+
+  const previous = await this._loadCSS();   // cache, not disk
+  if (previous.trim()) { await this._pushHistory(previous); }
+
+_loadCSS() returns this._css when it is populated and reads the file when it
+is null -- and this._css is set to null ASYNCHRONOUSLY, by the revision
+observer that setCSS itself rings on the way out. So two setCSS() calls that
+overlap both find the cache empty, both read the file as it was BEFORE either
+of them wrote, both compute previous === "", and neither pushes anything. The
+last writer wins the CSS file and the history stays empty. Nothing throws,
+which is why it presented as a missing feature rather than a failure.
+
+Overlap is not exotic. Marionette's execute_script does not await promises, so
+the 0025 probe made exactly this call -- but so does the Studio's Apply button
+racing the "Toggle Custom CSS Safe Mode" palette command, or any second save
+issued before the first settles.
+
+Reproduced against the real module with Services/IOUtils/PathUtils stubbed
+(pref observers synchronous, IO asynchronous, as in Gecko):
+
+  sequential (awaited)   1 history entry   <- the only passing shape
+  concurrent             0 history entries
+  fire-and-forget        0 history entries
+
+The fix is a mutation queue. setCSS() and revertTo() now run through
+_enqueue(), so only one mutation is ever in flight, and the "what am I
+overwriting" read comes from _readCSSFromDisk() rather than the cache -- the
+cache's whole problem is that its lifetime is controlled by the observer, not
+by the caller. revertTo() takes the queue for its read AND its write together,
+so a save landing in between cannot make it restore a different entry than the
+one the user clicked.
+
+Two related corrections, both of which were part of why the arm looked broken:
+
+  * The empty baseline is now snapshotted. `if (previous.trim())` meant a user
+    whose FIRST save was the one that broke their chrome had an empty history
+    and nothing to revert to -- the exact situation the feature exists for.
+    A true no-op (previous === css) is still skipped, so the history does not
+    fill with duplicates.
+  * _readHistory() swallowed every error, so an unreadable or corrupt history
+    file was indistinguishable from an empty one. Missing-file is still silent
+    (it is the first-run case); anything else now says so.
+
+studio.js labels the baseline entry "(no custom CSS)", because a Restore button
+with a blank preview beside it reads as a rendering bug.
+
+After the fix, all four shapes record history, and the arm 0025 could never
+reach now runs: save v1, save v2, revert to the oldest entry, land back on
+empty CSS.
+
+  sequential   2 entries   concurrent   2 entries
+  fire-and-forget 2 entries   revert -> "" restored
+
+Still to prove on a real build: the same sequence through about:studio's
+Advanced tab against a live profile. The logic is verified; the profile path
+is not.
+diff --git a/src/zen/common/sys/KavachaUserCSS.sys.mjs b/src/zen/common/sys/KavachaUserCSS.sys.mjs
+--- a/src/zen/common/sys/KavachaUserCSS.sys.mjs
++++ b/src/zen/common/sys/KavachaUserCSS.sys.mjs
+@@ -43,6 +43,11 @@
+   _initialized: false,
+   _css: null,
+   _sheetByWindow: new WeakMap(),
++  // Every mutation runs through this chain, one at a time. Without it two
++  // saves in flight — the Studio's Apply racing a palette command, or any
++  // caller that does not await — both read the pre-write text, both conclude
++  // there is nothing to snapshot, and the history is silently lost (D8).
++  _mutations: Promise.resolve(),
+ 
+   init() {
+     if (this._initialized) {
+@@ -78,18 +83,38 @@
+     return PathUtils.join(PathUtils.profileDir, kHistoryFile);
+   },
+ 
++  /** The CSS as it is on disk right now, bypassing the cache. */
++  async _readCSSFromDisk() {
++    try {
++      return await IOUtils.readUTF8(this._cssPath);
++    } catch (e) {
++      if (e?.name !== "NotFoundError") {
++        console.error("KavachaUserCSS: could not read custom CSS", e);
++      }
++      return ""; // First run — no file yet.
++    }
++  },
++
+   async _loadCSS() {
+     if (this._css !== null) {
+       return this._css;
+     }
+-    try {
+-      this._css = await IOUtils.readUTF8(this._cssPath);
+-    } catch (e) {
+-      this._css = ""; // First run — no file yet.
+-    }
++    this._css = await this._readCSSFromDisk();
+     return this._css;
+   },
+ 
++  // Run `fn` after every mutation already queued, and hand the caller its
++  // result. A rejection propagates to that caller but must not poison the
++  // chain, so the chain itself continues from a settled promise either way.
++  _enqueue(fn) {
++    const run = this._mutations.then(fn, fn);
++    this._mutations = run.then(
++      () => {},
++      () => {}
++    );
++    return run;
++  },
++
+   // ----- Public API (about:studio Advanced tab, palette) ------------------
+ 
+   /** The current custom CSS text (may be ""). */
+@@ -98,14 +123,28 @@
+   },
+ 
+   /** Replace the CSS, snapshotting the previous text into history, then apply. */
+-  async setCSS(text) {
++  setCSS(text) {
++    return this._enqueue(() => this._setCSSLocked(text));
++  },
++
++  // The write itself. Only ever called from inside _enqueue, so it may assume
++  // no other mutation is in flight.
++  async _setCSSLocked(text) {
+     const css = typeof text === "string" ? text : "";
+-    const previous = await this._loadCSS();
+-    if (previous.trim()) {
++    // Read what we are about to overwrite from DISK, not from this._css: the
++    // cache is invalidated asynchronously by the revision observer, so a
++    // caller arriving mid-flight can find it holding either the old text or
++    // null. Disk is the only value that is unambiguously "what is being
++    // replaced" (D8).
++    const previous = await this._readCSSFromDisk();
++    // Snapshot even an empty baseline, so a user whose first-ever save is the
++    // one that breaks their chrome still has something to revert TO. Skip only
++    // a true no-op, which would otherwise fill the history with duplicates.
++    if (previous !== css) {
+       await this._pushHistory(previous);
+     }
+-    this._css = css;
+     await IOUtils.writeUTF8(this._cssPath, css);
++    this._css = css;
+     // Bump the revision: the observer re-applies to every window, and an
+     // about:studio editor watching the pref re-reads too.
+     Services.prefs.setIntPref(
+@@ -115,10 +154,23 @@
+   },
+ 
+   async _readHistory() {
++    let raw;
+     try {
+-      const parsed = JSON.parse(await IOUtils.readUTF8(this._historyPath));
++      raw = await IOUtils.readUTF8(this._historyPath);
++    } catch (e) {
++      if (e?.name !== "NotFoundError") {
++        // Anything other than "no history yet" is worth saying out loud. An
++        // unreadable history file otherwise presents exactly as an empty one,
++        // which is what made D8 look like a missing feature for a day.
++        console.error("KavachaUserCSS: could not read history", e);
++      }
++      return [];
++    }
++    try {
++      const parsed = JSON.parse(raw);
+       return Array.isArray(parsed) ? parsed : [];
+     } catch (e) {
++      console.error("KavachaUserCSS: history file is not valid JSON", e);
+       return [];
+     }
+   },
+@@ -139,14 +191,18 @@
+     return this._readHistory();
+   },
+ 
+-  /** Restore a history entry as the current CSS (itself undoable — setCSS
+-   *  snapshots whatever is current before overwriting it). */
+-  async revertTo(index) {
+-    const history = await this._readHistory();
+-    const entry = history[index];
+-    if (entry) {
+-      await this.setCSS(entry.css);
+-    }
++  /** Restore a history entry as the current CSS (itself undoable — the write
++   *  snapshots whatever is current before overwriting it). The read and the
++   *  write share one turn of the queue, so a save landing in between cannot
++   *  make this restore a different entry than the one that was clicked. */
++  revertTo(index) {
++    return this._enqueue(async () => {
++      const history = await this._readHistory();
++      const entry = history[index];
++      if (entry) {
++        await this._setCSSLocked(entry.css);
++      }
++    });
+   },
+ 
+   setSafeMode(on) {
+diff --git a/src/zen/kavacha-studio/studio.js b/src/zen/kavacha-studio/studio.js
+--- a/src/zen/kavacha-studio/studio.js
++++ b/src/zen/kavacha-studio/studio.js
+@@ -213,6 +213,12 @@
+ 
+ function firstLine(css) {
+   const line = String(css || "").split("\n").find(l => l.trim()) || "";
++  // The history now records the empty baseline, so the oldest entry on a
++  // profile that started with no custom CSS has nothing to preview. Say so —
++  // an unlabelled Restore button reads as a rendering bug.
++  if (!line) {
++    return "(no custom CSS)";
++  }
+   return line.length > 60 ? line.slice(0, 57) + "…" : line;
+ }
+ 

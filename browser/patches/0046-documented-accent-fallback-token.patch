@@ -1,0 +1,135 @@
+Give the missing accent a name: --kavacha-accent-fallback
+
+Kavacha ships no default accent on purpose (2026-07-13): the welcome flow
+asks, and Midnight themes surfaces only. So until the user answers, BOTH
+--zen-primary-color and --kavacha-accent are undefined -- a legitimate,
+durable state that nothing named or documented. Every consumer had quietly
+invented its own literal for it:
+
+  studio.css:16       var(--zen-primary-color, var(--kavacha-accent, #8b7bd8))
+  marketplace.css:17  var(--zen-primary-color, var(--kavacha-accent, #8b7bd8))
+  plugins.css:17      var(--zen-primary-color, var(--kavacha-accent, #8b7bd8))
+
+Three copies of one decision, stated in none of them. Anyone reading a line
+would have to guess whether #8b7bd8 was a considered fallback, a placeholder,
+or an accent someone forgot to wire up.
+
+This adds --kavacha-accent-fallback to the 0016 baked floor, carrying the
+policy in a comment where the value lives, and points the three consumers at
+it. Rendering is unchanged -- the same colour resolves in the same cases --
+but the empty accent is now a defined state instead of an accident, which is
+what the defect asked for. It is explicitly NOT a default accent: nothing
+assigns it to --zen-primary-color, it never enters Zen's colour-mix chain, and
+any real accent still wins.
+
+Worth recording: the token has to be declared TWICE, and that is not
+redundancy. kavacha-midnight.inc.css is chrome CSS; about:studio,
+about:marketplace and about:plugins are content documents and the chrome token
+floor is simply not in their cascade. That is the actual reason those three
+files hardcode fallbacks for every --kavacha-* token, not just the accent --
+they can see none of them. Each declaration now says so and names the
+canonical definition. Folding all of them into one shared content stylesheet
+is the real fix; it needs a new jar entry and moz.build wiring, which cannot
+be verified without a full build, so it is left as a follow-up rather than
+guessed at here.
+
+The companion half of this defect pair is documentation-only and lands outside
+the patch chain, in the repo tree: customization/themes/kavacha-midnight/
+colors.json and style.css now carry a $readBeforeEditing note explaining that
+the package is a REFERENCE COPY -- the engine clears overrides for the default
+theme and loads a package style.css only for user themes, so editing either
+file changes nothing. That was D5, resolved as not-a-bug and kept open as a
+maintenance trap. The note names both real sources (the 0016 baked floor and
+BUILTIN_THEMES in KavachaThemeEngine.sys.mjs) and flags that only
+surface/text/border are baked at all.
+
+Not build-verified: CSS custom properties cannot be evaluated without a
+running chrome. The change is declaration-only -- no selector, no cascade
+order, no existing declaration altered except the three accent expressions.
+diff --git a/src/zen/kavacha-theme/kavacha-midnight.inc.css b/src/zen/kavacha-theme/kavacha-midnight.inc.css
+--- a/src/zen/kavacha-theme/kavacha-midnight.inc.css
++++ b/src/zen/kavacha-theme/kavacha-midnight.inc.css
+@@ -29,6 +29,26 @@
+   --kavacha-text-primary: #edeaf7;
+   --kavacha-text-secondary: #a79fc4;
+ 
++  /* The colour to use when no accent has been chosen yet.
++
++     Kavacha ships no default accent by decision (2026-07-13, see header): the
++     welcome flow asks, and until it is answered BOTH --zen-primary-color and
++     --kavacha-accent are undefined. That gap is legitimate and durable -- a
++     user may simply never pick one -- but it had no name, so every consumer
++     invented its own literal for it and none of them said what it was. An
++     absent accent is a defined state now, not an accident.
++
++     This is NOT a default accent. Nothing assigns it to --zen-primary-color,
++     it never reaches Zen's colour-mix chain, and any real accent -- from the
++     welcome flow or from a theme package -- wins over it. Consume it last:
++
++       var(--zen-primary-color, var(--kavacha-accent, var(--kavacha-accent-fallback)))
++
++     Content documents (about:studio, about:marketplace, about:plugins) are
++     not in this stylesheet's cascade and each redeclare the token; keep those
++     in step with this value. */
++  --kavacha-accent-fallback: #8b7bd8;
++
+   /* The base every --zen-colors-* mix derives from. */
+   --zen-branding-dark: var(--kavacha-surface);
+ 
+diff --git a/src/zen/kavacha-studio/studio.css b/src/zen/kavacha-studio/studio.css
+--- a/src/zen/kavacha-studio/studio.css
++++ b/src/zen/kavacha-studio/studio.css
+@@ -13,7 +13,14 @@
+   --studio-border: var(--kavacha-border, #2e2846);
+   --studio-text: var(--kavacha-text-primary, #edeaf7);
+   --studio-text-dim: var(--kavacha-text-secondary, #a79fc4);
+-  --studio-accent: var(--zen-primary-color, var(--kavacha-accent, #8b7bd8));
++  /* Canonical definition and rationale: kavacha-midnight.inc.css. Repeated
++     here because this is a content document -- the chrome token floor is not
++     in its cascade -- not because the value is local. */
++  --kavacha-accent-fallback: #8b7bd8;
++  --studio-accent: var(
++    --zen-primary-color,
++    var(--kavacha-accent, var(--kavacha-accent-fallback))
++  );
+   color-scheme: dark;
+ }
+ 
+diff --git a/src/zen/kavacha-marketplace/marketplace.css b/src/zen/kavacha-marketplace/marketplace.css
+--- a/src/zen/kavacha-marketplace/marketplace.css
++++ b/src/zen/kavacha-marketplace/marketplace.css
+@@ -14,7 +14,14 @@
+   --market-border: var(--kavacha-border, #2e2846);
+   --market-text: var(--kavacha-text-primary, #edeaf7);
+   --market-text-dim: var(--kavacha-text-secondary, #a79fc4);
+-  --market-accent: var(--zen-primary-color, var(--kavacha-accent, #8b7bd8));
++  /* Canonical definition and rationale: kavacha-midnight.inc.css. Repeated
++     here because this is a content document -- the chrome token floor is not
++     in its cascade -- not because the value is local. */
++  --kavacha-accent-fallback: #8b7bd8;
++  --market-accent: var(
++    --zen-primary-color,
++    var(--kavacha-accent, var(--kavacha-accent-fallback))
++  );
+   color-scheme: dark;
+ }
+ 
+diff --git a/src/zen/kavacha-plugins/plugins.css b/src/zen/kavacha-plugins/plugins.css
+--- a/src/zen/kavacha-plugins/plugins.css
++++ b/src/zen/kavacha-plugins/plugins.css
+@@ -14,7 +14,14 @@
+   --pl-border: var(--kavacha-border, #2e2846);
+   --pl-text: var(--kavacha-text-primary, #edeaf7);
+   --pl-text-dim: var(--kavacha-text-secondary, #a79fc4);
+-  --pl-accent: var(--zen-primary-color, var(--kavacha-accent, #8b7bd8));
++  /* Canonical definition and rationale: kavacha-midnight.inc.css. Repeated
++     here because this is a content document -- the chrome token floor is not
++     in its cascade -- not because the value is local. */
++  --kavacha-accent-fallback: #8b7bd8;
++  --pl-accent: var(
++    --zen-primary-color,
++    var(--kavacha-accent, var(--kavacha-accent-fallback))
++  );
+   --pl-danger: #e06c75;
+   color-scheme: dark;
+ }

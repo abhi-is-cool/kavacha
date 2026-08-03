@@ -1,0 +1,862 @@
+# Kavacha patch 0057 — the widget host: dashboard widgets, and the `widget`
+# and `panel` marketplace component types (REMAINING_WORK.md §3
+# "Customization": "Widget host — blocks the reserved `widget` and `panel`
+# marketplace component types, and blocks user-defined dashboards"; ADR 0010).
+#
+# ADR 0010 reserved both types and shipped no installer for either, recording
+# "there is no sidebar-widget or tool-panel host engine yet". This is that
+# engine — one missing piece that three separate follow-ups were queued behind,
+# so it is deliberately the smallest thing that genuinely unblocks all three
+# rather than a dashboard framework.
+#
+# THE CONTRACT is { id, name, render(doc, win) -> Node }, and that is all of
+# it. A widget returns a Node and the host places it: no hook into chrome
+# layout, no persistent process, no way to run at startup. That narrowness is
+# the point — `widget` is a type the MARKETPLACE can install, so the surface a
+# third-party component gets has to be one that cannot be used to reshape the
+# browser.
+#
+# WHERE THEY GO: a dashboard panel, not a docked sidebar column. A docked
+# region has to fight Zen's chrome layout in both tab orientations, which is a
+# lot of risk for a surface nobody has asked to be permanent. The panel is a
+# real, arrangeable dashboard today, and the widget contract would not have to
+# change to add a docked mode later.
+#
+# ARRANGEMENT lives in the layout document (`widgets: ["id", ...]`), because
+# kavacha-layout.json already IS "how the user has arranged their browser" and
+# already round-trips with about:studio and with `layout` components. An absent
+# list means "the built-ins in their declared order", so an existing profile
+# gets a working dashboard with no migration, and unknown ids are dropped
+# rather than surfaced as errors — a widget can vanish simply because its
+# component was uninstalled, which is not a fault.
+#
+# WHAT THE TWO TYPES NOW MEAN: a `widget` component adds one card; a `panel`
+# component sets the whole arrangement, which is what a curated set is and
+# what makes it one click. Both go through the same
+# register/unregisterBySource shape the command registry already uses, so an
+# uninstall drops a component's widgets as a group.
+#
+# The three built-ins read only data Kavacha already holds locally — Spaces,
+# the active Space's note (through KavachaMarkdown, which builds nodes and
+# never parses HTML, because this is chrome), and its snapshots. No widget
+# performs network I/O and the host offers no way to. A widget that throws is
+# skipped with its error logged rather than taking the dashboard down, which
+# matters specifically because third-party components can be widgets.
+#
+# Why a patch: a new chrome module needs a moz.build entry and a ZenStartup
+# init, and the marketplace's type taxonomy and installer are Kavacha chrome
+# sources.
+#
+# Touches: src/zen/common/sys/KavachaWidgetHost.sys.mjs (new),
+#          src/zen/common/moz.build, src/zen/common/modules/ZenStartup.mjs,
+#          src/zen/common/sys/KavachaLayoutEngine.sys.mjs (widgets field),
+#          src/zen/common/sys/KavachaMarketplace.sys.mjs (types + installers),
+#          src/zen/common/sys/KavachaCommandRegistry.sys.mjs (Dashboard),
+#          src/zen/common/styles/kavacha-menu.inc.css,
+#          locales/en-US/browser/browser/zen-command-palette.ftl.
+# Applies on top of 0056.
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -74,3 +74,5 @@
+ # Kavacha patch 0056 — first-launch coach mark on the menu button.
+ kavacha-coachmark-title = Everything is here
+ kavacha-coachmark-body = Spaces, themes, layout, privacy and the rest of Kavacha live behind this button. Cmd+K opens the same list.
++# Kavacha patch 0057 — the widget dashboard.
++kavacha-action-open-dashboard = Dashboard
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -18,6 +18,7 @@
+   "sys/KavachaTabMemory.sys.mjs",
+   "sys/KavachaThemeEngine.sys.mjs",
+   "sys/KavachaUserCSS.sys.mjs",
++  "sys/KavachaWidgetHost.sys.mjs",
+   "sys/ZenActorsManager.sys.mjs",
+   "sys/ZenCustomizableUI.sys.mjs",
+   "sys/ZenUIMigration.sys.mjs",
+diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
+--- a/src/zen/common/modules/ZenStartup.mjs
++++ b/src/zen/common/modules/ZenStartup.mjs
+@@ -171,6 +171,12 @@
+       ).KavachaUserCSS;
+       kavachaUserCSS.init();
+       kavachaUserCSS.applyToWindow(window);
++      // Kavacha: the widget host. Must come up BEFORE the marketplace, which
++      // registers `widget` components into it as it re-applies what is
++      // installed (ADR 0010).
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaWidgetHost.sys.mjs"
++      ).KavachaWidgetHost.init();
+       // Kavacha: bring up the component marketplace — re-registers the palette
+       // commands of installed components and the "Open Marketplace" entry
+       // (ADR 0010). Process singleton; the window arg is unused.
+diff --git a/src/zen/common/styles/kavacha-menu.inc.css b/src/zen/common/styles/kavacha-menu.inc.css
+--- a/src/zen/common/styles/kavacha-menu.inc.css
++++ b/src/zen/common/styles/kavacha-menu.inc.css
+@@ -129,3 +129,148 @@
+   font-size: 0.92em;
+   line-height: 1.45;
+ }
++
++/* ==========================================================================
++   Widget dashboard (patch 0057). The panel is built by KavachaWidgetHost from
++   whatever widgets are enabled, so this styles a shape rather than a fixed
++   set of cards.
++   ========================================================================== */
++#kavacha-dashboard-panel .kavacha-dashboard {
++  width: 380px;
++  max-height: 560px;
++  overflow-y: auto;
++  padding: 12px;
++  display: flex;
++  flex-direction: column;
++  gap: 10px;
++}
++
++#kavacha-dashboard-panel .kavacha-dashboard-slot {
++  position: relative;
++  border: 1px solid var(--zen-colors-border, currentColor);
++  border-radius: 10px;
++  padding: 10px 12px;
++}
++
++#kavacha-dashboard-panel .kavacha-widget-title {
++  margin: 0 0 6px;
++  font-size: 0.78em;
++  font-weight: 700;
++  letter-spacing: 0.06em;
++  text-transform: uppercase;
++  opacity: 0.6;
++}
++
++#kavacha-dashboard-panel .kavacha-widget-rows {
++  display: flex;
++  flex-direction: column;
++  gap: 2px;
++}
++
++#kavacha-dashboard-panel .kavacha-widget-row {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  width: 100%;
++  text-align: start;
++  appearance: none;
++  border: none;
++  border-radius: 6px;
++  background: transparent;
++  color: inherit;
++  font: inherit;
++  padding: 5px 6px;
++  cursor: pointer;
++}
++
++#kavacha-dashboard-panel .kavacha-widget-row:hover {
++  background: color-mix(in srgb, currentColor 10%, transparent);
++}
++
++#kavacha-dashboard-panel .kavacha-widget-row[aria-current="true"] {
++  font-weight: 650;
++}
++
++#kavacha-dashboard-panel .kavacha-widget-row-name {
++  flex: 1;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++#kavacha-dashboard-panel .kavacha-widget-badge {
++  font-size: 0.72em;
++  text-transform: uppercase;
++  letter-spacing: 0.05em;
++  opacity: 0.55;
++}
++
++#kavacha-dashboard-panel .kavacha-widget-empty {
++  margin: 0;
++  opacity: 0.6;
++}
++
++/* Notes can be arbitrarily long; the card scrolls rather than the panel. */
++#kavacha-dashboard-panel .kavacha-widget-note {
++  max-height: 200px;
++  overflow-y: auto;
++  overflow-wrap: anywhere;
++  line-height: 1.45;
++}
++
++#kavacha-dashboard-panel .kavacha-widget-note :is(p, ul, ol, pre) {
++  margin: 0 0 0.5em;
++}
++
++/* Arrangement controls sit in the card's top-right and stay dim until the
++   card is hovered — present, but not competing with the content. */
++#kavacha-dashboard-panel .kavacha-dashboard-controls {
++  position: absolute;
++  inset-block-start: 6px;
++  inset-inline-end: 6px;
++  display: flex;
++  gap: 2px;
++  opacity: 0;
++  transition: opacity 120ms ease;
++}
++
++#kavacha-dashboard-panel .kavacha-dashboard-slot:hover
++  .kavacha-dashboard-controls,
++#kavacha-dashboard-panel .kavacha-dashboard-controls:focus-within {
++  opacity: 1;
++}
++
++@media (prefers-reduced-motion: reduce) {
++  #kavacha-dashboard-panel .kavacha-dashboard-controls {
++    transition: none;
++  }
++}
++
++#kavacha-dashboard-panel .kavacha-dashboard-control {
++  appearance: none;
++  border: 1px solid var(--zen-colors-border, currentColor);
++  border-radius: 6px;
++  background: transparent;
++  color: inherit;
++  font: inherit;
++  font-size: 0.85em;
++  padding: 1px 6px;
++  cursor: pointer;
++}
++
++#kavacha-dashboard-panel .kavacha-dashboard-control:disabled {
++  opacity: 0.35;
++  cursor: default;
++}
++
++#kavacha-dashboard-panel .kavacha-dashboard-add {
++  display: flex;
++  flex-wrap: wrap;
++  align-items: center;
++  gap: 6px;
++  opacity: 0.8;
++}
++
++#kavacha-dashboard-panel .kavacha-dashboard-add-label {
++  font-size: 0.85em;
++}
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -261,6 +261,18 @@
+       await e.setActiveTheme(ids[(i + 1) % ids.length]);
+     },
+     icon: "chrome://browser/skin/zen-icons/selectable/layers.svg",
++    domain: KavachaCommandDomain.APPEARANCE,
++  },
++  {
++    // Patch 0057: the dashboard. Also the reason the widget host exists —
++    // without a surface, `widget` and `panel` components would install into
++    // nothing.
++    l10nId: "kavacha-action-open-dashboard",
++    command: window =>
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaWidgetHost.sys.mjs"
++      ).KavachaWidgetHost.openDashboard(window),
++    icon: "chrome://browser/skin/zen-icons/selectable/grid-2x2.svg",
+     domain: KavachaCommandDomain.APPEARANCE,
+   },
+   {
+diff --git a/src/zen/common/sys/KavachaLayoutEngine.sys.mjs b/src/zen/common/sys/KavachaLayoutEngine.sys.mjs
+--- a/src/zen/common/sys/KavachaLayoutEngine.sys.mjs
++++ b/src/zen/common/sys/KavachaLayoutEngine.sys.mjs
+@@ -43,6 +43,11 @@
+   toolbar: { position: "top", visible: true },
+   hiddenElements: [],
+   componentSizes: {},
++  // Patch 0057: which dashboard widgets are shown, in order. Empty means
++  // "the widget host's built-ins, in their declared order" — that default
++  // lives in KavachaWidgetHost, not here, so this engine never has to know
++  // what widgets exist.
++  widgets: [],
+ };
+ 
+ // componentSizes is keyed by an abstract component id; a raw {id: px} can't
+@@ -131,6 +136,11 @@
+     if (Array.isArray(doc.hiddenElements)) {
+       out.hiddenElements = doc.hiddenElements.filter(id => typeof id === "string");
+     }
++    if (Array.isArray(doc.widgets)) {
++      // Ids only; the host validates them against what is actually
++      // registered, since a widget can disappear with its component.
++      out.widgets = doc.widgets.filter(id => typeof id === "string");
++    }
+     if (doc.componentSizes && typeof doc.componentSizes === "object") {
+       out.componentSizes = {};
+       for (const [k, v] of Object.entries(doc.componentSizes)) {
+diff --git a/src/zen/common/sys/KavachaMarketplace.sys.mjs b/src/zen/common/sys/KavachaMarketplace.sys.mjs
+--- a/src/zen/common/sys/KavachaMarketplace.sys.mjs
++++ b/src/zen/common/sys/KavachaMarketplace.sys.mjs
+@@ -13,10 +13,12 @@
+ //   theme  -> payload { builtinThemeId }; apply = KavachaThemeEngine.setActiveTheme.
+ //   layout -> payload is a partial layout doc; apply = KavachaLayoutEngine.setLayout.
+ //   bundle -> payload { steps:[{type, ...}] }; apply runs each step in order.
+-//   widget/panel -> RESERVED. There is no sidebar-widget or tool-panel host
+-//     engine yet, so no installer ships and the bundled catalog carries none.
+-//     They exist in the enum so the taxonomy (and future package validation) is
+-//     stable before their hosts land (ADR 0010).
++//   widget  -> payload { builtinWidgetId }; apply = KavachaWidgetHost.
++//     Unblocked by patch 0057, which supplied the host ADR 0010 said was
++//     missing. A `widget` component adds a card to the dashboard.
++//   panel   -> payload { widgets: ["id", ...] }; apply = the same host, as a
++//     whole dashboard ARRANGEMENT rather than a single card. A "panel" is a
++//     curated set, which is what the reserved type was always for.
+ //
+ // State (profile, local-only until Phase 5 sync):
+ //   kavacha-marketplace/installed.json  -> { installed: ["id", ...] }
+@@ -41,6 +43,9 @@
+ const { KavachaLayoutEngine } = ChromeUtils.importESModule(
+   "resource:///modules/KavachaLayoutEngine.sys.mjs"
+ );
++const { KavachaWidgetHost } = ChromeUtils.importESModule(
++  "resource:///modules/KavachaWidgetHost.sys.mjs"
++);
+ const { KavachaCommandRegistry, KavachaCommandDomain } =
+   ChromeUtils.importESModule(
+     "resource:///modules/KavachaCommandRegistry.sys.mjs"
+@@ -51,23 +56,25 @@
+ const kInstalledFile = "installed.json";
+ const kCatalogDir = "catalog";
+ 
+-// Component type taxonomy. theme/layout/bundle have installers below; widget
+-// and panel are reserved but hostless (see header + ADR 0010).
++// Component type taxonomy. All five have installers as of patch 0057.
+ export const KavachaComponentType = Object.freeze({
+   THEME: "theme",
+   LAYOUT: "layout",
+   BUNDLE: "bundle",
+-  WIDGET: "widget", // reserved — no sidebar-widget host engine yet
+-  PANEL: "panel", // reserved — no tool-panel host engine yet
++  WIDGET: "widget", // one dashboard card (KavachaWidgetHost)
++  PANEL: "panel", // a whole dashboard arrangement (KavachaWidgetHost)
+ });
+ 
+-// Types this engine can actually apply today. A component whose type is not in
+-// this set (widget/panel, or an unknown sideloaded type) is listed but not
+-// installable — the installer is the guard.
++// Types this engine can actually apply. A component whose type is not in this
++// set (an unknown sideloaded type) is listed but not installable — the
++// installer is the guard. widget/panel joined the set in patch 0057, once
++// KavachaWidgetHost existed to apply them.
+ const APPLICABLE_TYPES = new Set([
+   KavachaComponentType.THEME,
+   KavachaComponentType.LAYOUT,
+   KavachaComponentType.BUNDLE,
++  KavachaComponentType.WIDGET,
++  KavachaComponentType.PANEL,
+ ]);
+ 
+ // The bundled, trusted catalog. theme payloads name a KavachaThemeEngine
+@@ -112,8 +119,27 @@
+     author: "Kavacha",
+     version: "1.0.0",
+     payload: { tabStyle: "vertical", sidebar: "left", sidebarWidth: 320 },
++  },
++  {
++    id: "panel-research-desk",
++    type: KavachaComponentType.PANEL,
++    name: "Research Desk",
++    description:
++      "A dashboard for long-running research: the Space's note first, then its snapshots.",
++    author: "Kavacha",
++    version: "1.0.0",
++    payload: { widgets: ["space-note", "timeline", "spaces"] },
+   },
+   {
++    id: "widget-spaces",
++    type: KavachaComponentType.WIDGET,
++    name: "Spaces card",
++    description: "Every Space, with branches marked, one click to switch.",
++    author: "Kavacha",
++    version: "1.0.0",
++    payload: { builtinWidgetId: "spaces" },
++  },
++  {
+     id: "research-mode",
+     type: KavachaComponentType.BUNDLE,
+     name: "Research Mode",
+@@ -287,8 +313,8 @@
+ 
+   /**
+    * Install a component: add it to the installed set, persist, register its
+-   * palette command, and bump the revision. widget/panel (and unknown types)
+-   * throw — no host engine can apply them yet.
++   * palette command, and bump the revision. An unknown sideloaded type throws
++   * — there is no host that can apply it.
+    */
+   async install(id) {
+     const component = await this.resolveComponent(id);
+@@ -349,8 +375,18 @@
+       case KavachaComponentType.BUNDLE:
+         await this._applyBundle(component.payload);
+         break;
++      case KavachaComponentType.WIDGET:
++        // Applying a widget means putting its card ON the dashboard. Adding
++        // it to the arrangement is the whole effect — the host owns what it
++        // renders.
++        await KavachaWidgetHost.toggle(component.payload?.builtinWidgetId, true);
++        break;
++      case KavachaComponentType.PANEL:
++        // A panel is a curated ARRANGEMENT, so it replaces the list rather
++        // than appending to it — that is what makes it one click.
++        await KavachaWidgetHost.setEnabledIds(component.payload?.widgets || []);
++        break;
+       default:
+-        // widget/panel are reserved but hostless (ADR 0010) — nothing applies.
+         throw new Error(
+           `KavachaMarketplace: no host for component type "${component.type}"`
+         );
+@@ -367,6 +403,10 @@
+       } else if (step.type === KavachaComponentType.LAYOUT) {
+         const { type, ...layoutPatch } = step;
+         await KavachaLayoutEngine.setLayout(layoutPatch);
++      } else if (step.type === KavachaComponentType.PANEL) {
++        await KavachaWidgetHost.setEnabledIds(step.widgets || []);
++      } else if (step.type === KavachaComponentType.WIDGET) {
++        await KavachaWidgetHost.toggle(step.builtinWidgetId, true);
+       }
+       // Unknown/hostless step types are skipped.
+     }
+diff --git a/src/zen/common/sys/KavachaWidgetHost.sys.mjs b/src/zen/common/sys/KavachaWidgetHost.sys.mjs
+new file mode 100644
+--- /dev/null
++++ b/src/zen/common/sys/KavachaWidgetHost.sys.mjs
+@@ -0,0 +1,430 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha widget host (ROADMAP Phase 3 follow-up: "Widget host — blocks the
++// reserved `widget` and `panel` marketplace component types, and blocks
++// user-defined dashboards"; ADR 0010).
++//
++// ADR 0010 reserved `widget` and `panel` in the marketplace taxonomy and
++// shipped no installer for either, with the note "there is no sidebar-widget
++// or tool-panel host engine yet". This is that engine. It is the missing piece
++// three separate follow-ups were waiting on, so it is deliberately the
++// smallest thing that genuinely unblocks all three rather than a dashboard
++// framework.
++//
++// WHAT A WIDGET IS: { id, name, render(doc, win) -> Node }. That is the whole
++// contract. A widget returns a Node and the host places it; it gets no hook
++// into chrome layout, no persistent process, and no way to run at startup.
++// Built-ins are declared here; the marketplace registers `widget` components
++// through register() with a source, exactly as it already does for commands,
++// so an uninstall drops them as a group.
++//
++// WHERE THEY GO: a dashboard panel, not a docked sidebar column. A docked
++// region would have to fight Zen's chrome layout in both tab orientations —
++// a large amount of risk for a surface nobody has asked to be permanent. The
++// panel is a real, arrangeable dashboard today, and if a docked mode is wanted
++// later the widget contract does not have to change for it.
++//
++// ARRANGEMENT lives in the layout document (kavacha-layout.json ->
++// `widgets: ["id", ...]`), because that file already IS "how the user has
++// arranged their browser", and it already round-trips with about:studio and
++// with the marketplace's `layout` components. An absent list means "the
++// built-ins, in their declared order", so an existing profile gets a working
++// dashboard without a migration.
++//
++// Everything the built-in widgets read is data Kavacha already holds locally.
++// No widget performs network I/O and the host offers no way to.
++
++const lazy = {};
++ChromeUtils.defineESModuleGetters(lazy, {
++  KavachaLayoutEngine: "resource:///modules/KavachaLayoutEngine.sys.mjs",
++  KavachaMarkdown: "resource:///modules/KavachaMarkdown.sys.mjs",
++  KavachaSpaceHistory: "resource:///modules/KavachaSpaceHistory.sys.mjs",
++});
++
++const kHtmlNS = "http://www.w3.org/1999/xhtml";
++const kMaxTimelineRows = 5;
++
++function el(doc, tag, className, text) {
++  const node = doc.createElementNS(kHtmlNS, tag);
++  if (className) {
++    node.className = className;
++  }
++  if (text != null) {
++    node.textContent = text;
++  }
++  return node;
++}
++
++function card(doc, title) {
++  const box = el(doc, "section", "kavacha-widget");
++  box.appendChild(el(doc, "h2", "kavacha-widget-title", title));
++  return box;
++}
++
++// ---------------------------------------------------------------- built-ins
++
++const BUILTIN_WIDGETS = [
++  {
++    id: "spaces",
++    name: "Spaces",
++    render(doc, win) {
++      const box = card(doc, "Spaces");
++      const spaces =
++        win.gZenWorkspaces?.getWorkspaces?.().filter(w => !w.archived) || [];
++      if (!spaces.length) {
++        box.appendChild(el(doc, "p", "kavacha-widget-empty", "No Spaces yet."));
++        return box;
++      }
++      const list = el(doc, "div", "kavacha-widget-rows");
++      for (const space of spaces) {
++        const row = el(doc, "button", "kavacha-widget-row");
++        row.type = "button";
++        row.appendChild(
++          el(doc, "span", "kavacha-widget-row-name", space.name || "Space")
++        );
++        // A branch is marked here for the same reason the strip marks it
++        // (patch 0054): a list of names cannot say which came from which.
++        if (win.gZenWorkspaces.kavachaBranchDepth?.(space)) {
++          row.appendChild(el(doc, "span", "kavacha-widget-badge", "branch"));
++        }
++        if (space.uuid === win.gZenWorkspaces.activeWorkspace) {
++          row.setAttribute("aria-current", "true");
++        }
++        row.addEventListener("click", () => {
++          win.gZenWorkspaces.changeWorkspaceWithID(space.uuid);
++        });
++        list.appendChild(row);
++      }
++      box.appendChild(list);
++      return box;
++    },
++  },
++  {
++    id: "space-note",
++    name: "This Space's note",
++    render(doc, win) {
++      const box = card(doc, "Note");
++      const body = el(doc, "div", "kavacha-widget-note");
++      box.appendChild(body);
++      // Notes are async; return the card now and fill it when the read lands,
++      // so one slow source cannot hold up the whole dashboard.
++      (async () => {
++        try {
++          const uuid = win.gZenWorkspaces?.activeWorkspace;
++          const notes = await win.gZenWorkspaces?.kavachaGetAllNotes?.();
++          const content = uuid ? notes?.[uuid]?.content || "" : "";
++          if (!content.trim()) {
++            body.appendChild(
++              el(doc, "p", "kavacha-widget-empty", "No note in this Space.")
++            );
++            return;
++          }
++          // Same renderer as the notes panel (patch 0052): builds nodes, never
++          // parses HTML. This is chrome, so that is not a style preference.
++          body.appendChild(lazy.KavachaMarkdown.render(content, doc));
++        } catch (e) {
++          win.console?.error("KavachaWidgetHost: note widget failed", e);
++        }
++      })();
++      return box;
++    },
++  },
++  {
++    id: "timeline",
++    name: "Recent snapshots",
++    render(doc, win) {
++      const box = card(doc, "Recent snapshots");
++      const body = el(doc, "div", "kavacha-widget-rows");
++      box.appendChild(body);
++      (async () => {
++        try {
++          const uuid = win.gZenWorkspaces?.activeWorkspace;
++          if (!uuid) {
++            return;
++          }
++          const snapshots = await lazy.KavachaSpaceHistory.listSnapshots(uuid);
++          if (!snapshots.length) {
++            body.appendChild(
++              el(doc, "p", "kavacha-widget-empty", "No snapshots yet.")
++            );
++            return;
++          }
++          const fmt = new Intl.DateTimeFormat(undefined, {
++            dateStyle: "short",
++            timeStyle: "short",
++          });
++          for (const snap of snapshots.slice(0, kMaxTimelineRows)) {
++            const row = el(doc, "button", "kavacha-widget-row");
++            row.type = "button";
++            row.appendChild(
++              el(
++                doc,
++                "span",
++                "kavacha-widget-row-name",
++                `${fmt.format(new Date(snap.createdAt))} · ${snap.tabCount} tabs`
++              )
++            );
++            row.appendChild(el(doc, "span", "kavacha-widget-badge", "restore"));
++            row.addEventListener("click", () => {
++              // Restore stays non-destructive here too: it forks a branch
++              // (patch 0020), it never overwrites the present.
++              KavachaWidgetHost.closeDashboard(win);
++              win.gZenWorkspaces
++                .kavachaBranchSpace(snap.id)
++                .catch(e =>
++                  win.console?.error("KavachaWidgetHost: restore failed", e)
++                );
++            });
++            body.appendChild(row);
++          }
++        } catch (e) {
++          win.console?.error("KavachaWidgetHost: timeline widget failed", e);
++        }
++      })();
++      return box;
++    },
++  },
++];
++
++// Runtime widgets as { widget, source } so a marketplace component or plugin
++// can be revoked as a group — the same shape KavachaCommandRegistry uses.
++const _registered = [];
++
++function _validate(widget) {
++  if (!widget || typeof widget !== "object") {
++    throw new Error("KavachaWidgetHost: widget must be an object");
++  }
++  if (typeof widget.id !== "string" || !widget.id) {
++    throw new Error("KavachaWidgetHost: widget needs an id");
++  }
++  if (typeof widget.render !== "function") {
++    throw new Error(`KavachaWidgetHost: "${widget.id}" needs render(doc, win)`);
++  }
++}
++
++export const KavachaWidgetHost = {
++  _initialized: false,
++
++  init() {
++    this._initialized = true;
++  },
++
++  /** Every known widget: built-ins first, then runtime registrations. */
++  all() {
++    return [...BUILTIN_WIDGETS, ..._registered.map(e => e.widget)];
++  },
++
++  get(id) {
++    return this.all().find(w => w.id === id) || null;
++  },
++
++  has(id) {
++    return !!this.get(id);
++  },
++
++  /**
++   * Register a widget at runtime (marketplace `widget` component, plugin).
++   * Throws on a malformed widget or a duplicate id. Returns an unregister
++   * function.
++   */
++  register(widget, options = {}) {
++    _validate(widget);
++    if (this.has(widget.id)) {
++      throw new Error(`KavachaWidgetHost: "${widget.id}" is already registered`);
++    }
++    _registered.push({ widget, source: options.source || "runtime" });
++    return () => this.unregister(widget.id);
++  },
++
++  unregister(id) {
++    const i = _registered.findIndex(e => e.widget.id === id);
++    if (i < 0) {
++      return false;
++    }
++    _registered.splice(i, 1);
++    return true;
++  },
++
++  /** Drop every widget a source registered (component uninstall). */
++  unregisterBySource(source) {
++    let removed = 0;
++    for (const entry of _registered.filter(e => e.source === source)) {
++      if (this.unregister(entry.widget.id)) {
++        removed++;
++      }
++    }
++    return removed;
++  },
++
++  // ----- Arrangement ------------------------------------------------------
++
++  /**
++   * The widget ids to show, in order. An absent or empty list means "the
++   * built-ins, in their declared order", so an existing profile gets a working
++   * dashboard with no migration. Unknown ids are dropped rather than surfaced
++   * as an error: a widget can vanish simply because its component was
++   * uninstalled, which is not a fault condition.
++   */
++  async enabledIds() {
++    let configured = null;
++    try {
++      configured = (await lazy.KavachaLayoutEngine.getLayout())?.widgets;
++    } catch (e) {
++      // Layout unreadable — fall through to the built-in default.
++    }
++    if (!Array.isArray(configured) || !configured.length) {
++      return BUILTIN_WIDGETS.map(w => w.id);
++    }
++    return configured.filter(id => this.has(id));
++  },
++
++  /** Persist a new arrangement through the layout engine. */
++  async setEnabledIds(ids) {
++    const clean = (Array.isArray(ids) ? ids : []).filter(id => this.has(id));
++    await lazy.KavachaLayoutEngine.setLayout({ widgets: clean });
++  },
++
++  async toggle(id, on) {
++    const ids = await this.enabledIds();
++    const has = ids.includes(id);
++    if (on && !has) {
++      ids.push(id);
++    } else if (!on && has) {
++      ids.splice(ids.indexOf(id), 1);
++    } else {
++      return;
++    }
++    await this.setEnabledIds(ids);
++  },
++
++  async move(id, delta) {
++    const ids = await this.enabledIds();
++    const i = ids.indexOf(id);
++    const j = i + delta;
++    if (i < 0 || j < 0 || j >= ids.length) {
++      return;
++    }
++    ids.splice(j, 0, ids.splice(i, 1)[0]);
++    await this.setEnabledIds(ids);
++  },
++
++  // ----- The dashboard surface -------------------------------------------
++
++  closeDashboard(win) {
++    win.document.getElementById("kavacha-dashboard-panel")?.hidePopup();
++  },
++
++  async openDashboard(win) {
++    const doc = win.document;
++    let panel = doc.getElementById("kavacha-dashboard-panel");
++    if (!panel) {
++      const popupSet = doc.getElementById("mainPopupSet");
++      if (!popupSet) {
++        return;
++      }
++      popupSet.appendChild(
++        win.MozXULElement.parseXULToFragment(`
++          <panel id="kavacha-dashboard-panel"
++            type="arrow"
++            orient="vertical"
++            role="dialog" />
++        `)
++      );
++      panel = doc.getElementById("kavacha-dashboard-panel");
++    }
++    await this.renderInto(win, panel);
++    const anchor =
++      doc.getElementById("kavacha-menu-button") ||
++      doc.getElementById("zen-sidebar-top-buttons") ||
++      win.gURLBar.textbox;
++    panel.openPopup(anchor, "bottomright topright", 0, 6, false, false);
++  },
++
++  /** (Re)build the dashboard's contents. Exposed so edits can refresh it. */
++  async renderInto(win, panel) {
++    const doc = win.document;
++    panel.textContent = "";
++    const body = el(doc, "div", "kavacha-dashboard");
++    panel.appendChild(body);
++
++    const ids = await this.enabledIds();
++    for (const id of ids) {
++      const widget = this.get(id);
++      if (!widget) {
++        continue;
++      }
++      let node = null;
++      try {
++        node = widget.render(doc, win);
++      } catch (e) {
++        // One broken widget — including a marketplace-installed one — must not
++        // take the whole dashboard down with it.
++        win.console?.error(`KavachaWidgetHost: widget "${id}" failed`, e);
++        continue;
++      }
++      if (!node) {
++        continue;
++      }
++      const slot = el(doc, "div", "kavacha-dashboard-slot");
++      slot.setAttribute("data-widget-id", id);
++      slot.appendChild(node);
++      slot.appendChild(this._slotControls(doc, win, panel, id, ids));
++      body.appendChild(slot);
++    }
++
++    body.appendChild(this._addRow(doc, win, panel, ids));
++  },
++
++  // Per-widget arrangement controls, inline rather than behind an "edit mode":
++  // a dashboard nobody can rearrange without first discovering a hidden mode
++  // is a dashboard nobody rearranges.
++  _slotControls(doc, win, panel, id, ids) {
++    const bar = el(doc, "div", "kavacha-dashboard-controls");
++    const mk = (label, title, handler, disabled) => {
++      const b = el(doc, "button", "kavacha-dashboard-control", label);
++      b.type = "button";
++      b.title = title;
++      if (disabled) {
++        b.disabled = true;
++      }
++      b.addEventListener("click", async () => {
++        await handler();
++        await this.renderInto(win, panel);
++      });
++      return b;
++    };
++    const i = ids.indexOf(id);
++    bar.append(
++      mk("↑", "Move up", () => this.move(id, -1), i <= 0),
++      mk(
++        "↓",
++        "Move down",
++        () => this.move(id, 1),
++        i < 0 || i >= ids.length - 1
++      ),
++      mk("✕", "Remove from dashboard", () => this.toggle(id, false))
++    );
++    return bar;
++  },
++
++  _addRow(doc, win, panel, ids) {
++    const missing = this.all().filter(w => !ids.includes(w.id));
++    const row = el(doc, "div", "kavacha-dashboard-add");
++    if (!missing.length) {
++      return row;
++    }
++    row.appendChild(el(doc, "span", "kavacha-dashboard-add-label", "Add:"));
++    for (const widget of missing) {
++      const b = el(doc, "button", "kavacha-dashboard-control", widget.name);
++      b.type = "button";
++      b.addEventListener("click", async () => {
++        await this.toggle(widget.id, true);
++        await this.renderInto(win, panel);
++      });
++      row.appendChild(b);
++    }
++    return row;
++  },
++};

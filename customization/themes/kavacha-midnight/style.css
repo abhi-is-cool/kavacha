@@ -1,7 +1,12 @@
 /* Kavacha Midnight — default dark theme.
  * Loaded into browser chrome only (never web content). Tokens from colors.json
  * are injected by the theme engine as --kavacha-* custom properties; this file
- * may only consume tokens, not hardcode colors, so user palette edits apply. */
+ * may only consume tokens, not hardcode colors, so user palette edits apply.
+ *
+ * NOT LOADED FOR THE SHIPPED DEFAULT. Built-in themes are colors-only — the
+ * engine loads a package style.css only for user themes under the profile's
+ * kavacha-themes/. Editing this file changes nothing until the package is
+ * copied there. See $readBeforeEditing in colors.json for the full picture. */
 
 :root {
   --toolbar-bgcolor: var(--kavacha-surface);

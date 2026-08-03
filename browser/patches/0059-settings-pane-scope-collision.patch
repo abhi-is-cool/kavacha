@@ -1,0 +1,169 @@
+# Kavacha patch 0059 — Settings was dead: a duplicate `const lazy` took out
+# every pane after the Privacy Center, and nothing stopped it.
+#
+# SYMPTOM, as reported: "i cant see any settings menu ... even when i click on
+# certain settings it doesnt do anything". about:preferences opened and drew
+# its chrome, so it did not look like a load failure — but the four Kavacha
+# categories were absent and later panes were inert.
+#
+# THE BUG, in one line: every pane script in about:preferences is a classic
+# <script> sharing ONE global scope, and both search.js (upstream) and
+# kavacha-privacy.js declared `const lazy` at top level. Two top-level `const`
+# bindings of the same name in one scope is a SyntaxError, so the whole of
+# kavacha-privacy.js failed to PARSE — nothing in it ever ran.
+#
+# WHY THAT WAS CATASTROPHIC RATHER THAN LOCAL, which is the actually
+# interesting part: a parse failure leaves gKavachaPrivacyCenter undefined, and
+# init_all() called
+#     register_module("paneKavachaPrivacy", gKavachaPrivacyCenter);
+# with a bare global reference. That throws ReferenceError, which aborts
+# init_all() — so EVERY pane registered after that line silently never
+# initialised: the other three Kavacha panes, Firefox Labs, and Account & Sync.
+# One duplicated identifier in one file disabled most of the Settings UI, and
+# the only trace was two lines in the browser console.
+#
+# THE FIX IS TWO PARTS, deliberately:
+#
+#   1. Rename the binding to kavachaLazy. This alone restores everything. A
+#      comment at the declaration says why the name is not `lazy`, because the
+#      next person adding a top-level const here would otherwise reintroduce it.
+#
+#   2. Register the Zen/Kavacha panes through a guarded helper that checks
+#      `typeof` first and try/catches register_module. This is the part worth
+#      keeping even though (1) fixes today's failure: the blast radius was the
+#      real defect. A broken pane must cost ONE pane, not every pane after it
+#      in the list. Now a missing global logs "pane X is unavailable" and the
+#      rest of Settings still builds.
+#
+# WHY IT WAS NOT CAUGHT: patches 0047–0050 were verified by reading the code
+# and by checking that their strings/ids reached the package — REMAINING_WORK.md
+# said in as many words that they were "complete on paper only" and that only a
+# real session could settle them. This is exactly the class of defect that
+# survives a static check: every file was present, every id was correct, and
+# the feature was dead. Loading about:preferences once would have caught it.
+#
+# COLLISION AUDIT: scanned every classic pane script in the preferences scope
+# for duplicate top-level const/let/var/class/function names. `lazy` was the
+# only collision in the tree.
+#
+# FILES
+#   src/browser/components/preferences/kavacha-privacy.js    lazy -> kavachaLazy
+#   src/browser/components/preferences/preferences-js.patch  guarded registration
+#
+# VERIFIED against the built browser over Marionette, on the reporter's own
+# profile: about:preferences loads with zero console errors (previously two);
+# all four Kavacha categories present and visible; navigating to each expands
+# its template and populates it (7/5/4/7 content nodes, 39 controls total);
+# category-sync visible again.
+diff --git a/src/browser/components/preferences/kavacha-privacy.js b/src/browser/components/preferences/kavacha-privacy.js
+--- a/src/browser/components/preferences/kavacha-privacy.js
++++ b/src/browser/components/preferences/kavacha-privacy.js
+@@ -19,8 +19,18 @@
+ // Services.search no longer exists in Firefox 152 — the service is reached
+ // through moz-src, the same way patch 0003's per-workspace engine override
+ // does it.
+-const lazy = {};
+-ChromeUtils.defineESModuleGetters(lazy, {
++//
++// NAMED kavachaLazy, NOT `lazy`. Every pane script in about:preferences is a
++// classic <script> sharing ONE global, and search.js already declares
++// `const lazy` at top level. Two top-level `const lazy` in the same scope is a
++// SyntaxError, which kills THIS ENTIRE FILE at parse time -- and because a
++// parse failure means gKavachaPrivacyCenter never gets defined, the
++// register_module() call for it in preferences.js then threw and aborted
++// init_all(), taking every pane registered after it (the other three Kavacha
++// panes, Firefox Labs, Sync) down with it. Observed as "Settings opens but
++// nothing works". Any new top-level binding here needs a kavacha* prefix.
++const kavachaLazy = {};
++ChromeUtils.defineESModuleGetters(kavachaLazy, {
+   SearchService: "moz-src:///toolkit/components/search/SearchService.sys.mjs",
+ });
+ 
+@@ -650,9 +660,9 @@
+   async _renderSearch() {
+     const list = document.getElementById("kavachaPrivacySearchEngine");
+     try {
+-      await lazy.SearchService.promiseInitialized;
+-      const engines = await lazy.SearchService.getVisibleEngines();
+-      const current = lazy.SearchService.defaultEngine?.name || "";
++      await kavachaLazy.SearchService.promiseInitialized;
++      const engines = await kavachaLazy.SearchService.getVisibleEngines();
++      const current = kavachaLazy.SearchService.defaultEngine?.name || "";
+       const popup = list.menupopup;
+       popup.textContent = "";
+       for (const engine of engines) {
+@@ -673,17 +683,17 @@
+ 
+   async _setSearchEngine(name) {
+     try {
+-      await lazy.SearchService.promiseInitialized;
+-      const engine = lazy.SearchService.getEngineByName(name);
+-      if (!engine || engine === lazy.SearchService.defaultEngine) {
++      await kavachaLazy.SearchService.promiseInitialized;
++      const engine = kavachaLazy.SearchService.getEngineByName(name);
++      if (!engine || engine === kavachaLazy.SearchService.defaultEngine) {
+         return;
+       }
+       // CHANGE_REASON.USER matters: patch 0003 watches for a user-initiated
+       // default change and adopts it into the active Space's override, so
+       // switching here does not get reverted at the next workspace switch.
+-      await lazy.SearchService.setDefault(
++      await kavachaLazy.SearchService.setDefault(
+         engine,
+-        lazy.SearchService.CHANGE_REASON.USER
++        kavachaLazy.SearchService.CHANGE_REASON.USER
+       );
+     } catch (e) {
+       console.error("KavachaPrivacyCenter: could not set search engine", e);
+diff --git a/src/browser/components/preferences/preferences-js.patch b/src/browser/components/preferences/preferences-js.patch
+index 4aa64e8..c957587 100644
+--- a/src/browser/components/preferences/preferences-js.patch
++++ b/src/browser/components/preferences/preferences-js.patch
+@@ -24,18 +24,41 @@ index 57add34d876fb885275f1147209c6fbeee367a7c..be0ab43b299317c0022a5e719f47a070
+        this._initted = true;
+        let template = document.getElementById("template-" + categoryName);
+ -      if (template && !srdSectionPrefs.all) {
+-+      if (template && (!srdSectionPrefs.all || categoryName.startsWith("paneZen"))) {
+++      if (template && (!srdSectionPrefs.all || categoryName.startsWith("paneZen") || categoryName.startsWith("paneKavacha"))) {
+          // Replace the template element with the nodes inside of it.
+          template.replaceWith(template.content);
+  
+-@@ -522,6 +525,10 @@ function init_all() {
++@@ -522,6 +525,33 @@ function init_all() {
+    register_module("paneSearch", gSearchPane);
+    register_module("panePrivacy", gPrivacyPane);
+    register_module("paneContainers", gContainersPane);
+-+  register_module("paneZenLooks", gZenLooksAndFeel);
+-+  register_module("paneZenTabManagement", gZenWorkspacesSettings);
+-+  register_module("paneZenCKS", gZenCKSSettings);
+-+  register_module("paneZenMarketplace", gZenMarketplaceManager);
+++  // Kavacha: register the Zen/Kavacha panes defensively. Each of these globals
+++  // comes from a separate classic <script> sharing this one global scope, so a
+++  // parse error in any of those files leaves its global undefined -- and a bare
+++  // register_module(name, gUndefined) then throws ReferenceError and aborts
+++  // init_all(), silently killing every pane registered AFTER it, including
+++  // Firefox Labs and Sync. Not hypothetical: a duplicate top-level `const lazy`
+++  // in kavacha-privacy.js took out the whole Settings UI exactly this way.
+++  // One broken pane must cost one pane, not all of them.
+++  const kavachaRegister = (name, mod) => {
+++    if (!mod) {
+++      console.error(`Settings: pane ${name} is unavailable; skipping it`);
+++      return;
+++    }
+++    try {
+++      register_module(name, mod);
+++    } catch (e) {
+++      console.error(`Settings: pane ${name} failed to register`, e);
+++    }
+++  };
+++  kavachaRegister("paneZenLooks", typeof gZenLooksAndFeel !== "undefined" ? gZenLooksAndFeel : null);
+++  kavachaRegister("paneZenTabManagement", typeof gZenWorkspacesSettings !== "undefined" ? gZenWorkspacesSettings : null);
+++  kavachaRegister("paneZenCKS", typeof gZenCKSSettings !== "undefined" ? gZenCKSSettings : null);
+++  kavachaRegister("paneZenMarketplace", typeof gZenMarketplaceManager !== "undefined" ? gZenMarketplaceManager : null);
+++  kavachaRegister("paneKavachaPrivacy", typeof gKavachaPrivacyCenter !== "undefined" ? gKavachaPrivacyCenter : null);
+++  kavachaRegister("paneKavachaAppearance", typeof gKavachaAppearance !== "undefined" ? gKavachaAppearance : null);
+++  kavachaRegister("paneKavachaCustomization", typeof gKavachaCustomization !== "undefined" ? gKavachaCustomization : null);
+++  kavachaRegister("paneKavachaWorkspaces", typeof gKavachaWorkspaces !== "undefined" ? gKavachaWorkspaces : null);
+  
+    // Restore the cached Firefox Labs nav button visibility so it shows
+    // immediately when recipes are expected to be available, before

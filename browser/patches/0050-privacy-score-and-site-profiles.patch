@@ -1,0 +1,555 @@
+Privacy score and site trust profiles (FEATURES 3.2 / 3.4; Phase 4)
+
+Closes the two "later tier" Phase 4 items and the per-site drilldown
+follow-up, which turned out to be the same feature seen from two directions.
+
+PRIVACY SCORE (3.2). The Active Protections list already knew which
+protections were on; it just never added them up or offered to fix any of
+them. It now reads from one table that drives all three surfaces -- the
+status rows, the score, and a "to improve" list where each entry explains in
+plain language what the protection does and offers a button that turns it on.
+Previously the rows were a hardcoded array; three lists of the same facts
+would have drifted the first time a protection was added.
+
+Two protections were missing from the posture list entirely and are now
+scored: encrypted DNS (network.trr.mode) and delete-cookies-on-close. Both are
+things a privacy browser should have an opinion about, and neither was
+visible anywhere in the pane.
+
+Every check counts the same. Weighting them would mean asserting that, say,
+fingerprinting protection is worth 1.4 cookie protections -- a number nobody
+could defend, quietly encoding an opinion as arithmetic. Equal weights are
+honest about what the score is: a count of protections that are on, shown as
+a percentage. trr.mode 2 and 3 both count as on; 3 is encrypted-only, which
+is a reliability choice rather than a stronger privacy one, and failing closed
+on DNS is not a default to score people down for declining.
+
+A check with no automatic fix is still scored and still explained, but no
+button is offered. A control that looks actionable and does nothing is worse
+than no control.
+
+SITE TRUST PROFILES (3.4) and the per-site drilldown. FEATURES describes 3.4
+as "youtube.com: video, login, tracking, third-party cookies" -- a per-site
+card rather than a per-capability list. That is exactly what the drilldown
+follow-up asked for too, so it ships once: a picker over every origin with
+stored state, and a card showing that site's permissions and cookie rule
+together, each individually removable, plus Forget this site.
+
+The permission manager and this pane are the same data pivoted. Per-capability
+answers "who can use my microphone"; per-site answers "what has this site
+talked me into". Both questions get asked, and neither view is derived from a
+separate store, so they cannot disagree.
+
+The selected site survives re-render. perm-changed fires on every removal, and
+a picker that jumped back to the first site each time would be unusable for
+the one job this pane exists to do -- cleaning up after a site.
+
+Verified without a build:
+  * node --check on the pane script; the fragment parses as well-formed XML
+    under the XUL + XHTML namespaces.
+  * All 87 Fluent ids the Privacy Center now references resolve against
+    zen-preferences.ftl, with no dead strings left behind.
+
+NOT DONE, and not claimed: the blocked-today BADGE surface. The count itself
+is in the pane and always has been; the follow-up asks for it on a chrome
+surface -- the toolbar or the menu button -- which means touching
+KavachaMenu and the chrome markup rather than the settings pane. That is a
+different patch against different files, and it is left open in
+REMAINING_WORK rather than quietly folded into this one.
+
+Also not verified: the fix buttons against a live profile, and the card
+against a real permission store. Both are build-and-click arms.
+diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+--- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
++++ b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+@@ -540,3 +540,33 @@
+     .label = Remove
+     .tooltiptext = Forget this rule and treat the site like any other
+ kavacha-cookies-session-note = "Session only" deletes that site's cookies when you quit, whatever the setting above says — useful for a site you sign into but do not want remembered. "Keep" is the opposite: it survives the delete-on-close sweep.
++
++kavacha-privacy-score-summary =
++    { $remaining ->
++        [0] Every protection Kavacha can turn on is on.
++        [one] { $remaining } protection is off.
++       *[other] { $remaining } protections are off.
++    }
++kavacha-privacy-score-improve = To improve
++kavacha-privacy-score-fix =
++    .label = Turn on
++kavacha-privacy-improve-etp = Use strict tracking protection, which blocks known trackers on every site rather than only in private windows.
++kavacha-privacy-improve-tcp = Turn on Total Cookie Protection so each site's cookies are confined to that site.
++kavacha-privacy-improve-fpp = Turn on fingerprinting protection, which makes your browser harder to identify by its configuration.
++kavacha-privacy-improve-qs = Strip tracking parameters from links you follow, so a click does not carry an identifier.
++kavacha-privacy-improve-gpc = Send Global Privacy Control, a legally recognised "do not sell my data" signal.
++kavacha-privacy-improve-banners = Reject cookie banners automatically instead of answering them yourself.
++kavacha-privacy-improve-doh = Turn on encrypted DNS, so the addresses you look up are not visible to your network.
++kavacha-privacy-improve-cookies = Delete cookies and site data when Kavacha closes.
++kavacha-privacy-posture-doh = Encrypted DNS
++kavacha-privacy-posture-clear-cookies = Delete cookies on close
++
++kavacha-sites-header = Site trust profiles
++kavacha-sites-description = Everything Kavacha has stored about one site, in one card — what it may use, and how long its cookies live. Sites appear here once you have allowed, blocked, or set a cookie rule for them.
++kavacha-sites-empty = No sites have stored settings yet.
++kavacha-sites-picker-label =
++    .label = Site
++kavacha-sites-cookie-row = Cookies
++kavacha-sites-forget =
++    .label = Forget this site
++    .tooltiptext = Remove every stored permission and cookie rule for this site
+diff --git a/src/browser/components/preferences/kavacha-privacy.js b/src/browser/components/preferences/kavacha-privacy.js
+--- a/src/browser/components/preferences/kavacha-privacy.js
++++ b/src/browser/components/preferences/kavacha-privacy.js
+@@ -96,6 +96,15 @@
+       .getElementById("kavachaPermissionsClearAll")
+       .addEventListener("command", () => this._clearAllPermissions());
+     document
++      .getElementById("kavachaSitesPicker")
++      .addEventListener("command", event => {
++        this._selectedSite = event.target.value;
++        this._renderSites();
++      });
++    document
++      .getElementById("kavachaSitesForget")
++      .addEventListener("command", () => this._forgetSite());
++    document
+       .getElementById("kavachaCookiesClearOnClose")
+       .addEventListener("command", event =>
+         this._setClearCookiesOnClose(event.target.checked)
+@@ -136,6 +145,7 @@
+     } else if (topic === "perm-changed") {
+       this._renderPermissions();
+       this._renderCookies();
++      this._renderSites();
+     }
+   },
+ 
+@@ -143,8 +153,138 @@
+     return Cc["@mozilla.org/tracking-db-service;1"].getService(
+       Ci.nsITrackingDBService
+     );
++  },
++
++  // ----- Site trust profiles (FEATURES 3.4; per-site drilldown) -----------
++
++  // The origin whose card is showing. Kept across re-renders so a
++  // perm-changed does not bounce the user back to the first site while they
++  // are editing the fourth.
++  _selectedSite: null,
++
++  /** Origin -> [nsIPermission], for every type this pane can act on. */
++  _sitesWithState() {
++    const wanted = new Set([
++      ...KAVACHA_PERMISSION_TYPES.map(p => p.type),
++      "cookie",
++    ]);
++    const sites = new Map();
++    for (const perm of Services.perms.all) {
++      if (!wanted.has(perm.type) || perm.capability === KAVACHA_PERM_UNKNOWN) {
++        continue;
++      }
++      const origin = perm.principal.origin;
++      if (!sites.has(origin)) {
++        sites.set(origin, []);
++      }
++      sites.get(origin).push(perm);
++    }
++    return new Map([...sites].sort((a, b) => a[0].localeCompare(b[0])));
++  },
++
++  _renderSites() {
++    const picker = document.getElementById("kavachaSitesPicker");
++    if (!picker) {
++      return;
++    }
++    let sites;
++    try {
++      sites = this._sitesWithState();
++    } catch (e) {
++      console.error("KavachaPrivacyCenter: could not read site state", e);
++      return;
++    }
++
++    const empty = document.getElementById("kavachaSitesEmpty");
++    const row = document.getElementById("kavachaSitesPickerRow");
++    const profile = document.getElementById("kavachaSitesProfile");
++    empty.hidden = !!sites.size;
++    row.hidden = !sites.size;
++    profile.textContent = "";
++    if (!sites.size) {
++      this._selectedSite = null;
++      return;
++    }
++
++    if (!sites.has(this._selectedSite)) {
++      this._selectedSite = [...sites.keys()][0];
++    }
++    const popup = picker.menupopup;
++    popup.textContent = "";
++    for (const origin of sites.keys()) {
++      const item = document.createXULElement("menuitem");
++      item.setAttribute("label", origin);
++      item.setAttribute("value", origin);
++      popup.append(item);
++    }
++    picker.value = this._selectedSite;
++
++    // The card: one row per capability this site has an opinion about, plus
++    // its cookie rule. This is the drilldown -- the same facts the per-type
++    // lists above hold, pivoted so a single site can be read at a glance.
++    for (const perm of sites.get(this._selectedSite)) {
++      const line = document.createXULElement("hbox");
++      line.className = "kavacha-privacy-row";
++      line.setAttribute("align", "center");
++
++      const label = document.createXULElement("label");
++      document.l10n.setAttributes(
++        label,
++        perm.type === "cookie"
++          ? "kavacha-sites-cookie-row"
++          : "kavacha-permission-" + perm.type
++      );
++      line.append(label);
++
++      const spacer = document.createXULElement("spacer");
++      spacer.setAttribute("flex", "1");
++      line.append(spacer);
++
++      const state = document.createXULElement("label");
++      state.className = "kavacha-permission-state";
++      document.l10n.setAttributes(state, this._stateLabel(perm));
++      line.append(state);
++
++      const remove = document.createXULElement("button");
++      document.l10n.setAttributes(remove, "kavacha-permissions-remove");
++      remove.addEventListener("command", () =>
++        this._removePermission(perm.principal, perm.type)
++      );
++      line.append(remove);
++      profile.append(line);
++    }
++  },
++
++  _stateLabel(perm) {
++    if (perm.type === "cookie") {
++      if (perm.capability === KAVACHA_PERM_SESSION) {
++        return "kavacha-cookies-state-session";
++      }
++      return perm.capability === KAVACHA_PERM_ALLOW
++        ? "kavacha-cookies-state-allow"
++        : "kavacha-cookies-state-block";
++    }
++    return perm.capability === KAVACHA_PERM_ALLOW
++      ? "kavacha-permission-state-allow"
++      : "kavacha-permission-state-block";
+   },
+ 
++  _forgetSite() {
++    if (!this._selectedSite) {
++      return;
++    }
++    const sites = this._sitesWithState();
++    for (const perm of sites.get(this._selectedSite) || []) {
++      try {
++        Services.perms.removeFromPrincipal(perm.principal, perm.type);
++      } catch (e) {
++        console.error("KavachaPrivacyCenter: could not forget site", e);
++      }
++    }
++    this._selectedSite = null;
++    this._refresh();
++  },
++
+   // ----- Session-scoped cookie rules (FEATURES 3.3; Phase 4) --------------
+ 
+   _renderCookies() {
+@@ -556,6 +696,7 @@
+     this._renderSearch();
+     this._renderPermissions();
+     this._renderCookies();
++    this._renderSites();
+ 
+     const recording = Services.prefs.getBoolPref(
+       "browser.contentblocking.database.enabled",
+@@ -608,45 +749,152 @@
+     }
+   },
+ 
+-  _renderPosture() {
+-    const prefs = Services.prefs;
+-    const posture = [
+-      [
+-        "kavachaPostureEtp",
+-        prefs.getStringPref("browser.contentblocking.category", "") ===
++  // One table drives three things: the Active Protections rows, the privacy
++  // score, and the "to improve" list. They were three separate lists before
++  // the score existed, and three lists of the same facts drift.
++  //
++  // `fix` is what the Turn on button does. A check with no fix is still
++  // scored and still explained, but the button is not offered -- a control
++  // that looks actionable and does nothing is worse than no control.
++  get _postureChecks() {
++    const prefs = Services.prefs;
++    return [
++      {
++        id: "kavachaPostureEtp",
++        improve: "kavacha-privacy-improve-etp",
++        on: () =>
++          prefs.getStringPref("browser.contentblocking.category", "") ===
+           "strict",
+-      ],
+-      [
+-        "kavachaPostureTcp",
+-        prefs.getIntPref("network.cookie.cookieBehavior", 0) === 5,
+-      ],
+-      [
+-        "kavachaPostureFpp",
+-        prefs.getBoolPref("privacy.fingerprintingProtection", false),
+-      ],
+-      [
+-        "kavachaPostureQs",
+-        prefs.getBoolPref("privacy.query_stripping.enabled", false),
+-      ],
+-      [
+-        "kavachaPostureGpc",
+-        prefs.getBoolPref("privacy.globalprivacycontrol.enabled", false),
+-      ],
+-      [
+-        "kavachaPostureBanners",
+-        prefs.getIntPref("cookiebanners.service.mode", 0) >= 1,
+-      ],
++        fix: () =>
++          prefs.setStringPref("browser.contentblocking.category", "strict"),
++      },
++      {
++        id: "kavachaPostureTcp",
++        improve: "kavacha-privacy-improve-tcp",
++        on: () => prefs.getIntPref("network.cookie.cookieBehavior", 0) === 5,
++        fix: () => prefs.setIntPref("network.cookie.cookieBehavior", 5),
++      },
++      {
++        id: "kavachaPostureFpp",
++        improve: "kavacha-privacy-improve-fpp",
++        on: () => prefs.getBoolPref("privacy.fingerprintingProtection", false),
++        fix: () =>
++          prefs.setBoolPref("privacy.fingerprintingProtection", true),
++      },
++      {
++        id: "kavachaPostureQs",
++        improve: "kavacha-privacy-improve-qs",
++        on: () => prefs.getBoolPref("privacy.query_stripping.enabled", false),
++        fix: () => prefs.setBoolPref("privacy.query_stripping.enabled", true),
++      },
++      {
++        id: "kavachaPostureGpc",
++        improve: "kavacha-privacy-improve-gpc",
++        on: () =>
++          prefs.getBoolPref("privacy.globalprivacycontrol.enabled", false),
++        fix: () =>
++          prefs.setBoolPref("privacy.globalprivacycontrol.enabled", true),
++      },
++      {
++        id: "kavachaPostureBanners",
++        improve: "kavacha-privacy-improve-banners",
++        on: () => prefs.getIntPref("cookiebanners.service.mode", 0) >= 1,
++        fix: () => prefs.setIntPref("cookiebanners.service.mode", 1),
++      },
++      {
++        // trr.mode 2 is "encrypted, fall back to plain on failure"; 3 is
++        // encrypted-only. Either counts as on -- 3 is a reliability choice,
++        // not a stronger privacy one, and failing closed on DNS is not a
++        // default we should score people down for declining.
++        id: "kavachaPostureDoh",
++        improve: "kavacha-privacy-improve-doh",
++        on: () => prefs.getIntPref("network.trr.mode", 0) >= 2,
++        fix: () => prefs.setIntPref("network.trr.mode", 2),
++      },
++      {
++        id: "kavachaPostureClearCookies",
++        improve: "kavacha-privacy-improve-cookies",
++        on: () =>
++          prefs.getBoolPref(KAVACHA_SANITIZE_ON_SHUTDOWN, false) &&
++          prefs.getBoolPref(KAVACHA_CLEAR_COOKIES, false),
++        fix: () => this._setClearCookiesOnClose(true),
++      },
+     ];
+-    for (const [id, on] of posture) {
+-      const el = document.getElementById(id);
++  },
++
++  _renderPosture() {
++    const checks = this._postureChecks;
++    const off = [];
++    for (const check of checks) {
++      const on = check.on();
++      if (!on) {
++        off.push(check);
++      }
++      const el = document.getElementById(check.id);
++      if (!el) {
++        continue;
++      }
+       document.l10n.setAttributes(
+         el,
+         on ? "kavacha-privacy-on" : "kavacha-privacy-off"
+       );
+       el.classList.toggle("on", on);
+     }
++    this._renderScore(checks.length, off);
+   },
+ 
++  // FEATURES 3.2. Every check counts the same. Weighting them would mean
++  // asserting that, say, fingerprinting protection is worth 1.4 cookie
++  // protections -- a number nobody could defend and which would quietly
++  // encode an opinion as arithmetic. Equal weights are honest about what
++  // this is: a count of protections that are on, shown as a percentage.
++  _renderScore(total, off) {
++    const score = Math.round(((total - off.length) / total) * 100);
++    const value = document.getElementById("kavachaPrivacyScoreValue");
++    if (!value) {
++      return;
++    }
++    value.textContent = new Intl.NumberFormat(undefined, {
++      style: "percent",
++    }).format(score / 100);
++    value.classList.toggle("good", !off.length);
++    document.l10n.setAttributes(
++      document.getElementById("kavachaPrivacyScoreSummary"),
++      "kavacha-privacy-score-summary",
++      { remaining: off.length }
++    );
++
++    const improve = document.getElementById("kavachaPrivacyImprove");
++    const list = document.getElementById("kavachaPrivacyImproveList");
++    list.textContent = "";
++    improve.hidden = !off.length;
++    for (const check of off) {
++      const row = document.createXULElement("hbox");
++      row.className = "kavacha-privacy-improve-row";
++      row.setAttribute("align", "center");
++
++      const text = document.createXULElement("description");
++      text.className = "kavacha-privacy-improve-text";
++      document.l10n.setAttributes(text, check.improve);
++      row.append(text);
++
++      if (check.fix) {
++        const button = document.createXULElement("button");
++        document.l10n.setAttributes(button, "kavacha-privacy-score-fix");
++        button.addEventListener("command", () => {
++          try {
++            check.fix();
++          } catch (e) {
++            console.error("KavachaPrivacyCenter: could not apply fix", e);
++          }
++          this._refresh();
++        });
++        row.append(button);
++      }
++      list.append(row);
++    }
++  },
++
+   async _clearStats() {
+     try {
+       await this._trackingDB.clearAll();
+diff --git a/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml b/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml
+--- a/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml
++++ b/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml
+@@ -63,6 +63,21 @@
+   </hbox>
+ </groupbox>
+ 
++<groupbox id="kavachaSitesGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
++  <label><html:h2 data-l10n-id="kavacha-sites-header"/></label>
++  <description class="description-deemphasized" data-l10n-id="kavacha-sites-description"/>
++  <hbox id="kavachaSitesPickerRow" align="center">
++    <label data-l10n-id="kavacha-sites-picker-label" control="kavachaSitesPicker"/>
++    <menulist id="kavachaSitesPicker" flex="1">
++      <menupopup/>
++    </menulist>
++    <button id="kavachaSitesForget" data-l10n-id="kavacha-sites-forget"/>
++  </hbox>
++  <description id="kavachaSitesEmpty" class="description-deemphasized" data-l10n-id="kavacha-sites-empty" hidden="true"/>
++  <!-- The selected site's card, built by kavacha-privacy.js. -->
++  <vbox id="kavachaSitesProfile"/>
++</groupbox>
++
+ <groupbox id="kavachaCookiesGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
+   <label><html:h2 data-l10n-id="kavacha-cookies-header"/></label>
+   <description class="description-deemphasized" data-l10n-id="kavacha-cookies-description"/>
+@@ -106,6 +121,14 @@
+ <groupbox id="kavachaPrivacyPostureGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
+   <label><html:h2 data-l10n-id="kavacha-privacy-posture-header"/></label>
+   <description class="description-deemphasized" data-l10n-id="kavacha-privacy-posture-description"/>
++  <hbox id="kavachaPrivacyScore" align="center">
++    <html:span id="kavachaPrivacyScoreValue">&#8212;</html:span>
++    <html:span id="kavachaPrivacyScoreSummary"/>
++  </hbox>
++  <vbox id="kavachaPrivacyImprove" hidden="true">
++    <label><html:h3 data-l10n-id="kavacha-privacy-score-improve"/></label>
++    <vbox id="kavachaPrivacyImproveList"/>
++  </vbox>
+   <vbox id="kavachaPrivacyPostureList">
+     <hbox class="kavacha-privacy-row" align="center">
+       <label data-l10n-id="kavacha-privacy-posture-etp"/>
+@@ -131,6 +154,14 @@
+       <label data-l10n-id="kavacha-privacy-posture-banners"/>
+       <html:span class="kavacha-privacy-posture-status" id="kavachaPostureBanners"/>
+     </hbox>
++    <hbox class="kavacha-privacy-row" align="center">
++      <label data-l10n-id="kavacha-privacy-posture-doh"/>
++      <html:span class="kavacha-privacy-posture-status" id="kavachaPostureDoh"/>
++    </hbox>
++    <hbox class="kavacha-privacy-row" align="center">
++      <label data-l10n-id="kavacha-privacy-posture-clear-cookies"/>
++      <html:span class="kavacha-privacy-posture-status" id="kavachaPostureClearCookies"/>
++    </hbox>
+   </vbox>
+ </groupbox>
+ 
+diff --git a/src/browser/themes/shared/preferences/zen-preferences.css b/src/browser/themes/shared/preferences/zen-preferences.css
+--- a/src/browser/themes/shared/preferences/zen-preferences.css
++++ b/src/browser/themes/shared/preferences/zen-preferences.css
+@@ -658,3 +658,42 @@
+ .kavacha-cookies-error {
+   color: light-dark(#b3261e, #f2b8b5);
+ }
++
++/* Kavacha privacy score + site trust profiles (Privacy Center, Phase 4). */
++#kavachaPrivacyScore {
++  gap: 12px;
++  margin-block: 8px 12px;
++}
++
++#kavachaPrivacyScoreValue {
++  font-size: 2.2em;
++  font-weight: 600;
++  font-variant-numeric: tabular-nums;
++}
++
++#kavachaPrivacyScoreValue.good {
++  color: light-dark(#1c7d40, #6fd08c);
++}
++
++#kavachaPrivacyScoreSummary {
++  opacity: 0.7;
++}
++
++.kavacha-privacy-improve-row {
++  gap: 12px;
++  padding-block: 6px;
++  border-bottom: 1px solid var(--zen-colors-border);
++}
++
++.kavacha-privacy-improve-row:last-child {
++  border-bottom: none;
++}
++
++.kavacha-privacy-improve-text {
++  flex: 1;
++}
++
++#kavachaSitesPickerRow {
++  gap: 8px;
++  margin-block: 10px 6px;
++}

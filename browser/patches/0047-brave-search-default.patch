@@ -1,0 +1,398 @@
+Brave Search as the default, with alternatives one click away (Phase 4)
+
+privacy/README.md has claimed a Brave Search default since Phase 4 was
+written, and privacy/tracker-controls/kavacha.js says "wired via search config"
+-- but nothing was wired. The shipped config's globalDefault was "google", and
+a build would have searched with Google while the marketing said otherwise.
+This closes that gap, which is the cheapest open item on the v1.0 MVP
+checklist and the most visible.
+
+Upstream does not carry the engines we need. In the pinned dump:
+
+  brave      absent
+  kagi       absent
+  startpage  present but gated behind variants:[{environment:{experiment:...}}]
+             so it is never available to an ordinary profile
+  ddg        present
+  google     present, and the global default
+
+Zen's scripts/update_service_dumps.py could only REMOVE records, so there was
+no mechanism to express any of this. It gains two operations:
+
+  add.records   append whole records; a record already present under the same
+                identifier is replaced, so the merge is idempotent and can
+                also serve as a full override
+  patch         override named top-level fields on records already in the
+                dump, matched by identifier and/or recordType
+
+patch exists so we do not have to restate records we only partly disagree
+with. Startpage needs its availability widened and nothing else -- its name,
+URLs and partnerCode should keep tracking Mozilla. Copying the whole record to
+change one field would silently freeze the rest at today's values.
+
+A patch rule that matches nothing is a hard build failure, not a warning. The
+failure mode it guards against is specific: upstream renames or restructures a
+record, our intent stops applying, and the build ships with the default engine
+quietly back to Google. That symptom is invisible until someone opens the
+browser and types a query, which is far too late.
+
+Config changes:
+
+  * brave and kagi added as full engine records, allRegionsAndLocales.
+  * startpage's variants widened to allRegionsAndLocales.
+  * defaultEngines.globalDefault set to "brave".
+  * defaultEngines.specificDefaults CLEARED. Upstream uses it to hand whole
+    regions and distributions to other engines -- zh-CN to Baidu, several ISP
+    distributions to their own -- which would have overridden the privacy
+    default for precisely the users least positioned to notice or change it.
+    A default that applies only in some countries is not a default.
+
+Neither new record carries a partnerCode. Upstream engine records carry
+affiliate codes that identify the distribution to the search provider on every
+single query. Kavacha takes no revenue share and sends no such identifier, so
+the field is omitted entirely and {partnerCode} never appears in a URL.
+
+Verified by running the merge and validating every resulting record against
+Firefox's OWN schema (toolkit/components/search/schema/search-config-v2-
+schema.json) with jsonschema 4.25.1:
+
+  54 engine records, 0 schema errors
+  brave / kagi / startpage / ddg / google all present
+  globalDefault "brave", specificDefaults []
+  startpage variants widened, search base still upstream's
+  perplexity still removed (Zen's own removal preserved)
+  re-running the merge is a no-op -- byte-identical output, stable count
+
+The merge operations were also unit-tested directly: add appends, re-adding
+the same identifier does not duplicate, patch sets only the named fields, an
+unmatched rule exits, and a rule anchored on neither identifier nor recordType
+is rejected rather than matching everything.
+
+The "one click" half ships as a Search groupbox in the Privacy Center pane,
+next to the claim it qualifies rather than three panes away: a menulist of
+every visible engine, following the live default. It sets the default with
+CHANGE_REASON.USER, which matters -- patch 0003 watches for a user-initiated
+change and adopts it into the active Space's override, so a switch made here
+survives the next workspace switch instead of being reverted by it. The pane
+observes browser-search-engine-modified so it stays honest when the engine is
+changed from the search bar, about:preferences#search, or a Space override.
+
+Not verified on a real build: that Brave is the engine a fresh profile
+actually searches with. That needs an import plus a build, and then a query.
+The config is proven correct against the schema; the runtime is not proven.
+Worth pairing with the R3 network-silence test, since both are assertions
+about what a fresh idle profile talks to.
+diff --git a/configs/dumps/search-config-v2.json b/configs/dumps/search-config-v2.json
+--- a/configs/dumps/search-config-v2.json
++++ b/configs/dumps/search-config-v2.json
+@@ -15,5 +15,94 @@
+       "ebay",
+       "ebay-*"
+     ]
+-  }
++  },
++
++  // Kavacha (ROADMAP Phase 4): Brave Search is the default, with a bundled
++  // set of alternatives the user can switch to in one click. Upstream ships
++  // neither Brave nor Kagi, so they are added here as whole records; Google
++  // and DuckDuckGo are already present and untouched.
++  //
++  // No partnerCode on either. Upstream engines carry affiliate codes that
++  // identify the distribution to the search provider on every query; Kavacha
++  // takes no revenue share and sends no such identifier. Omitting the field
++  // means {partnerCode} never appears in a URL, so queries carry the search
++  // term and nothing else.
++  "add": {
++    "records": [
++      {
++        "base": {
++          "aliases": ["brave"],
++          "classification": "general",
++          "name": "Brave Search",
++          "urls": {
++            "search": {
++              "base": "https://search.brave.com/search",
++              "searchTermParamName": "q"
++            },
++            "suggestions": {
++              "base": "https://search.brave.com/api/suggest",
++              "searchTermParamName": "q"
++            }
++          }
++        },
++        "id": "b7a2c1d4-6f38-4e5a-9c0b-2d1e8f3a4b5c",
++        "identifier": "brave",
++        "last_modified": 1754092800000,
++        "recordType": "engine",
++        "schema": 1778115248130,
++        "variants": [{ "environment": { "allRegionsAndLocales": true } }]
++      },
++      {
++        "base": {
++          "aliases": ["kagi"],
++          "classification": "general",
++          "name": "Kagi",
++          "urls": {
++            "search": {
++              "base": "https://kagi.com/search",
++              "searchTermParamName": "q"
++            },
++            "suggestions": {
++              "base": "https://kagi.com/api/autosuggest",
++              "searchTermParamName": "q"
++            }
++          }
++        },
++        "id": "c8b3d2e5-7a49-4f6b-8d1c-3e2f9a4b5c6d",
++        "identifier": "kagi",
++        "last_modified": 1754092800000,
++        "recordType": "engine",
++        "schema": 1778115248130,
++        "variants": [{ "environment": { "allRegionsAndLocales": true } }]
++      }
++    ]
++  },
++
++  "patch": [
++    // Upstream gates Startpage behind an experiment
++    // (variants: [{ environment: { experiment: "startpage" } }]), so it is
++    // present in the config but never available to a normal profile. Widen
++    // the availability only -- name, URLs and partnerCode keep tracking
++    // upstream.
++    {
++      "identifier": "startpage",
++      "set": {
++        "variants": [{ "environment": { "allRegionsAndLocales": true } }]
++      }
++    },
++
++    // Brave everywhere. specificDefaults is cleared deliberately: upstream
++    // uses it to hand whole regions and distributions to other engines
++    // (zh-CN to Baidu, various ISP distributions to their own), which would
++    // silently override the privacy default for exactly the users least able
++    // to notice. A privacy default that applies only in some countries is not
++    // a default. Users can still change the engine in one click.
++    {
++      "recordType": "defaultEngines",
++      "set": {
++        "globalDefault": "brave",
++        "specificDefaults": []
++      }
++    }
++  ]
+ }
+diff --git a/scripts/update_service_dumps.py b/scripts/update_service_dumps.py
+--- a/scripts/update_service_dumps.py
++++ b/scripts/update_service_dumps.py
+@@ -14,8 +14,34 @@
+ )
+ 
+ 
++def matches_identifier(entry, rid):
++  """True if entry's identifier is rid, or matches a trailing-* prefix."""
++  identifier = entry.get('identifier', '')
++  return identifier == rid or (rid.endswith('*') and identifier.startswith(rid[:-1]))
++
++
+ def merge_dumps(original, updates):
+-  """Filters entries from the original dump, removing those whose identifiers are specified in the updates removal list."""
++  """Applies an overrides file to a Remote Settings dump.
++
++  Three operations, applied in this order:
++
++    remove.identifiers  Drop records by identifier ('foo', or 'foo-*' for a
++                        prefix). Upstream Zen's original behaviour.
++    add.records         Append whole records. A record already present under
++                        the same identifier is replaced, so this doubles as a
++                        full override and stays idempotent across re-runs.
++    patch               Surgical top-level field overrides on records already
++                        in the dump, matched by identifier and/or recordType.
++                        Only the fields named in 'set' change, so everything
++                        else keeps tracking upstream -- the right tool when we
++                        want to alter one aspect of a Mozilla-maintained
++                        record (an engine's availability, the global default)
++                        without also freezing its URLs.
++
++  Kavacha added add/patch to ship Brave Search as the default with a bundled
++  set of privacy alternatives: upstream carries neither Brave nor Kagi, and
++  gates Startpage behind an experiment.
++  """
+   remove_ids = updates.get('remove', {"identifiers": []}).get('identifiers', [])
+ 
+   # Filter out entries in original that are in remove_ids.
+@@ -29,6 +55,31 @@
+       )
+   ]
+ 
++  for record in updates.get('add', {}).get('records', []):
++    identifier = record.get('identifier')
++    if identifier:
++      merged_data = [e for e in merged_data if e.get('identifier') != identifier]
++    merged_data.append(record)
++
++  for rule in updates.get('patch', []):
++    if 'identifier' not in rule and 'recordType' not in rule:
++      exit(f"Patch rule must match on identifier and/or recordType: {rule}")
++    matched = 0
++    for entry in merged_data:
++      if 'identifier' in rule and not matches_identifier(entry, rule['identifier']):
++        continue
++      if 'recordType' in rule and entry.get('recordType') != rule['recordType']:
++        continue
++      entry.update(rule.get('set', {}))
++      matched += 1
++    if not matched:
++      # A rule matching nothing means upstream moved and our intent silently
++      # stopped applying. For the search config that ships a build whose
++      # default engine is quietly Google again -- fail the build instead,
++      # because otherwise the symptom is invisible until someone opens the
++      # browser and types a query.
++      exit(f"No record matched patch rule: {rule}")
++
+   return {
+       'data': merged_data,
+       **{k: v for k, v in original.items() if k != 'data'},
+diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+--- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
++++ b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+@@ -483,3 +483,9 @@
+ kavacha-workspaces-clear-unpinned-checkbox =
+     .label = After quitting, restore only pinned tabs
+ kavacha-workspaces-session-note = Pinning becomes the explicit "keep this" gesture. Discarded tabs still appear under Recently Closed for the rest of the session, so a mistake is undoable.
++
++kavacha-privacy-search-header = Search engine
++kavacha-privacy-search-description = Kavacha searches with Brave Search by default — an independent index that does not profile you. This is a default, not a lock-in: switch to any engine below and Kavacha will remember it.
++kavacha-privacy-search-engine-label =
++    .label = Default search engine
++kavacha-privacy-search-note = Kavacha adds no affiliate or partner code to your searches, whichever engine you pick. Search suggestions stay off until you turn them on, so what you type is not sent anywhere until you press Enter.
+diff --git a/src/browser/components/preferences/kavacha-privacy.js b/src/browser/components/preferences/kavacha-privacy.js
+--- a/src/browser/components/preferences/kavacha-privacy.js
++++ b/src/browser/components/preferences/kavacha-privacy.js
+@@ -16,6 +16,14 @@
+   "moz-src:///browser/components/protections/PrivacyMetricsService.sys.mjs"
+ );
+ 
++// Services.search no longer exists in Firefox 152 — the service is reached
++// through moz-src, the same way patch 0003's per-workspace engine override
++// does it.
++const lazy = {};
++ChromeUtils.defineESModuleGetters(lazy, {
++  SearchService: "moz-src:///toolkit/components/search/SearchService.sys.mjs",
++});
++
+ // ADR 0007: Firefox counts blocked events but never measures bytes. This is
+ // a deliberately conservative average tracker payload (script + beacons +
+ // cookie round-trips); the UI labels the derived figure "estimated".
+@@ -32,17 +40,90 @@
+     document
+       .getElementById("kavachaPrivacyClearStats")
+       .addEventListener("command", () => this._clearStats());
++    document
++      .getElementById("kavachaPrivacySearchEngine")
++      .addEventListener("command", event =>
++        this._setSearchEngine(event.target.value)
++      );
++    // The engine can also change from the workspace override (patch 0003),
++    // about:preferences#search, or the search bar. Follow it rather than
++    // letting this pane drift out of sync with the browser.
++    Services.obs.addObserver(this, "browser-search-engine-modified");
++    window.addEventListener("unload", () => this.uninit(), { once: true });
+     this._refresh();
+   },
+ 
++  uninit() {
++    if (!this._initted) {
++      return;
++    }
++    this._initted = false;
++    Services.obs.removeObserver(this, "browser-search-engine-modified");
++  },
++
++  observe(subject, topic, data) {
++    if (topic === "browser-search-engine-modified" && data === "engine-default") {
++      this._renderSearch();
++    }
++  },
++
+   get _trackingDB() {
+     return Cc["@mozilla.org/tracking-db-service;1"].getService(
+       Ci.nsITrackingDBService
+     );
+   },
+ 
++  // The one-click escape from the privacy default. Brave Search is what
++  // Kavacha ships (search config, ROADMAP Phase 4), but a default users cannot
++  // leave is a lock-in, so the switch lives right next to the claim rather
++  // than three panes away.
++  async _renderSearch() {
++    const list = document.getElementById("kavachaPrivacySearchEngine");
++    try {
++      await lazy.SearchService.promiseInitialized;
++      const engines = await lazy.SearchService.getVisibleEngines();
++      const current = lazy.SearchService.defaultEngine?.name || "";
++      const popup = list.menupopup;
++      popup.textContent = "";
++      for (const engine of engines) {
++        const item = document.createXULElement("menuitem");
++        item.setAttribute("label", engine.name);
++        item.setAttribute("value", engine.name);
++        popup.appendChild(item);
++      }
++      list.value = current;
++      list.disabled = !engines.length;
++    } catch (e) {
++      // A pane that silently shows an empty dropdown is worse than one that
++      // admits it could not read the engine list.
++      console.error("KavachaPrivacyCenter: could not list search engines", e);
++      list.disabled = true;
++    }
++  },
++
++  async _setSearchEngine(name) {
++    try {
++      await lazy.SearchService.promiseInitialized;
++      const engine = lazy.SearchService.getEngineByName(name);
++      if (!engine || engine === lazy.SearchService.defaultEngine) {
++        return;
++      }
++      // CHANGE_REASON.USER matters: patch 0003 watches for a user-initiated
++      // default change and adopts it into the active Space's override, so
++      // switching here does not get reverted at the next workspace switch.
++      await lazy.SearchService.setDefault(
++        engine,
++        lazy.SearchService.CHANGE_REASON.USER
++      );
++    } catch (e) {
++      console.error("KavachaPrivacyCenter: could not set search engine", e);
++      this._renderSearch(); // Put the control back to the real value.
++    }
++  },
++
+   async _refresh() {
+     this._renderPosture();
++    this._renderSearch();
+ 
+     const recording = Services.prefs.getBoolPref(
+       "browser.contentblocking.database.enabled",
+diff --git a/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml b/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml
+--- a/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml
++++ b/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml
+@@ -63,6 +63,18 @@
+   </hbox>
+ </groupbox>
+ 
++<groupbox id="kavachaPrivacySearchGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
++  <label><html:h2 data-l10n-id="kavacha-privacy-search-header"/></label>
++  <description class="description-deemphasized" data-l10n-id="kavacha-privacy-search-description"/>
++  <hbox class="kavacha-privacy-row" align="center">
++    <label data-l10n-id="kavacha-privacy-search-engine-label" control="kavachaPrivacySearchEngine"/>
++    <menulist id="kavachaPrivacySearchEngine">
++      <menupopup/>
++    </menulist>
++  </hbox>
++  <description id="kavachaPrivacySearchNote" class="description-deemphasized" data-l10n-id="kavacha-privacy-search-note"/>
++</groupbox>
++
+ <groupbox id="kavachaPrivacyPostureGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
+   <label><html:h2 data-l10n-id="kavacha-privacy-posture-header"/></label>
+   <description class="description-deemphasized" data-l10n-id="kavacha-privacy-posture-description"/>

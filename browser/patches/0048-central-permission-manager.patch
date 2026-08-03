@@ -1,0 +1,469 @@
+Central permission manager (Phase 4)
+
+One dashboard over nsIPermissionManager, so "what have I allowed, and where"
+is a question with an answer instead of a site-by-site excavation. Ships as a
+Site permissions group in the Privacy Center pane: every capability with a
+count of exceptions, a global default, an expandable per-site list with the
+grant state, per-site revoke, per-type clear, and clear-everything.
+
+FINDING, and the reason this patch does not match the plan text: Firefox 152
+does not persist clipboard access as a site permission at all.
+
+REMAINING_WORK and privacy/README both name "camera, microphone, location,
+notifications and clipboard". The first four exist as permission types with
+permissions.default.<type> prefs in firefox.js. Clipboard has neither. There
+is no "clipboard" or "clipboard-read" permission type anywhere in the pinned
+Gecko, and no permissions.default.clipboard. A page that wants to read the
+clipboard gets a one-time in-content Paste confirmation, and nothing is
+recorded -- so there is no stored grant to list, audit or revoke.
+
+A clipboard row was therefore not built. Rendering one would have shown the
+user a control over state that does not exist, and a "0 sites" count that
+would stay 0 forever no matter what they permitted. The pane says plainly why
+the row is missing instead. That is a better outcome than a dashboard that
+lies by omission, but the plan text should be corrected rather than left
+looking half-implemented -- REMAINING_WORK is updated to match.
+
+Since the four named types are a thin dashboard on their own, the table covers
+the rest of Gecko's persisted, privacy-relevant permissions -- xr,
+local-network, persistent-storage, midi, speaker-selection, autoplay-media.
+"Instead of per-site digging" is only true if the dashboard is where the
+digging actually ends.
+
+Two design notes worth keeping:
+
+  * The global default is the half that makes this a manager rather than a
+    list. "Stop asking me about notifications" is one control here, instead of
+    the same decision repeated per site forever. Types with no
+    permissions.default.<type> pref get the per-site list and no selector,
+    rather than a selector that would silently do nothing.
+  * UNKNOWN_ACTION entries are filtered out. Gecko stores "no opinion" rows
+    that are not exceptions the user made, and showing them would inflate
+    every count with decisions nobody took.
+
+The rows are generated in JS from KAVACHA_PERMISSION_TYPES rather than written
+as markup, so the table and the UI cannot drift apart -- adding a capability
+is one line. Expanded rows survive re-render, because perm-changed fires on
+every removal and a list that collapsed under the user mid-cleanup would be
+unusable. The pane observes perm-changed so counts stay honest while the
+doorhanger or identity panel is changing permissions behind it.
+
+Verified without a build:
+  * kavacha-privacy.js passes node --check; the pane fragment parses as
+    well-formed XML under the XUL + XHTML namespaces.
+  * Every Fluent id referenced by the pane -- including the ten built by
+    concatenation as "kavacha-permission-" + type -- resolves against
+    zen-preferences.ftl. This check exists because D0e shipped FTL-less
+    controls that measured correctly in every geometry probe and rendered
+    blank; a missing string is invisible to everything except this.
+  * The permission type strings and their default prefs were read out of the
+    pinned tree (firefox.js:968-975), not assumed.
+
+Not verified: behaviour against a live permission store -- that removeByType
+empties the list, that the default selector changes what a site is asked, that
+long origins ellipsize rather than pushing the controls off the pane. That
+needs a build and a profile with real grants in it.
+diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+--- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
++++ b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+@@ -489,3 +489,35 @@
+ kavacha-privacy-search-engine-label =
+     .label = Default search engine
+ kavacha-privacy-search-note = Kavacha adds no affiliate or partner code to your searches, whichever engine you pick. Search suggestions stay off until you turn them on, so what you type is not sent anywhere until you press Enter.
++
++kavacha-permissions-header = Site permissions
++kavacha-permissions-description = Everything you have allowed or blocked, in one place. Set what Kavacha does by default for each capability, and review the sites you have made exceptions for — without opening each site in turn.
++kavacha-permissions-clear-all = Clear all site exceptions
++kavacha-permissions-clipboard-note = Clipboard is missing from this list on purpose. Firefox does not store clipboard access as a site permission — a page asking to read your clipboard gets a one-time Paste confirmation instead, and nothing is remembered. There is no stored grant for Kavacha to show you or revoke.
++kavacha-permissions-sites =
++    { $count ->
++        [0] No exceptions
++        [one] { $count } site
++       *[other] { $count } sites
++    }
++kavacha-permissions-manage = Review…
++kavacha-permissions-hide = Hide
++kavacha-permissions-remove =
++    .label = Remove
++    .tooltiptext = Forget this site's setting and ask again next time
++kavacha-permissions-clear-type = Clear all
++kavacha-permission-default-ask = Always ask
++kavacha-permission-default-allow = Allow
++kavacha-permission-default-block = Block
++kavacha-permission-state-allow = Allowed
++kavacha-permission-state-block = Blocked
++kavacha-permission-geo = Location
++kavacha-permission-camera = Camera
++kavacha-permission-microphone = Microphone
++kavacha-permission-desktop-notification = Notifications
++kavacha-permission-xr = Virtual reality
++kavacha-permission-local-network = Local network
++kavacha-permission-persistent-storage = Persistent storage
++kavacha-permission-midi = MIDI devices
++kavacha-permission-speaker-selection = Speaker selection
++kavacha-permission-autoplay-media = Autoplay
+diff --git a/src/browser/components/preferences/kavacha-privacy.js b/src/browser/components/preferences/kavacha-privacy.js
+--- a/src/browser/components/preferences/kavacha-privacy.js
++++ b/src/browser/components/preferences/kavacha-privacy.js
+@@ -29,6 +29,42 @@
+ // cookie round-trips); the UI labels the derived figure "estimated".
+ const KAVACHA_BYTES_PER_BLOCKED_EVENT = 35 * 1024;
+ 
++// The capabilities the central permission manager covers (ROADMAP Phase 4).
++// Order is deliberate: the four the plan names first -- location, camera,
++// microphone, notifications -- then the rest of Gecko's persisted,
++// privacy-relevant permissions, because "instead of per-site digging" is only
++// true if the dashboard is where the digging ends.
++//
++// CLIPBOARD IS ABSENT, and that is a finding rather than an omission. Firefox
++// 152 does not persist clipboard access as a site permission at all: there is
++// no "clipboard" permission type and no permissions.default.clipboard pref
++// (the other capabilities here all have one). A page that wants to read the
++// clipboard gets a one-time in-content Paste confirmation and nothing is
++// stored, so there is no grant to list, audit or revoke. Inventing a row for
++// it would show the user a control over a thing that does not exist. The pane
++// says so instead.
++//
++// `hasDefaultPref` marks the types with a permissions.default.<type> pref in
++// firefox.js. Where there is none, the per-site list still works but there is
++// no global default to offer, so no selector is rendered.
++const KAVACHA_PERMISSION_TYPES = [
++  { type: "geo", hasDefaultPref: true },
++  { type: "camera", hasDefaultPref: true },
++  { type: "microphone", hasDefaultPref: true },
++  { type: "desktop-notification", hasDefaultPref: true },
++  { type: "xr", hasDefaultPref: true },
++  { type: "local-network", hasDefaultPref: true },
++  { type: "persistent-storage", hasDefaultPref: false },
++  { type: "midi", hasDefaultPref: false },
++  { type: "speaker-selection", hasDefaultPref: false },
++  { type: "autoplay-media", hasDefaultPref: false },
++];
++
++// nsIPermissionManager capabilities.
++const KAVACHA_PERM_UNKNOWN = 0;
++const KAVACHA_PERM_ALLOW = 1;
++const KAVACHA_PERM_DENY = 2;
++
+ var gKavachaPrivacyCenter = {
+   _initted: false,
+ 
+@@ -45,10 +81,16 @@
+       .addEventListener("command", event =>
+         this._setSearchEngine(event.target.value)
+       );
++    document
++      .getElementById("kavachaPermissionsClearAll")
++      .addEventListener("command", () => this._clearAllPermissions());
+     // The engine can also change from the workspace override (patch 0003),
+     // about:preferences#search, or the search bar. Follow it rather than
+     // letting this pane drift out of sync with the browser.
+     Services.obs.addObserver(this, "browser-search-engine-modified");
++    // Permissions change from the doorhanger and the identity panel while
++    // this pane is open; "perm-changed" keeps the counts honest.
++    Services.obs.addObserver(this, "perm-changed");
+     window.addEventListener("unload", () => this.uninit(), { once: true });
+     this._refresh();
+   },
+@@ -59,20 +101,227 @@
+     }
+     this._initted = false;
+     Services.obs.removeObserver(this, "browser-search-engine-modified");
++    Services.obs.removeObserver(this, "perm-changed");
+   },
+ 
+   observe(subject, topic, data) {
+     if (topic === "browser-search-engine-modified" && data === "engine-default") {
+       this._renderSearch();
++    } else if (topic === "perm-changed") {
++      this._renderPermissions();
+     }
+   },
+ 
+   get _trackingDB() {
+     return Cc["@mozilla.org/tracking-db-service;1"].getService(
+       Ci.nsITrackingDBService
++    );
++  },
++
++  // ----- Central permission manager (ROADMAP Phase 4) ---------------------
++
++  // Which type rows the user has expanded. Kept across re-renders so a
++  // perm-changed notification -- which fires on every removal -- does not
++  // collapse the list the user is working in.
++  _expandedPermissions: new Set(),
++
++  /** Every stored site permission, grouped by type. */
++  _permissionsByType() {
++    const wanted = new Set(KAVACHA_PERMISSION_TYPES.map(p => p.type));
++    const grouped = new Map(KAVACHA_PERMISSION_TYPES.map(p => [p.type, []]));
++    for (const perm of Services.perms.all) {
++      if (!wanted.has(perm.type)) {
++        continue;
++      }
++      // UNKNOWN_ACTION is Gecko's "no opinion" -- a row that neither allows
++      // nor blocks is not an exception the user made, so it is not one we
++      // should show them.
++      if (perm.capability === KAVACHA_PERM_UNKNOWN) {
++        continue;
++      }
++      grouped.get(perm.type).push(perm);
++    }
++    for (const list of grouped.values()) {
++      list.sort((a, b) => a.principal.origin.localeCompare(b.principal.origin));
++    }
++    return grouped;
++  },
++
++  _renderPermissions() {
++    const host = document.getElementById("kavachaPermissionsList");
++    if (!host) {
++      return;
++    }
++    let grouped;
++    try {
++      grouped = this._permissionsByType();
++    } catch (e) {
++      console.error("KavachaPrivacyCenter: could not read permissions", e);
++      return;
++    }
++
++    host.textContent = "";
++    let total = 0;
++    for (const { type, hasDefaultPref } of KAVACHA_PERMISSION_TYPES) {
++      const perms = grouped.get(type);
++      total += perms.length;
++      host.append(this._permissionRow(type, hasDefaultPref, perms));
++      if (this._expandedPermissions.has(type) && perms.length) {
++        host.append(this._permissionSites(type, perms));
++      }
++    }
++    document.getElementById("kavachaPermissionsClearAll").disabled = !total;
++  },
++
++  _permissionRow(type, hasDefaultPref, perms) {
++    const row = document.createXULElement("hbox");
++    row.className = "kavacha-privacy-row";
++    row.setAttribute("align", "center");
++
++    const label = document.createXULElement("label");
++    document.l10n.setAttributes(label, "kavacha-permission-" + type);
++    row.append(label);
++
++    const spacer = document.createXULElement("spacer");
++    spacer.setAttribute("flex", "1");
++    row.append(spacer);
++
++    const count = document.createXULElement("label");
++    count.className = "kavacha-permission-count";
++    document.l10n.setAttributes(count, "kavacha-permissions-sites", {
++      count: perms.length,
++    });
++    row.append(count);
++
++    if (perms.length) {
++      const toggle = document.createXULElement("button");
++      const expanded = this._expandedPermissions.has(type);
++      document.l10n.setAttributes(
++        toggle,
++        expanded ? "kavacha-permissions-hide" : "kavacha-permissions-manage"
++      );
++      toggle.addEventListener("command", () => {
++        if (expanded) {
++          this._expandedPermissions.delete(type);
++        } else {
++          this._expandedPermissions.add(type);
++        }
++        this._renderPermissions();
++      });
++      row.append(toggle);
++    }
++
++    if (hasDefaultPref) {
++      row.append(this._permissionDefaultMenu(type));
++    }
++    return row;
++  },
++
++  // The global default for a capability. This is the half that makes the pane
++  // a manager rather than a list: "never ask me for notifications again" is
++  // one control here instead of a decision repeated per site forever.
++  _permissionDefaultMenu(type) {
++    const pref = "permissions.default." + type;
++    const list = document.createXULElement("menulist");
++    const popup = document.createXULElement("menupopup");
++    for (const [value, l10nId] of [
++      [KAVACHA_PERM_UNKNOWN, "kavacha-permission-default-ask"],
++      [KAVACHA_PERM_ALLOW, "kavacha-permission-default-allow"],
++      [KAVACHA_PERM_DENY, "kavacha-permission-default-block"],
++    ]) {
++      const item = document.createXULElement("menuitem");
++      item.setAttribute("value", String(value));
++      document.l10n.setAttributes(item, l10nId);
++      popup.append(item);
++    }
++    list.append(popup);
++    list.value = String(
++      Services.prefs.getIntPref(pref, KAVACHA_PERM_UNKNOWN)
+     );
++    list.addEventListener("command", event => {
++      Services.prefs.setIntPref(pref, Number(event.target.value));
++    });
++    return list;
+   },
+ 
++  _permissionSites(type, perms) {
++    const box = document.createXULElement("vbox");
++    box.className = "kavacha-permission-sites";
++    for (const perm of perms) {
++      const row = document.createXULElement("hbox");
++      row.className = "kavacha-permission-site";
++      row.setAttribute("align", "center");
++
++      const origin = document.createXULElement("label");
++      origin.className = "kavacha-permission-origin";
++      origin.setAttribute("value", perm.principal.origin);
++      row.append(origin);
++
++      const spacer = document.createXULElement("spacer");
++      spacer.setAttribute("flex", "1");
++      row.append(spacer);
++
++      const state = document.createXULElement("label");
++      state.className = "kavacha-permission-state";
++      document.l10n.setAttributes(
++        state,
++        perm.capability === KAVACHA_PERM_ALLOW
++          ? "kavacha-permission-state-allow"
++          : "kavacha-permission-state-block"
++      );
++      row.append(state);
++
++      const remove = document.createXULElement("button");
++      document.l10n.setAttributes(remove, "kavacha-permissions-remove");
++      remove.addEventListener("command", () =>
++        this._removePermission(perm.principal, type)
++      );
++      row.append(remove);
++      box.append(row);
++    }
++
++    const clear = document.createXULElement("button");
++    document.l10n.setAttributes(clear, "kavacha-permissions-clear-type");
++    clear.className = "kavacha-permission-clear-type";
++    clear.addEventListener("command", () => this._clearPermissionType(type));
++    const footer = document.createXULElement("hbox");
++    footer.setAttribute("pack", "end");
++    footer.append(clear);
++    box.append(footer);
++    return box;
++  },
++
++  _removePermission(principal, type) {
++    try {
++      Services.perms.removeFromPrincipal(principal, type);
++    } catch (e) {
++      console.error("KavachaPrivacyCenter: could not remove permission", e);
++    }
++    // perm-changed re-renders, but not every path notifies synchronously.
++    this._renderPermissions();
++  },
++
++  _clearPermissionType(type) {
++    try {
++      Services.perms.removeByType(type);
++    } catch (e) {
++      console.error("KavachaPrivacyCenter: could not clear permissions", e);
++    }
++    this._renderPermissions();
++  },
++
++  _clearAllPermissions() {
++    for (const { type } of KAVACHA_PERMISSION_TYPES) {
++      try {
++        Services.perms.removeByType(type);
++      } catch (e) {
++        console.error("KavachaPrivacyCenter: could not clear permissions", e);
++      }
++    }
++    this._expandedPermissions.clear();
++    this._renderPermissions();
++  },
++
+   // The one-click escape from the privacy default. Brave Search is what
+   // Kavacha ships (search config, ROADMAP Phase 4), but a default users cannot
+   // leave is a lock-in, so the switch lives right next to the claim rather
+@@ -124,6 +373,7 @@
+   async _refresh() {
+     this._renderPosture();
+     this._renderSearch();
++    this._renderPermissions();
+ 
+     const recording = Services.prefs.getBoolPref(
+       "browser.contentblocking.database.enabled",
+diff --git a/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml b/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml
+--- a/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml
++++ b/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml
+@@ -63,6 +63,18 @@
+   </hbox>
+ </groupbox>
+ 
++<groupbox id="kavachaPermissionsGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
++  <label><html:h2 data-l10n-id="kavacha-permissions-header"/></label>
++  <description class="description-deemphasized" data-l10n-id="kavacha-permissions-description"/>
++  <!-- Rows are built by kavacha-privacy.js from KAVACHA_PERMISSION_TYPES, so
++       the markup and the type table cannot drift apart. -->
++  <vbox id="kavachaPermissionsList"/>
++  <description id="kavachaPermissionsClipboardNote" class="description-deemphasized" data-l10n-id="kavacha-permissions-clipboard-note"/>
++  <hbox pack="start">
++    <button id="kavachaPermissionsClearAll" data-l10n-id="kavacha-permissions-clear-all"/>
++  </hbox>
++</groupbox>
++
+ <groupbox id="kavachaPrivacySearchGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
+   <label><html:h2 data-l10n-id="kavacha-privacy-search-header"/></label>
+   <description class="description-deemphasized" data-l10n-id="kavacha-privacy-search-description"/>
+diff --git a/src/browser/themes/shared/preferences/zen-preferences.css b/src/browser/themes/shared/preferences/zen-preferences.css
+--- a/src/browser/themes/shared/preferences/zen-preferences.css
++++ b/src/browser/themes/shared/preferences/zen-preferences.css
+@@ -606,4 +606,40 @@
+ 
+ .kavacha-workspaces-number {
+   width: 84px;
++}
++
++/* Kavacha central permission manager (Privacy Center, Phase 4). */
++.kavacha-permission-count {
++  opacity: 0.7;
++  font-variant-numeric: tabular-nums;
++  margin-inline-end: 8px;
++}
++
++.kavacha-permission-sites {
++  margin: 2px 0 10px;
++  padding: 6px 10px;
++  border: 1px solid var(--zen-colors-border);
++  border-radius: 8px;
++  background: var(--zen-colors-tertiary);
++}
++
++.kavacha-permission-site {
++  padding-block: 4px;
+ }
++
++/* Origins can be long; let the column shrink rather than push the controls
++   off the pane. */
++.kavacha-permission-origin {
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++.kavacha-permission-state {
++  opacity: 0.7;
++  margin-inline-end: 8px;
++}
++
++.kavacha-permission-clear-type {
++  margin-top: 4px;
++}

@@ -1,0 +1,350 @@
+Session-scoped cookie deletion rules (FEATURES 3.3; Phase 4)
+
+The cookie-banner blocker shipped as part of the privacy baseline; the other
+half of FEATURES 3.3 -- "delete after session" -- never did. This adds it, as
+a Cookies and site data group in the Privacy Center: a delete-on-close switch,
+and per-site rules with three states.
+
+Session-only is the interesting one. It deletes that site's cookies at quit
+regardless of the global switch, which is what you want for a site you have to
+sign into but do not want remembered. "Keep" is its mirror: it survives the
+delete-on-close sweep, so the global switch stops being all-or-nothing and
+becomes a default you can except sites from in both directions. Without both
+states, "delete cookies when I close" is a setting most people turn on once,
+get signed out of everything, and turn off forever.
+
+Implemented over Gecko's existing "cookie" permission rather than a Kavacha
+store, so the rules are the same ones Firefox's own machinery already honours
+at shutdown, and nothing has to be taught to enforce them. The states map to
+ALLOW_ACTION (1), nsICookiePermission.ACCESS_SESSION (8) and DENY_ACTION (2) --
+8 rather than 3 because cookie capabilities share the value space with the
+generic ones and are spaced to avoid colliding.
+
+The delete-on-close switch needs BOTH prefs and that is the trap worth
+recording:
+
+  privacy.sanitize.sanitizeOnShutdown          master switch for the sweep
+  privacy.clearOnShutdown_v2.cookiesAndStorage cookies as one of its targets
+
+Setting either alone does nothing observable. Worse, naively clearing the
+master switch when the box is unticked would silently stop clearing the user's
+history and cache as well, because the same switch drives all of them. So
+unticking only stands the master switch down when nothing else was relying on
+it; otherwise it leaves it alone and just deselects cookies. A privacy control
+that quietly disables an unrelated privacy control is exactly the failure this
+pane exists to prevent.
+
+Domains are accepted bare ("example.com") or as full URLs, normalised through
+Services.io.newURI and turned into a principal from the prePath, so a pasted
+deep link becomes a rule for the site rather than the page. Input that has no
+host is rejected visibly instead of silently creating nothing.
+
+Verified without a build:
+  * node --check on the pane script; the pane fragment parses as well-formed
+    XML under the XUL + XHTML namespaces.
+  * All 68 Fluent ids referenced across the Privacy Center resolve against
+    zen-preferences.ftl, and none of the newly added strings are dead.
+  * ACCESS_SESSION's value, the permission type name, and both pref names were
+    read out of the pinned tree (nsICookiePermission.idl:28,
+    dialogs/permissions.js:217, firefox.js:1232-1238) rather than assumed.
+
+Not verified: that cookies actually survive or vanish across a real quit. That
+is a build plus two launches, and it is the arm that matters most here -- the
+whole feature is a claim about what is on disk after the browser is gone.
+Worth running alongside 0034's session acceptance test, which already does a
+quit/relaunch cycle and checks sessionstore.jsonlz4.
+diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+--- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
++++ b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+@@ -521,3 +521,22 @@
+ kavacha-permission-midi = MIDI devices
+ kavacha-permission-speaker-selection = Speaker selection
+ kavacha-permission-autoplay-media = Autoplay
++
++kavacha-cookies-header = Cookies and site data
++kavacha-cookies-description = Kavacha already isolates third-party cookies per site with Total Cookie Protection, so trackers cannot follow you between sites. These rules control how long a site's own cookies survive.
++kavacha-cookies-clear-on-close =
++    .label = Delete cookies and site data when Kavacha closes
++kavacha-cookies-clear-on-close-note = You will be signed out of everything on the next launch, except the sites you mark "Keep" below.
++kavacha-cookies-rules-header = Site rules
++kavacha-cookies-add-domain =
++    .placeholder = example.com
++kavacha-cookies-add-session = Add as session-only
++kavacha-cookies-add-invalid = That does not look like a site address.
++kavacha-cookies-empty = No site rules yet. Sites follow the setting above.
++kavacha-cookies-state-allow = Keep
++kavacha-cookies-state-session = Session only
++kavacha-cookies-state-block = Block
++kavacha-cookies-remove =
++    .label = Remove
++    .tooltiptext = Forget this rule and treat the site like any other
++kavacha-cookies-session-note = "Session only" deletes that site's cookies when you quit, whatever the setting above says — useful for a site you sign into but do not want remembered. "Keep" is the opposite: it survives the delete-on-close sweep.
+diff --git a/src/browser/components/preferences/kavacha-privacy.js b/src/browser/components/preferences/kavacha-privacy.js
+--- a/src/browser/components/preferences/kavacha-privacy.js
++++ b/src/browser/components/preferences/kavacha-privacy.js
+@@ -64,7 +64,18 @@
+ const KAVACHA_PERM_UNKNOWN = 0;
+ const KAVACHA_PERM_ALLOW = 1;
+ const KAVACHA_PERM_DENY = 2;
++// nsICookiePermission.ACCESS_SESSION. Deliberately 8 rather than 3: cookie
++// permissions share the capability space with the generic ones, so the values
++// are spaced to avoid colliding.
++const KAVACHA_PERM_SESSION = 8;
+ 
++// Clearing cookies at shutdown needs BOTH prefs. sanitizeOnShutdown is the
++// master switch for the whole sweep; the _v2 pref selects cookies as one of
++// the things it sweeps. Setting only one silently does nothing, which is the
++// kind of half-wired control this pane exists to avoid.
++const KAVACHA_SANITIZE_ON_SHUTDOWN = "privacy.sanitize.sanitizeOnShutdown";
++const KAVACHA_CLEAR_COOKIES = "privacy.clearOnShutdown_v2.cookiesAndStorage";
++
+ var gKavachaPrivacyCenter = {
+   _initted: false,
+ 
+@@ -84,6 +95,21 @@
+     document
+       .getElementById("kavachaPermissionsClearAll")
+       .addEventListener("command", () => this._clearAllPermissions());
++    document
++      .getElementById("kavachaCookiesClearOnClose")
++      .addEventListener("command", event =>
++        this._setClearCookiesOnClose(event.target.checked)
++      );
++    document
++      .getElementById("kavachaCookiesAddSession")
++      .addEventListener("command", () => this._addSessionCookieRule());
++    document
++      .getElementById("kavachaCookiesDomain")
++      .addEventListener("keydown", event => {
++        if (event.key === "Enter") {
++          this._addSessionCookieRule();
++        }
++      });
+     // The engine can also change from the workspace override (patch 0003),
+     // about:preferences#search, or the search bar. Follow it rather than
+     // letting this pane drift out of sync with the browser.
+@@ -109,6 +135,7 @@
+       this._renderSearch();
+     } else if (topic === "perm-changed") {
+       this._renderPermissions();
++      this._renderCookies();
+     }
+   },
+ 
+@@ -116,6 +143,160 @@
+     return Cc["@mozilla.org/tracking-db-service;1"].getService(
+       Ci.nsITrackingDBService
+     );
++  },
++
++  // ----- Session-scoped cookie rules (FEATURES 3.3; Phase 4) --------------
++
++  _renderCookies() {
++    const clearBox = document.getElementById("kavachaCookiesClearOnClose");
++    if (!clearBox) {
++      return;
++    }
++    clearBox.checked =
++      Services.prefs.getBoolPref(KAVACHA_SANITIZE_ON_SHUTDOWN, false) &&
++      Services.prefs.getBoolPref(KAVACHA_CLEAR_COOKIES, false);
++    document.getElementById("kavachaCookiesClearNote").hidden =
++      !clearBox.checked;
++
++    const host = document.getElementById("kavachaCookiesRules");
++    host.textContent = "";
++    let rules;
++    try {
++      rules = Services.perms.all.filter(
++        p =>
++          p.type === "cookie" &&
++          (p.capability === KAVACHA_PERM_ALLOW ||
++            p.capability === KAVACHA_PERM_DENY ||
++            p.capability === KAVACHA_PERM_SESSION)
++      );
++    } catch (e) {
++      console.error("KavachaPrivacyCenter: could not read cookie rules", e);
++      return;
++    }
++    rules.sort((a, b) => a.principal.origin.localeCompare(b.principal.origin));
++
++    if (!rules.length) {
++      const empty = document.createXULElement("description");
++      empty.className = "description-deemphasized";
++      document.l10n.setAttributes(empty, "kavacha-cookies-empty");
++      host.append(empty);
++      return;
++    }
++
++    for (const rule of rules) {
++      const row = document.createXULElement("hbox");
++      row.className = "kavacha-permission-site";
++      row.setAttribute("align", "center");
++
++      const origin = document.createXULElement("label");
++      origin.className = "kavacha-permission-origin";
++      origin.setAttribute("value", rule.principal.origin);
++      row.append(origin);
++
++      const spacer = document.createXULElement("spacer");
++      spacer.setAttribute("flex", "1");
++      row.append(spacer);
++
++      row.append(this._cookieStateMenu(rule));
++
++      const remove = document.createXULElement("button");
++      document.l10n.setAttributes(remove, "kavacha-cookies-remove");
++      remove.addEventListener("command", () =>
++        this._removeCookieRule(rule.principal)
++      );
++      row.append(remove);
++      host.append(row);
++    }
++  },
++
++  _cookieStateMenu(rule) {
++    const list = document.createXULElement("menulist");
++    const popup = document.createXULElement("menupopup");
++    for (const [value, l10nId] of [
++      [KAVACHA_PERM_ALLOW, "kavacha-cookies-state-allow"],
++      [KAVACHA_PERM_SESSION, "kavacha-cookies-state-session"],
++      [KAVACHA_PERM_DENY, "kavacha-cookies-state-block"],
++    ]) {
++      const item = document.createXULElement("menuitem");
++      item.setAttribute("value", String(value));
++      document.l10n.setAttributes(item, l10nId);
++      popup.append(item);
++    }
++    list.append(popup);
++    list.value = String(rule.capability);
++    list.addEventListener("command", event => {
++      this._setCookieRule(rule.principal, Number(event.target.value));
++    });
++    return list;
++  },
++
++  _setCookieRule(principal, capability) {
++    try {
++      Services.perms.addFromPrincipal(principal, "cookie", capability);
++    } catch (e) {
++      console.error("KavachaPrivacyCenter: could not set cookie rule", e);
++    }
++    this._renderCookies();
++  },
++
++  _removeCookieRule(principal) {
++    try {
++      Services.perms.removeFromPrincipal(principal, "cookie");
++    } catch (e) {
++      console.error("KavachaPrivacyCenter: could not remove cookie rule", e);
++    }
++    this._renderCookies();
++  },
++
++  _addSessionCookieRule() {
++    const input = document.getElementById("kavachaCookiesDomain");
++    const error = document.getElementById("kavachaCookiesAddError");
++    const raw = input.value.trim();
++    if (!raw) {
++      return;
++    }
++    // Accept "example.com" as well as a full URL. A bare host has no scheme,
++    // and createContentPrincipalFromOrigin requires one.
++    const origin = /^https?:\/\//i.test(raw) ? raw : "https://" + raw;
++    let principal;
++    try {
++      const uri = Services.io.newURI(origin);
++      if (!uri.host) {
++        throw new Error("no host");
++      }
++      principal =
++        Services.scriptSecurityManager.createContentPrincipalFromOrigin(
++          uri.prePath
++        );
++    } catch (e) {
++      error.hidden = false;
++      return;
++    }
++    error.hidden = true;
++    input.value = "";
++    this._setCookieRule(principal, KAVACHA_PERM_SESSION);
++  },
++
++  _setClearCookiesOnClose(on) {
++    Services.prefs.setBoolPref(KAVACHA_CLEAR_COOKIES, on);
++    if (on) {
++      Services.prefs.setBoolPref(KAVACHA_SANITIZE_ON_SHUTDOWN, true);
++    } else {
++      // Only stand the master switch down if cookies were the only thing it
++      // was sweeping -- otherwise unticking this box would silently disable
++      // the user's history or cache clearing too.
++      const others = [
++        "privacy.clearOnShutdown_v2.historyFormDataAndDownloads",
++        "privacy.clearOnShutdown_v2.browsingHistoryAndDownloads",
++        "privacy.clearOnShutdown_v2.cache",
++        "privacy.clearOnShutdown_v2.siteSettings",
++        "privacy.clearOnShutdown_v2.formdata",
++      ];
++      if (!others.some(p => Services.prefs.getBoolPref(p, false))) {
++        Services.prefs.setBoolPref(KAVACHA_SANITIZE_ON_SHUTDOWN, false);
++      }
++    }
++    this._renderCookies();
+   },
+ 
+   // ----- Central permission manager (ROADMAP Phase 4) ---------------------
+@@ -374,6 +555,7 @@
+     this._renderPosture();
+     this._renderSearch();
+     this._renderPermissions();
++    this._renderCookies();
+ 
+     const recording = Services.prefs.getBoolPref(
+       "browser.contentblocking.database.enabled",
+diff --git a/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml b/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml
+--- a/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml
++++ b/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml
+@@ -63,6 +63,22 @@
+   </hbox>
+ </groupbox>
+ 
++<groupbox id="kavachaCookiesGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
++  <label><html:h2 data-l10n-id="kavacha-cookies-header"/></label>
++  <description class="description-deemphasized" data-l10n-id="kavacha-cookies-description"/>
++  <checkbox id="kavachaCookiesClearOnClose" data-l10n-id="kavacha-cookies-clear-on-close"/>
++  <description id="kavachaCookiesClearNote" class="description-deemphasized" data-l10n-id="kavacha-cookies-clear-on-close-note"/>
++  <label><html:h3 data-l10n-id="kavacha-cookies-rules-header"/></label>
++  <hbox id="kavachaCookiesAddRow" align="center">
++    <html:input id="kavachaCookiesDomain" type="text" data-l10n-id="kavacha-cookies-add-domain"/>
++    <button id="kavachaCookiesAddSession" data-l10n-id="kavacha-cookies-add-session"/>
++  </hbox>
++  <description id="kavachaCookiesAddError" class="kavacha-cookies-error" data-l10n-id="kavacha-cookies-add-invalid" hidden="true"/>
++  <!-- Rows built by kavacha-privacy.js from the "cookie" permission store. -->
++  <vbox id="kavachaCookiesRules"/>
++  <description class="description-deemphasized" data-l10n-id="kavacha-cookies-session-note"/>
++</groupbox>
++
+ <groupbox id="kavachaPermissionsGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
+   <label><html:h2 data-l10n-id="kavacha-permissions-header"/></label>
+   <description class="description-deemphasized" data-l10n-id="kavacha-permissions-description"/>
+diff --git a/src/browser/themes/shared/preferences/zen-preferences.css b/src/browser/themes/shared/preferences/zen-preferences.css
+--- a/src/browser/themes/shared/preferences/zen-preferences.css
++++ b/src/browser/themes/shared/preferences/zen-preferences.css
+@@ -643,3 +643,18 @@
+ .kavacha-permission-clear-type {
+   margin-top: 4px;
+ }
++
++/* Kavacha session-scoped cookie rules (Privacy Center, Phase 4). */
++#kavachaCookiesAddRow {
++  gap: 8px;
++  margin-block: 10px 4px;
++}
++
++#kavachaCookiesDomain {
++  flex: 1;
++  min-width: 0;
++}
++
++.kavacha-cookies-error {
++  color: light-dark(#b3261e, #f2b8b5);
++}

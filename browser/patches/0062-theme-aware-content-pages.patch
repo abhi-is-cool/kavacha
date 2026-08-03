@@ -1,0 +1,470 @@
+# Patch 0062 — Kavacha's own pages follow the theme.
+#
+# SYMPTOM: select Kavacha Daylight and you get a light browser wrapped around
+# four black pages — about:studio, about:marketplace, about:plugins and the
+# new-tab dashboard. One of them is the Customization Studio you selected the
+# theme from.
+#
+# CAUSE. All four are CONTENT documents. The --kavacha-* token floor lives in
+# zen-theme.css, which is chrome, and a content document is not in that cascade.
+# So every `var(--kavacha-surface, #14111f)` in studio.css, marketplace.css and
+# plugins.css resolved to its literal fallback, always, and all three then
+# pinned `color-scheme: dark` to match. newtab.css did not even reference a
+# token: `color: #fff; background: #1c1d22`, hardcoded.
+#
+# Their own header comments claimed "the theme engine re-tints --kavacha-* live",
+# which was true of chrome and never true of them. Patch 0046 diagnosed this
+# exactly and deferred the fix: "Folding all of them into one shared content
+# stylesheet is the real fix; it needs a new jar entry and moz.build wiring,
+# which cannot be verified without a full build."
+#
+# WHY NOT THAT SHARED STYLESHEET. A static sheet cannot carry the values. The
+# tokens are chosen at runtime from whichever package is active, including user
+# and marketplace packages that did not exist at build time — a stylesheet could
+# only hardcode one theme, which is the bug. So: a shared SCRIPT. All four pages
+# are privileged (IS_SECURE_CHROME_UI for the three about: pages; the new tab is
+# a chrome:// URL whose newtab.js already calls Services.prefs), so they can ask
+# KavachaThemeEngine directly. content-theme.js stamps the resolved tokens,
+# color-scheme and kavacha-theme-mode onto the document root and re-stamps on
+# kavacha.theme.active. The pages keep their `var(--kavacha-*, literal)` chains
+# untouched — the difference is that the var now resolves.
+#
+# It also fixes a second thing 0046 named: --zen-primary-color is a chrome
+# token, so the documented
+# `var(--zen-primary-color, var(--kavacha-accent, var(--kavacha-accent-fallback)))`
+# chain fell to the fallback on all three about: pages. The accent a user picked
+# in Settings was permanently invisible in the Studio. content-theme.js sets it.
+#
+# NEW JAR ENTRY: src/zen/kavacha-theme/jar.inc.mn, #include'd from
+# zen-assets.jar.inc.mn. Contrary to 0046's expectation this does NOT need a
+# full build — measured 2026-08-03, `./build/bootstrap.sh fast` (15s) picked the
+# new entry up and it appeared in dist/ and in Kavacha.app.
+#
+# DELIBERATELY NOT THEMED: the new-tab dashboard above its base layer. It is a
+# photo backdrop, and .credit/.settings/.clock/.greeting/.quote are white with
+# scrims and text-shadows measured against the IMAGE (see the contrast note at
+# .scrim, and defect D2). Recolouring them from --kavacha-text-primary would put
+# dark text on a dark photograph the moment you chose a light theme — the
+# opposite of the fix. Only `background` moves; `color` stays #fff, because
+# .clock and .greeting set no colour of their own and inherit it from body. A
+# light theme gets a light browser around a photographic new tab, the way a
+# light desktop keeps whatever wallpaper you chose.
+#
+# VERIFIED (Marionette, buildID 20260803), all four pages, both directions:
+#   Daylight  -> mode light, color-scheme light, --kavacha-surface #F7F6FB,
+#                body background rgb(247,246,251) on the three about: pages and
+#                rgb(236,234,244) (the sunken token) on the new tab.
+#   Midnight  -> mode dark, color-scheme dark, --kavacha-surface #0B0912,
+#                body background rgb(11,9,18) / rgb(6,4,9).
+#   Accent #4AA3DF set in Settings reaches --zen-primary-color on all four.
+#
+# FILES: src/zen/kavacha-theme/content-theme.js (new);
+# src/zen/kavacha-theme/jar.inc.mn (new);
+# src/browser/base/content/zen-assets.jar.inc.mn;
+# src/zen/kavacha-studio/studio.{html,css};
+# src/zen/kavacha-marketplace/marketplace.{html,css};
+# src/zen/kavacha-plugins/plugins.{html,css};
+# src/zen/kavacha-newtab/{index.html,newtab.css}.
+diff --git a/src/browser/base/content/zen-assets.jar.inc.mn b/src/browser/base/content/zen-assets.jar.inc.mn
+index 0dcec8e..a7cc8e4 100644
+--- a/src/browser/base/content/zen-assets.jar.inc.mn
++++ b/src/browser/base/content/zen-assets.jar.inc.mn
+@@ -21,6 +21,7 @@
+ #include ../../../zen/boosts/jar.inc.mn
+ #include ../../../zen/live-folders/jar.inc.mn
+ #include ../../../zen/space-routing/jar.inc.mn
++#include ../../../zen/kavacha-theme/jar.inc.mn
+ #include ../../../zen/kavacha-newtab/jar.inc.mn
+ #include ../../../zen/kavacha-search/jar.inc.mn
+ #include ../../../zen/kavacha-studio/jar.inc.mn
+diff --git a/src/zen/kavacha-marketplace/marketplace.css b/src/zen/kavacha-marketplace/marketplace.css
+index fc90a55..bab025a 100644
+--- a/src/zen/kavacha-marketplace/marketplace.css
++++ b/src/zen/kavacha-marketplace/marketplace.css
+@@ -3,17 +3,21 @@
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+ /* Component Marketplace (about:marketplace). Shares about:studio's visual
+- * language (patch 0024) — same Kavacha/Zen chrome tokens, so the page follows
+- * the active theme (patch 0016 bakes the Midnight floor; the theme engine,
+- * patch 0023, re-tints --kavacha-* live). ADR 0010. */
++ * language (patch 0024) — same Kavacha theme tokens, so the page follows the
++ * active theme. ADR 0010.
++ *
++ * Patch 0062: those tokens now actually arrive — see studio.css for the same
++ * note. content-theme.js stamps the live values and owns color-scheme, which
++ * used to be pinned to dark here. Fallbacks below are Kavacha Midnight and are
++ * reached only if that script fails to run. */
+ 
+ :root {
+-  --market-surface: var(--kavacha-surface, #14111f);
+-  --market-elevated: var(--kavacha-surface-elevated, #1d1930);
+-  --market-sunken: var(--kavacha-surface-sunken, #0e0b18);
+-  --market-border: var(--kavacha-border, #2e2846);
+-  --market-text: var(--kavacha-text-primary, #edeaf7);
+-  --market-text-dim: var(--kavacha-text-secondary, #a79fc4);
++  --market-surface: var(--kavacha-surface, #0b0912);
++  --market-elevated: var(--kavacha-surface-elevated, #16131f);
++  --market-sunken: var(--kavacha-surface-sunken, #060409);
++  --market-border: var(--kavacha-border, #322b4a);
++  --market-text: var(--kavacha-text-primary, #f6f4fc);
++  --market-text-dim: var(--kavacha-text-secondary, #cabfe6);
+   /* Canonical definition and rationale: kavacha-midnight.inc.css. Repeated
+      here because this is a content document -- the chrome token floor is not
+      in its cascade -- not because the value is local. */
+@@ -22,7 +26,6 @@
+     --zen-primary-color,
+     var(--kavacha-accent, var(--kavacha-accent-fallback))
+   );
+-  color-scheme: dark;
+ }
+ 
+ * {
+diff --git a/src/zen/kavacha-marketplace/marketplace.html b/src/zen/kavacha-marketplace/marketplace.html
+index 6375484..1900913 100644
+--- a/src/zen/kavacha-marketplace/marketplace.html
++++ b/src/zen/kavacha-marketplace/marketplace.html
+@@ -14,6 +14,9 @@
+       rel="stylesheet"
+       href="chrome://browser/content/kavacha-marketplace/marketplace.css"
+     />
++    <!-- Patch 0062: see kavacha-theme/content-theme.js. Puts the active theme's
++         --kavacha-* tokens into this document's cascade. -->
++    <script src="chrome://browser/content/kavacha-theme/content-theme.js"></script>
+     <script src="chrome://browser/content/kavacha-marketplace/marketplace.js"></script>
+   </head>
+   <body>
+diff --git a/src/zen/kavacha-newtab/index.html b/src/zen/kavacha-newtab/index.html
+index b760a2e..3121ffd 100644
+--- a/src/zen/kavacha-newtab/index.html
++++ b/src/zen/kavacha-newtab/index.html
+@@ -9,6 +9,10 @@
+   <meta name="viewport" content="width=device-width, initial-scale=1">
+   <link rel="icon" href="chrome://browser/content/kavacha-newtab/favicon.png">
+   <link rel="stylesheet" href="chrome://browser/content/kavacha-newtab/newtab.css">
++  <!-- Patch 0062: see kavacha-theme/content-theme.js. This page hardcoded
++       white-on-#1c1d22 and used no theme token at all, so a light theme gave a
++       white browser with a black new tab. -->
++  <script src="chrome://browser/content/kavacha-theme/content-theme.js"></script>
+ </head>
+ <body>
+   <!-- Gradient-of-the-day background layer; the day's Wikimedia featured
+diff --git a/src/zen/kavacha-newtab/newtab.css b/src/zen/kavacha-newtab/newtab.css
+index aaf71ec..dac8fd5 100644
+--- a/src/zen/kavacha-newtab/newtab.css
++++ b/src/zen/kavacha-newtab/newtab.css
+@@ -20,8 +20,25 @@ body {
+ body {
+   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+     Helvetica, Arial, sans-serif;
++  /* Patch 0062. The base layer follows the theme, so the moment before the
++     gradient paints -- and any edge the backdrop does not cover -- matches the
++     browser around it instead of being a fixed #1c1d22 slab.
++
++     DELIBERATELY NOT THEMED: everything above this layer. The dashboard is a
++     photo backdrop, and .credit/.settings/.clock/.greeting/.quote are white
++     with scrims and text-shadows tuned against the IMAGE, not against a theme
++     surface (see the contrast note at .scrim below, measured for exactly that).
++     Recolouring them from --kavacha-text-primary would put dark text on a dark
++     photo under a light theme -- the opposite of the fix. A light theme gets a
++     light browser around a photographic new tab, the way a light desktop keeps
++     whatever wallpaper you chose.
++
++     `color` stays #fff for that reason: .clock and .greeting set no colour of
++     their own and inherit it from here, so pointing it at a theme token would
++     drop dark text onto a dark photograph the moment you chose a light theme.
++     Only the background moves. */
+   color: #fff;
+-  background: #1c1d22;
++  background: var(--kavacha-surface-sunken, #1c1d22);
+   overflow: hidden;
+   -webkit-font-smoothing: antialiased;
+ }
+diff --git a/src/zen/kavacha-plugins/plugins.css b/src/zen/kavacha-plugins/plugins.css
+index da10e72..78ff7d2 100644
+--- a/src/zen/kavacha-plugins/plugins.css
++++ b/src/zen/kavacha-plugins/plugins.css
+@@ -2,18 +2,22 @@
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+-/* about:plugins — the plugin manager. Styled from the same Kavacha/Zen chrome
+- * tokens as the Customization Studio (studio.css) so it follows the active
+- * theme (patch 0016 bakes the Midnight floor; the theme engine, patch 0023,
+- * re-tints --kavacha-* live). ADR 0011. */
++/* about:plugins — the plugin manager. Styled from the same Kavacha theme tokens
++ * as the Customization Studio (studio.css) so it follows the active theme.
++ * ADR 0011.
++ *
++ * Patch 0062: those tokens now actually arrive — see studio.css for the same
++ * note. content-theme.js stamps the live values and owns color-scheme, which
++ * used to be pinned to dark here. Fallbacks below are Kavacha Midnight and are
++ * reached only if that script fails to run. */
+ 
+ :root {
+-  --pl-surface: var(--kavacha-surface, #14111f);
+-  --pl-elevated: var(--kavacha-surface-elevated, #1d1930);
+-  --pl-sunken: var(--kavacha-surface-sunken, #0e0b18);
+-  --pl-border: var(--kavacha-border, #2e2846);
+-  --pl-text: var(--kavacha-text-primary, #edeaf7);
+-  --pl-text-dim: var(--kavacha-text-secondary, #a79fc4);
++  --pl-surface: var(--kavacha-surface, #0b0912);
++  --pl-elevated: var(--kavacha-surface-elevated, #16131f);
++  --pl-sunken: var(--kavacha-surface-sunken, #060409);
++  --pl-border: var(--kavacha-border, #322b4a);
++  --pl-text: var(--kavacha-text-primary, #f6f4fc);
++  --pl-text-dim: var(--kavacha-text-secondary, #cabfe6);
+   /* Canonical definition and rationale: kavacha-midnight.inc.css. Repeated
+      here because this is a content document -- the chrome token floor is not
+      in its cascade -- not because the value is local. */
+@@ -22,8 +26,7 @@
+     --zen-primary-color,
+     var(--kavacha-accent, var(--kavacha-accent-fallback))
+   );
+-  --pl-danger: #e06c75;
+-  color-scheme: dark;
++  --pl-danger: var(--kavacha-danger, #e06c75);
+ }
+ 
+ * {
+diff --git a/src/zen/kavacha-plugins/plugins.html b/src/zen/kavacha-plugins/plugins.html
+index 9353b8f..9218435 100644
+--- a/src/zen/kavacha-plugins/plugins.html
++++ b/src/zen/kavacha-plugins/plugins.html
+@@ -11,6 +11,9 @@
+     />
+     <title>Plugins</title>
+     <link rel="stylesheet" href="chrome://browser/content/kavacha-plugins/plugins.css" />
++    <!-- Patch 0062: see kavacha-theme/content-theme.js. Puts the active theme's
++         --kavacha-* tokens into this document's cascade. -->
++    <script src="chrome://browser/content/kavacha-theme/content-theme.js"></script>
+     <script src="chrome://browser/content/kavacha-plugins/plugins.js"></script>
+   </head>
+   <body>
+diff --git a/src/zen/kavacha-studio/studio.css b/src/zen/kavacha-studio/studio.css
+index 6c37813..0063a62 100644
+--- a/src/zen/kavacha-studio/studio.css
++++ b/src/zen/kavacha-studio/studio.css
+@@ -2,17 +2,26 @@
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+-/* Customization Studio (about:studio). Styled from Kavacha/Zen chrome tokens
+- * so the Studio itself follows the active theme (patch 0016 bakes the Midnight
+- * floor; the theme engine, patch 0023, re-tints --kavacha-* live). ADR 0009. */
++/* Customization Studio (about:studio). Styled from Kavacha's theme tokens so
++ * the Studio follows the active theme. ADR 0009.
++ *
++ * Patch 0062: those tokens now actually arrive. This is a CONTENT document, so
++ * the chrome token floor in zen-theme.css was never in its cascade and every
++ * var() below resolved to its literal fallback -- the Studio stayed black even
++ * while you were using it to select a light theme. content-theme.js stamps the
++ * live values onto the document root, and sets color-scheme from the theme's
++ * mode instead of the `color-scheme: dark` that used to be pinned here. */
+ 
+ :root {
+-  --studio-surface: var(--kavacha-surface, #14111f);
+-  --studio-elevated: var(--kavacha-surface-elevated, #1d1930);
+-  --studio-sunken: var(--kavacha-surface-sunken, #0e0b18);
+-  --studio-border: var(--kavacha-border, #2e2846);
+-  --studio-text: var(--kavacha-text-primary, #edeaf7);
+-  --studio-text-dim: var(--kavacha-text-secondary, #a79fc4);
++  /* The fallbacks are Kavacha Midnight, and are reached only if
++     content-theme.js fails to run -- a readable dark page rather than an
++     unstyled one. Keep them in step with kavacha-midnight.inc.css. */
++  --studio-surface: var(--kavacha-surface, #0b0912);
++  --studio-elevated: var(--kavacha-surface-elevated, #16131f);
++  --studio-sunken: var(--kavacha-surface-sunken, #060409);
++  --studio-border: var(--kavacha-border, #322b4a);
++  --studio-text: var(--kavacha-text-primary, #f6f4fc);
++  --studio-text-dim: var(--kavacha-text-secondary, #cabfe6);
+   /* Canonical definition and rationale: kavacha-midnight.inc.css. Repeated
+      here because this is a content document -- the chrome token floor is not
+      in its cascade -- not because the value is local. */
+@@ -21,7 +30,6 @@
+     --zen-primary-color,
+     var(--kavacha-accent, var(--kavacha-accent-fallback))
+   );
+-  color-scheme: dark;
+ }
+ 
+ * {
+diff --git a/src/zen/kavacha-studio/studio.html b/src/zen/kavacha-studio/studio.html
+index e455706..8eded3b 100644
+--- a/src/zen/kavacha-studio/studio.html
++++ b/src/zen/kavacha-studio/studio.html
+@@ -11,6 +11,12 @@
+     />
+     <title>Customization Studio</title>
+     <link rel="stylesheet" href="chrome://browser/content/kavacha-studio/studio.css" />
++    <!-- Patch 0062: puts the active theme's --kavacha-* tokens into this
++         document's cascade. Without it the var() chains in studio.css always
++         resolved to their dark literals, so the Studio stayed black no matter
++         which theme you selected in it. Synchronous and before studio.js so
++         the first paint is already themed. -->
++    <script src="chrome://browser/content/kavacha-theme/content-theme.js"></script>
+     <script src="chrome://browser/content/kavacha-studio/studio.js"></script>
+   </head>
+   <body>
+diff --git a/src/zen/kavacha-theme/content-theme.js b/src/zen/kavacha-theme/content-theme.js
+new file mode 100644
+index 0000000..9649966
+--- /dev/null
++++ b/src/zen/kavacha-theme/content-theme.js
+@@ -0,0 +1,142 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Shared theming for Kavacha's own pages (patch 0062).
++//
++// THE PROBLEM. about:studio, about:marketplace, about:plugins and the new-tab
++// dashboard are CONTENT documents. The --kavacha-* token floor lives in
++// zen-theme.css, which is chrome, and a content document is simply not in that
++// cascade -- so every `var(--kavacha-surface, #14111f)` in studio.css,
++// marketplace.css and plugins.css always resolved to its literal fallback, and
++// newtab.css did not even pretend, hardcoding `color: #fff; background:
++// #1c1d22`. All four then pinned `color-scheme: dark` to match.
++//
++// The result: pick Kavacha Daylight and you get a light browser with four black
++// pages, one of which is the Customization Studio you picked the theme from.
++// Their own header comments claimed "the theme engine re-tints --kavacha-* live"
++// -- true of chrome, never true of them. Patch 0046 diagnosed this exactly and
++// deferred the fix.
++//
++// THE FIX. These four pages are privileged (IS_SECURE_CHROME_UI for the three
++// about: pages; the new tab is a chrome:// URL that already calls
++// Services.prefs), so they can ask the engine directly. This script stamps the
++// resolved theme onto the document root as inline custom properties, which puts
++// the same vocabulary in the content cascade that the chrome gets from the
++// build-time floor. The pages keep their `var(--kavacha-*, literal)` chains
++// untouched; the difference is that the var now resolves.
++//
++// A stylesheet could not do this job: the token values are chosen at runtime
++// from the active package, and a static sheet cannot know them. Hence a script,
++// loaded synchronously from <head> so the first paint is already themed.
++//
++// Loaded by: kavacha-studio/studio.html, kavacha-marketplace/marketplace.html,
++// kavacha-plugins/plugins.html, kavacha-newtab/index.html.
++
++"use strict";
++
++/* global ChromeUtils, Services, document, window, console */
++
++(() => {
++  const { KavachaThemeEngine } = ChromeUtils.importESModule(
++    "resource:///modules/KavachaThemeEngine.sys.mjs"
++  );
++
++  const kThemePref = "kavacha.theme.active";
++  // The accent is user-owned and deliberately separate from the theme (ADR
++  // 0008). It never reached these pages either: --zen-primary-color is a chrome
++  // token, so the documented
++  // `var(--zen-primary-color, var(--kavacha-accent, var(--kavacha-accent-fallback)))`
++  // chain fell through to the fallback on every one of them, and the colour the
++  // user picked in Settings was invisible in the Studio forever.
++  const kAccentPref = "zen.theme.accent-color";
++
++  const root = document.documentElement;
++
++  const toCustomProperty = token =>
++    "--kavacha-" + token.replace(/[A-Z]/g, m => "-" + m.toLowerCase());
++
++  // Track what we set so a theme switch removes exactly what the previous one
++  // added -- the same contract KavachaThemeEngine keeps for chrome windows.
++  let managed = new Set();
++
++  async function applyTheme() {
++    let theme;
++    try {
++      theme = await KavachaThemeEngine.resolveTheme(
++        KavachaThemeEngine.activeThemeId
++      );
++    } catch (e) {
++      // Keep whatever is on screen. The page's own literal fallbacks are a
++      // readable dark theme, so a broken package costs colour, not legibility.
++      console.error("Kavacha content theme: could not resolve the theme", e);
++      return;
++    }
++
++    const next = new Set();
++    for (const [token, value] of Object.entries(theme.colors || {})) {
++      if (token.startsWith("$")) {
++        continue; // colors.json may carry a $comment
++      }
++      const prop = toCustomProperty(token);
++      next.add(prop);
++      root.style.setProperty(prop, value);
++    }
++    for (const prop of managed) {
++      if (!next.has(prop)) {
++        root.style.removeProperty(prop);
++      }
++    }
++    managed = next;
++
++    // Mirror the chrome's own signal, both as an attribute (so page CSS can
++    // branch on it the way kavacha-theme-light.inc.css does) and as
++    // color-scheme (so native form controls, scrollbars and the default canvas
++    // follow). Inline is the right instrument HERE, unlike in chrome: a content
++    // document has no competing pref-gated rule for it to lose to.
++    const mode =
++      (await KavachaThemeEngine.modeOf(KavachaThemeEngine.activeThemeId)) ||
++      "dark";
++    root.setAttribute("kavacha-theme-mode", mode);
++    root.style.colorScheme = mode;
++  }
++
++  function applyAccent() {
++    const raw = Services.prefs.getStringPref(kAccentPref, "");
++    if (raw) {
++      root.style.setProperty("--zen-primary-color", raw);
++    } else {
++      // Cleared means "use the system accent", and the CSS chain's next arm
++      // (--kavacha-accent, then --kavacha-accent-fallback) is the right answer
++      // -- so remove rather than substitute.
++      root.style.removeProperty("--zen-primary-color");
++    }
++  }
++
++  const observer = {
++    observe(subject, topic, data) {
++      if (topic !== "nsPref:changed") {
++        return;
++      }
++      if (data === kThemePref) {
++        applyTheme();
++      } else if (data === kAccentPref) {
++        applyAccent();
++      }
++    },
++  };
++
++  Services.prefs.addObserver(kThemePref, observer);
++  Services.prefs.addObserver(kAccentPref, observer);
++  window.addEventListener(
++    "unload",
++    () => {
++      Services.prefs.removeObserver(kThemePref, observer);
++      Services.prefs.removeObserver(kAccentPref, observer);
++    },
++    { once: true }
++  );
++
++  applyAccent();
++  applyTheme();
++})();
+diff --git a/src/zen/kavacha-theme/jar.inc.mn b/src/zen/kavacha-theme/jar.inc.mn
+new file mode 100644
+index 0000000..d5ad2cd
+--- /dev/null
++++ b/src/zen/kavacha-theme/jar.inc.mn
+@@ -0,0 +1,8 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++# kavacha-midnight.inc.css needs no entry here: it reaches the browser through
++# a %include in zen-theme.css at build time. content-theme.js does need one,
++# because it is loaded by URL from four content documents (patch 0062).
++        content/browser/kavacha-theme/content-theme.js                         (../../zen/kavacha-theme/content-theme.js)

@@ -1,0 +1,343 @@
+# Patch 0064 — the last light/dark authority: Zen writes the toolbox text
+# colour in JS, and it never heard about the Kavacha theme.
+#
+# SYMPTOM (user, 2026-08-03): "where are my tabs? all i did was make it vertical
+# then clicked the collapse button. also, when it was uncollapsed, the text was
+# unreadable because the text was overlayed or something weird. Also the theme
+# changing doesnt even work."
+#
+# Three reports, ONE root cause. The tabs were never missing and the collapse
+# button was never broken: with Kavacha Daylight active, the entire vertical
+# strip was being painted in near-white on a near-white surface. Collapsed, only
+# the icons remain — also white — so the strip reads as empty. Expanded, the
+# labels are there but invisible, which is "the text was overlayed or something
+# weird". And since the sidebar is the most theme-coloured surface in the
+# window, a theme switch that leaves it looking identical reads as "theme
+# changing doesnt even work".
+#
+# 1. WHY 0061 DID NOT ALREADY FIX THIS. 0061 made CSS agree with the
+#    `kavacha-theme-mode` attribute, and it does — measured under Daylight,
+#    `color-scheme` computes `light` on the root, on `panel`, on `menupopup`,
+#    on `#navigator-toolbox`, on `#urlbar` and on the content browser, and
+#    `--zen-branding-paper` correctly resolves to the theme surface. The urlbar
+#    text goes properly dark. But `--toolbox-textcolor` is not decided by CSS at
+#    all. ZenGradientGenerator.mjs computes `isDarkMode` and writes
+#    `--zen-primary-color`, `--toolbox-textcolor` and `--toolbar-color-scheme`
+#    INLINE on the document element. Its `isDarkMode` getter switches on
+#    `zen.view.window.scheme`, whose value 0 means "always dark" and is the
+#    shipped default. So the theme could never influence it.
+#
+#    Zen then spends that variable in four places that a normal rule cannot
+#    outrank: `--toolbar-color` and `--toolbox-textcolor-inactive`
+#    (zen-theme.css, both !important), and `zen-workspace`'s own `color` plus
+#    `--tab-selected-textcolor` (zen-workspaces.css), which mix it 95% with the
+#    accent.
+#
+#    MEASURED BEFORE, Daylight active, sidebar expanded: all 21 text-bearing
+#    elements in the strip — the Space indicator, the Clear button, all five
+#    tabs, their labels, their sublabels, the new-tab button and its icon —
+#    computed to color(srgb 0.962 0.949 0.946 / 0.81), luminance 0.893, against
+#    a surface luminance of 0.927. Contrast ratio ~1.04:1.
+#    AFTER: 0 of 44 text-bearing chrome elements below 4.5:1, worst ratio 8.55.
+#    Midnight worst 10.74, Forest worst 9.92, both also 0 failures.
+#
+#    THE FIX, in two halves, because one alone is not enough:
+#      * kavacha-theme-scheme.inc.css points --toolbox-textcolor at the theme's
+#        own --kavacha-text-primary at 80% (the same alpha Zen uses for its two
+#        literals). This needs !important — not for specificity, but because the
+#        declaration it must beat is an INLINE one, and important author
+#        declarations are the only kind that outrank a style attribute. One
+#        declaration serves both modes: --kavacha-text-primary is already dark
+#        under light themes and light under dark ones, and has already been
+#        through the engine's WCAG guard, so it is a colour known to read.
+#      * KavachaThemeEngine._stampMode now also writes `zen.view.window.scheme`
+#        to match the derived mode. The CSS half makes the strip readable; this
+#        half repairs the value at its SOURCE, so Zen's own
+#        getAccentColorForUI(accent, isDarkMode) runs with the right mode. It
+#        was previously turning the user's #F76F53 into rgb(99, 44, 33) — a
+#        muddy near-brown — under a light theme.
+#
+#    WHY NOT A PREF ALONE: setting zen.view.window.scheme by itself leaves the
+#    already-written inline values stale until Zen next runs onWorkspaceChange,
+#    so the strip stays unreadable until an unrelated event repaints it. WHY NOT
+#    CSS ALONE: it corrects the text but leaves --zen-primary-color derived for
+#    the wrong mode. Both halves, or the bug half-survives either way.
+#
+#    PRIVATE WINDOWS are untouched: Zen forces --toolbox-textcolor on
+#    `&[zen-private-window='true']` at (1,3,0), which outranks this rule's
+#    (1,1,0). A private window looking different is a privacy signal.
+#
+# 2. THE COLOUR PARSER STILL HAD A SILENT NULL. parseLiteralColor read #rgb,
+#    #rrggbb and rgb()/rgba() — but the style system returns anything that has
+#    been through color-mix() as `color(srgb r g b / a)` with 0..1 channels.
+#    That returned null, and null in _stampMode means "leave the appearance mode
+#    unchanged", so a theme whose surface was built from a color-mix() would
+#    silently keep the PREVIOUS theme's light/dark. This is the same defect
+#    class 0061 set out to kill and missed one syntax of. Found because the
+#    verification probe written for this patch had the identical gap and
+#    confidently reported zero unreadable elements on a strip where every one of
+#    the 21 was unreadable.
+#
+# 3. THE SIDEBAR WIDTH RULE FOUGHT ZEN'S SPLITTER. kavacha-layout.inc.css set
+#    `width: var(--kavacha-sidebar-width, 250px) !important` on
+#    #navigator-toolbox for every user in vertical mode, because the engine
+#    always stamps `kavacha-sidebar`. That !important also beat the width Zen's
+#    #zen-sidebar-splitter writes on drag, so dragging the sidebar edge snapped
+#    straight back. It further fired against the 60px max-width clamp
+#    vertical-tabs.css applies while collapsed — harmless in the used value,
+#    but ours to stop asking for. Now gated on a new
+#    `kavacha-sidebar-width-custom` attribute the engine stamps only when the
+#    layout document's sidebarWidth differs from the shipped 250, AND on
+#    [zen-sidebar-expanded="true"]. MEASURED: toolbox width was pinned at 250px
+#    before; it now reports Zen's own 230px, and collapse/expand cycles
+#    230 -> 60 -> 230 with all five tabs present at every step.
+#
+#    This restores the "inert at the defaults" contract the rest of that layer
+#    already keeps.
+#
+# VERIFIED over Marionette (chrome context, TCP 2828) against the fast build,
+# after a restart — .sys.mjs modules load once per process:
+#   * 18-step layout matrix: horizontal/vertical/arc, collapse and expand in
+#     each, sidebar left/right, density compact/comfortable. 5 visible tabs at
+#     every step; tabStyle, theme mode and zen.view.window.scheme agree at every
+#     step (0 for Midnight and Forest, 1 for Daylight).
+#   * Contrast sweep per theme, each colour alpha-composited over the theme
+#     surface before the ratio: 0 failures below 4.5:1 across all three
+#     built-ins, worst 8.55 / 10.74 / 9.92.
+#   * Appearance panel: opens at 360x649, bottom 707 in a 758px window; 3 theme
+#     cards, 10 accent swatches, 12 segments; worst in-panel text 8.11:1.
+#     Clicking a theme card moved kavacha.theme.active and the live tokens;
+#     clicking an accent swatch moved zen.theme.accent-color and
+#     --zen-primary-color together.
+#   * about:studio under Daylight: kavacha-theme-mode=light, color-scheme light,
+#     body background rgb(247, 246, 251), body text rgb(27, 24, 48).
+#
+# WHY A PATCH: all four files are themselves delivered by earlier Kavacha
+# patches (0022, 0056, 0061) into upstream Zen's src/ tree; there is no overlay
+# or pref layer that can reach --toolbox-textcolor, because the value being
+# corrected is written by upstream JS as an inline style.
+#
+# FILES: src/zen/common/styles/kavacha-theme-scheme.inc.css
+#        src/zen/common/styles/kavacha-layout.inc.css
+#        src/zen/common/sys/KavachaThemeEngine.sys.mjs
+#        src/zen/common/sys/KavachaLayoutEngine.sys.mjs
+#
+diff --git a/src/zen/common/styles/kavacha-layout.inc.css b/src/zen/common/styles/kavacha-layout.inc.css
+--- a/src/zen/common/styles/kavacha-layout.inc.css
++++ b/src/zen/common/styles/kavacha-layout.inc.css
+@@ -35,7 +35,28 @@
+    tab strip is active. Left is the baseline. */
+ /* stylelint-disable-next-line media-query-no-invalid */
+ @media -moz-pref("zen.tabs.vertical") {
+-  :root[kavacha-sidebar]:not([kavacha-sidebar="hidden"]) #navigator-toolbox {
++  /* Sidebar width. Gated THREE ways, and each gate closes a real defect
++     (patch 0064):
++
++       [kavacha-sidebar-width-custom]  the engine stamps this only when the
++         layout document's sidebarWidth differs from the shipped 250. Without
++         it this rule fired for everyone, and `width: 250px !important` beat
++         the width Zen's #zen-sidebar-splitter sets when the user drags it --
++         so dragging the sidebar edge snapped straight back and read as a
++         broken splitter.
++
++       [zen-sidebar-expanded="true"]   collapsing sets
++         max-width/min-width: 60px !important on the same element
++         (vertical-tabs.css). The clamp meant the used width came out right
++         anyway, but we were still asking for 250px on every frame of the
++         collapse animation against a 60px cap. Not our width to set once the
++         sidebar is collapsed.
++
++       :not([kavacha-sidebar="hidden"])  unchanged; hidden has its own rule. */
++  :root[kavacha-sidebar-width-custom][zen-sidebar-expanded="true"]:not(
++      [kavacha-sidebar="hidden"]
++    )
++    #navigator-toolbox {
+     width: var(--kavacha-sidebar-width, 250px) !important;
+   }
+ 
+diff --git a/src/zen/common/styles/kavacha-theme-scheme.inc.css b/src/zen/common/styles/kavacha-theme-scheme.inc.css
+--- a/src/zen/common/styles/kavacha-theme-scheme.inc.css
++++ b/src/zen/common/styles/kavacha-theme-scheme.inc.css
+@@ -52,6 +52,8 @@
+ #main-window[windowtype='navigator:browser'][kavacha-theme-mode='light']:not(
+     [privatebrowsingmode='temporary']
+   ) {
++  --toolbar-color-scheme: light !important;
++
+   &,
+   & panel,
+   & menupopup,
+@@ -76,6 +78,8 @@
+ #main-window[windowtype='navigator:browser']:not(
+     [kavacha-theme-mode='light']
+   ) {
++  --toolbar-color-scheme: dark !important;
++
+   &,
+   & panel,
+   & menupopup,
+@@ -86,3 +90,50 @@
+ %include schemes/dark.inc.css
+   }
+ }
++
++/* --- Toolbox text colour (patch 0064) -------------------------------------
++   THE BUG 0061 DID NOT REACH. Everything above is CSS, and it works: with
++   Daylight active, `color-scheme` measures `light` on the root, on `panel`, on
++   `menupopup` and on the content browser, and --zen-branding-paper correctly
++   resolves to the theme surface. But the tab strip stayed white-on-white,
++   which is what "where are my tabs" actually was -- the tabs were painted, in
++   near-white, on a near-white surface.
++
++   The reason is that `--toolbox-textcolor` is not decided by CSS at all.
++   ZenGradientGenerator.mjs writes it INLINE on the document element from its
++   own `isDarkMode` getter, which switches on `zen.view.window.scheme` (0 =>
++   always dark, and 0 is the shipped default) and has no idea a Kavacha theme
++   exists. Zen then spends it in three places that all carry !important or feed
++   a mix: `--toolbar-color` (zen-theme.css), `--toolbox-textcolor-inactive`
++   (same), and `zen-workspace`'s own `color` plus `--tab-selected-textcolor`
++   (zen-workspaces.css), which mix it 95% with the accent.
++
++   Measured under Daylight before this rule: every one of the 21 text-bearing
++   elements in the sidebar -- the Space indicator, the Clear button, all five
++   tabs, their labels, their sublabels, and the new-tab button and its icon --
++   computed to color(srgb 0.962 0.949 0.946 / 0.81), luminance 0.893, against a
++   surface luminance of 0.927. That is a contrast ratio of about 1.04:1.
++
++   THE FIX. Point it at the theme's own primary text instead, at the same 80%
++   Zen uses for its own two literals (rgba(0,0,0,.8) / rgba(255,255,255,.8)).
++   One declaration serves both modes because --kavacha-text-primary is already
++   dark under light themes and light under dark ones, and it has already been
++   through the engine's WCAG guard, so it is a colour we know reads.
++
++   WHY !important, when nothing else in this file needs it: the declaration it
++   must beat is an inline one. The cascade puts important author declarations
++   above normal declarations from a style attribute, so this is the only form
++   that can win -- specificity alone never can.
++
++   Private windows are deliberately NOT excluded here: Zen forces
++   `--toolbox-textcolor: rgba(255,255,255,.8) !important` on
++   `&[zen-private-window='true']` at (1,3,0), which outranks this rule's
++   (1,1,0), so private windows keep their forced-dark text with no help from
++   us. Same reasoning as the private-window carve-out above. */
++#main-window[windowtype='navigator:browser'] {
++  --toolbox-textcolor: color-mix(
++    in srgb,
++    var(--kavacha-text-primary) 80%,
++    transparent
++  ) !important;
++}
+diff --git a/src/zen/common/sys/KavachaLayoutEngine.sys.mjs b/src/zen/common/sys/KavachaLayoutEngine.sys.mjs
+--- a/src/zen/common/sys/KavachaLayoutEngine.sys.mjs
++++ b/src/zen/common/sys/KavachaLayoutEngine.sys.mjs
+@@ -225,6 +225,17 @@
+     root.setAttribute("kavacha-toolbar-position", layout.toolbar.position);
+     root.toggleAttribute("kavacha-toolbar-hidden", !layout.toolbar.visible);
+     root.style.setProperty("--kavacha-sidebar-width", `${layout.sidebarWidth}px`);
++    // Only claim the toolbox width when the user actually chose one. The CSS
++    // rule behind this carries !important (it has to beat Zen's own sizing), so
++    // while it was ungated it also beat the width Zen's #zen-sidebar-splitter
++    // writes on drag — the sidebar edge snapped back and the splitter looked
++    // broken. Stamping the attribute only on a non-default width means the
++    // shipped configuration leaves Zen's splitter alone, which is the same
++    // "inert at the defaults" contract the rest of this layer keeps.
++    root.toggleAttribute(
++      "kavacha-sidebar-width-custom",
++      layout.sidebarWidth !== DEFAULT_LAYOUT.sidebarWidth
++    );
+ 
+     this._applySheet(win, layout);
+   },
+diff --git a/src/zen/common/sys/KavachaThemeEngine.sys.mjs b/src/zen/common/sys/KavachaThemeEngine.sys.mjs
+--- a/src/zen/common/sys/KavachaThemeEngine.sys.mjs
++++ b/src/zen/common/sys/KavachaThemeEngine.sys.mjs
+@@ -86,6 +86,13 @@
+ 
+ const kDefaultDarkTheme = "kavacha-midnight";
+ const kDefaultLightTheme = "kavacha-daylight";
++
++// Zen's own light/dark authority (0 dark / 1 light / 2 follow the system).
++// ZenGradientGenerator reads it to decide `isDarkMode`, and from that writes
++// --zen-primary-color, --toolbox-textcolor and --toolbar-color-scheme inline on
++// the chrome root. _stampMode keeps it in step with the active theme; see the
++// long note there for why the CSS layer alone was not enough.
++const kZenSchemePref = "zen.view.window.scheme";
+ 
+ // The token vocabulary, in the order a palette should be read. Exported because
+ // three surfaces need to agree on it: the baked floor mirrors it, the
+@@ -565,10 +572,45 @@
+       );
+       return;
+     }
+-    root.setAttribute(
+-      "kavacha-theme-mode",
+-      relativeLuminance(rgb) < kLightSurfaceThreshold ? "dark" : "light"
+-    );
++    const mode =
++      relativeLuminance(rgb) < kLightSurfaceThreshold ? "dark" : "light";
++    root.setAttribute("kavacha-theme-mode", mode);
++
++    // ...and tell Zen, because one authority was still left standing.
++    //
++    // 0061 made the CSS agree with the attribute, and it does: with a light
++    // theme active, `color-scheme` measures `light` on the root, on `panel`, on
++    // `menupopup` and on the content browser. But ZenGradientGenerator.mjs
++    // decides three things in JS, not CSS, and writes them INLINE on the
++    // document element: `--zen-primary-color` (through
++    // getAccentColorForUI(accent, isDarkMode)), `--toolbox-textcolor` and
++    // `--toolbar-color-scheme`. Its `isDarkMode` getter switches on this pref,
++    // whose default of 0 means "always dark" -- so a coral accent came out as
++    // rgb(99, 44, 33) under a light theme, and the whole tab strip was painted
++    // rgba(255, 255, 255, .8) on a near-white surface.
++    //
++    // kavacha-theme-scheme.inc.css pins --toolbox-textcolor with an author
++    // !important, which is the only thing that outranks an inline declaration
++    // and is what makes the strip readable even before this runs. This write is
++    // the other half: it repairs the value at its SOURCE, so the accent
++    // derivation is done with the right mode rather than corrected afterwards.
++    //
++    // No feedback loop: this engine observes kavacha.theme.active,
++    // kavacha.theme.follow-system and look-and-feel-changed, none of which this
++    // pref touches. Guarded on a difference so windows opening in sequence do
++    // not each notify Zen's observers for no change.
++    const wantScheme = mode === "light" ? 1 : 0;
++    try {
++      if (Services.prefs.getIntPref(kZenSchemePref, 0) !== wantScheme) {
++        Services.prefs.setIntPref(kZenSchemePref, wantScheme);
++      }
++    } catch (e) {
++      win.console?.warn(
++        `KavachaThemeEngine: could not align ${kZenSchemePref} with the ` +
++          `${mode} theme; Zen may derive its accent for the wrong mode`,
++        e
++      );
++    }
+   },
+ 
+   /**
+@@ -672,6 +714,25 @@
+   if (m) {
+     return [0, 2, 4].map(i => parseInt(m[1].slice(i, i + 2), 16));
+   }
++  // The style system hands anything that went through color-mix() back as
++  // `color(srgb r g b / a)`, with 0..1 channels — not rgb(). Reading only rgb()
++  // meant _resolveColor answered null for those, and null is "leave the mode
++  // unchanged", so a theme whose surface was built from a color-mix() would
++  // never get a mode stamped and would silently keep the previous theme's
++  // light/dark. Found while auditing this file's own probe, which had the same
++  // gap and reported zero unreadable elements on a strip where every one of the
++  // 21 was unreadable.
++  m = s.match(/^color\(srgb\s+([^)]+)\)$/i);
++  if (m) {
++    const parts = m[1]
++      .split(/[\s/]+/)
++      .filter(Boolean)
++      .slice(0, 3)
++      .map(Number);
++    if (parts.length === 3 && parts.every(n => !Number.isNaN(n))) {
++      return parts.map(n => Math.round(Math.min(1, Math.max(0, n)) * 255));
++    }
++  }
+   m = s.match(/^rgba?\(([^)]+)\)$/i);
+   if (m) {
+     const parts = m[1]

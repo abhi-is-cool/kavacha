@@ -1,0 +1,116 @@
+# Patch 0065 — compact mode is an appearance setting, and it had no way back.
+#
+# SYMPTOM (user, 2026-08-03): a screenshot of an empty window — a coloured frame
+# around a dark rectangle — with "this is what i see when i launch it".
+#
+# NOT A RENDERING BUG. Reproduced from the reporter's own profile: the window
+# was in Zen's compact mode. Measured at startup, `navigator-toolbox` sits at
+# x = -247 (width 252, i.e. entirely off-screen) with `visibility: hidden` on
+# the tab strip and on the menu button. The tabs, the sidebar and the toolbar
+# were all present and correct the whole time. The dark rectangle is the
+# selected tab, which was about:blank; it paints rgb(32,32,32) because Firefox's
+# own "Website appearance" (browser.theme.content-theme) defaults to following
+# the OS and the host was in dark mode. Stock Firefox does the same. The theme
+# engine measured healthy throughout: Daylight active, kavacha-theme-mode light,
+# color-scheme light on the root, surface #F7F6FB, 0064's toolbox text correct.
+#
+# HOW THE USER GOT THERE, AND WHY THEY COULD NOT GET BACK. `zen-toggle-compact
+# -mode` sits in `zen-sidebar-top-buttons` — it is the "collapse button" from
+# the 0064 report. Zen persists the state through
+# `zen.view.compact.enable-at-startup`, a pref shipped `false` and commented
+# "Do not edit manually", so one click makes every subsequent launch look empty.
+# Recovery is to hover the window edge, or to know that the palette carries
+# `zen-action-toggle-compact-mode`. Neither is discoverable from an empty
+# window, and patch 0063 — which exists precisely so that appearance has ONE
+# home — did not carry a compact-mode control at all. That is the defect this
+# patch fixes: not compact mode, its irreversibility.
+#
+# THE FIX. One more row in the Appearance panel's layout section, reading and
+# writing the live per-window `gZenCompactModeManager.preference` rather than
+# the pref (the pref is Zen's startup persistence; `preference` is the state the
+# window is actually in, and Zen's setter updates the pref itself). It is
+# deliberately NOT added to `kLayoutControls`, because that list mirrors
+# KavachaLayoutEngine's keys and compact mode is not one of them.
+#
+# WHY THIS WORKS FROM AN EMPTY WINDOW: verified that the panel opens with its
+# anchor hidden — state "open", 360x685 at (82,50) — so once the user reaches
+# the panel by any route, the way back is visible and one click away.
+#
+# CORRECTION TO 0061 AND 0064, recorded here because a patch may not rewrite an
+# applied one: both headers state that under Daylight `color-scheme` computes
+# `light` on the root, on `panel`, on `menupopup` AND on `browser[type=content]`.
+# The first three hold. The fourth does not and never did — the content browser
+# computes `dark`. The rule matches (`matches(...)` is true, and the mode
+# attribute is on #main-window); content simply is not decided by that cascade,
+# it follows browser.theme.content-theme. Websites following the OS rather than
+# the browser theme is correct behaviour and is being kept, so nothing is fixed
+# here — but the claim was measured with a selector rather than with
+# gBrowser.selectedBrowser, and it was wrong. See VERIFICATION 0061.
+#
+# Overlay-only would not do: KavachaAppearancePanel.sys.mjs is Kavacha's own
+# module inside the packaged tree, and the strings are Fluent ids in the shipped
+# locale file. Both live under src/ and locales/, so this is a patch.
+#
+# Upstream files touched:
+#   src/zen/common/sys/KavachaAppearancePanel.sys.mjs
+#   locales/en-US/browser/browser/zen-command-palette.ftl
+
+--- a/src/zen/common/sys/KavachaAppearancePanel.sys.mjs
++++ b/src/zen/common/sys/KavachaAppearancePanel.sys.mjs
+@@ -500,6 +500,42 @@
+           ),
+       });
+       this._select(row, layout[control.key]);
++      host.appendChild(row);
++    }
++
++    // Compact mode is Zen's, not the layout engine's, which is exactly why it
++    // was missing here — and it is the one appearance setting able to make the
++    // browser look broken. It slides the whole toolbox off-screen (measured at
++    // x=-272 in a 1470px window) with `visibility: hidden` on every child, and
++    // Zen persists it through `zen.view.compact.enable-at-startup`, so it
++    // survives a restart. A user who turns it on and does not know to hover the
++    // window edge sees an empty frame on every launch, with no way back from
++    // the panel this patch series made the single home for appearance.
++    //
++    // Read from the live per-window manager rather than the pref: the pref is
++    // Zen's startup persistence (marked "do not edit manually"), while
++    // `preference` is the attribute the window is actually in.
++    const compact = win.gZenCompactModeManager;
++    if (compact) {
++      const row = this._segmented(win, {
++        labelId: "kavacha-appearance-layout-compact",
++        labelFallback: "Compact mode",
++        values: [
++          ["off", "kavacha-appearance-compact-off", "Off"],
++          ["on", "kavacha-appearance-compact-on", "On"],
++        ],
++        onSelect: value => {
++          try {
++            compact.preference = value === "on";
++          } catch (e) {
++            win.console?.error(
++              "KavachaAppearancePanel: compact mode toggle failed",
++              e
++            );
++          }
++        },
++      });
++      this._select(row, compact.preference ? "on" : "off");
+       host.appendChild(row);
+     }
+   },
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -98,6 +98,11 @@
+ kavacha-appearance-sidebar-left = Left
+ kavacha-appearance-sidebar-right = Right
+ kavacha-appearance-sidebar-hidden = Hidden
++# Zen's compact mode, surfaced here by patch 0065: it hides the whole toolbox
++# and persists across restarts, so it needs a way back that is not a hover.
++kavacha-appearance-layout-compact = Compact mode
++kavacha-appearance-compact-off = Off
++kavacha-appearance-compact-on = On
+ kavacha-appearance-all-settings = All appearance settings…
+ 
+ # Restore Archived Space command (patch 0032)

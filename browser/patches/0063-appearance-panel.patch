@@ -1,0 +1,1294 @@
+# Patch 0063 — the Appearance panel: one home for how Kavacha looks, and the
+# first place in the product that shows you a colour.
+#
+# SYMPTOM (user, 2026-08-03): "everything about appearance customization and
+# theme is not intuitive. make a new menu just for it in the settings menu, and
+# find all theme related settings and put it there ... the color pallete is just
+# missing, so please add that in the menu as well."
+#
+# WHAT WAS THERE. Appearance was spread across five surfaces and none of them
+# was the obvious one:
+#   * the ⚙ menu's generated Appearance section — nine command rows, the
+#     longest section in the menu and the least self-explanatory ("Cycle
+#     Interface Density" is a verb where the user wants a choice);
+#   * about:preferences#paneKavachaAppearance — theme dropdown, accent picker;
+#   * about:preferences#paneKavachaCustomization — layout, in a DIFFERENT pane;
+#   * about:studio — theme cards and the CSS editor;
+#   * Zen's own Look and Feel pane.
+# And nowhere in the menu was there any colour at all. The accent — the control
+# people look for first — was two clicks deep in Settings, and themes were a
+# list of names you could not see before choosing.
+#
+# WHAT THIS IS. A sibling <panel> anchored to the same ⚙ button, opened from an
+# "Appearance" row pinned under Settings, containing:
+#   * Dark / Light / Auto. Kavacha had no such control. Light and dark used to
+#     be a side effect of which theme you happened to pick, while Zen's
+#     zen.view.window.scheme pref pointed somewhere else entirely; patch 0061
+#     made the theme authoritative and this is where you steer it. Auto follows
+#     the OS, and choosing a theme by hand ends Auto rather than silently
+#     losing to it at the next appearance change.
+#   * Theme cards painted from each theme's OWN tokens — five bands: surface,
+#     elevated surface, active tab, accent, text. This is "the colour palette is
+#     missing", literally. A card is badged when patch 0061's contrast check
+#     says the theme cannot be read: the engine repairs such a theme on apply,
+#     and silently changing someone's colours without telling them is its own
+#     bug.
+#   * The accent palette, inline: system + the eight Kavacha swatches + a
+#     custom colour. Those eight were a literal array inside ZenWelcome.mjs;
+#     they are now one exported constant, because two copies of a palette drift.
+#   * Tab style, density, sidebar, as segmented controls over
+#     KavachaLayoutEngine.
+#   * Everything else the registry holds in the Appearance domain, still
+#     GENERATED — so a marketplace component or plugin that registers an
+#     appearance command still appears without anyone editing this file. The
+#     four commands the panel replaces with a real control are filtered out;
+#     they stay registered, so the palette still offers them.
+#
+# NOT A panelmultiview SUBVIEW: no Kavacha panel uses one, and hide-then-open on
+# a shared anchor is the shipped idiom (KavachaWidgetHost.openDashboard).
+#
+# THREE DEFECTS FIXED IN PASSING, all in surfaces this panel supersedes:
+#   * "Use system accent" looked like it did nothing. _renderAccent only
+#     assigned the input when the pref matched /^#[0-9a-fA-F]{6}$/, and the
+#     reset CLEARS the pref — so the guard failed and the swatch kept showing
+#     the colour just cleared. Now resolves the system accent and shows that.
+#   * The Settings theme menulist could duplicate entries or go blank.
+#     _renderThemes emptied the popup and THEN awaited once per theme, while its
+#     own pref observer re-entered it; two runs interleaved remove() and
+#     appendChild(). Now resolves first behind a generation guard, swaps once,
+#     and reads the active id after the awaits rather than before.
+#   * Arc was unreachable outside about:studio. The palette's tab-layout command
+#     was a two-way toggle written before patch 0058 and the Customization pane
+#     listed two of three options, so an Arc user who touched either was
+#     silently dropped to vertical. The command cycles three now and the pane
+#     has the third menuitem.
+#
+# HEIGHT: the panel measures the space below its anchor rather than using vh.
+# MEASURED 2026-08-03: inside a XUL popup `100vh` resolves to 808px in a 758px
+# window — the popup's viewport is not the window's — so the menu's existing
+# `calc(100vh - 10rem)` yields 648px where it means ~598. That is the drift
+# patch 0060's D1 note warns about ("re-measure the ANCHOR rather than the
+# overhang"). A popupshown correction takes off any residual overhang, so the
+# panel-chrome constant is a seed rather than a promise.
+#
+# WHY NOT A PREF OR AN OVERLAY: the panel is chrome UI built from a system
+# module against the command registry and both engines; ui/ and customization/
+# reach none of them.
+#
+# VERIFIED (Marionette, 758px window, buildID 20260803):
+#   * Menu at rest: 293px, no scrolling, pinned rows [Settings, Appearance],
+#     sections [Navigation, Organization, Productivity, Privacy, Automation] —
+#     Appearance no longer among them. Filter "appear" finds the row; arrow keys
+#     still walk filter -> Settings -> Appearance (patch 0060 regression pass).
+#   * Panel: 360x649 at the shipped three themes, bottom 743 in a 758 window,
+#     no scrolling. With a fourth theme installed it scrolls rather than
+#     overhanging.
+#   * Cards paint the real palettes: Midnight rgb(11,9,18)…, Daylight
+#     rgb(247,246,251)…, i.e. the light theme's card is light.
+#   * Clicking the Daylight card: kavacha.theme.active -> kavacha-daylight,
+#     mode -> light, --kavacha-surface -> #F7F6FB, color-scheme -> light, live.
+#   * Clicking an accent swatch: zen.theme.accent-color and --zen-primary-color
+#     both -> #4AA3DF.
+#   * Layout rows show all three tab styles with the active one pressed.
+#
+# FILES: src/zen/common/sys/KavachaAppearancePanel.sys.mjs (new);
+# src/zen/common/sys/KavachaMenu.sys.mjs;
+# src/zen/common/sys/KavachaCommandRegistry.sys.mjs; src/zen/common/moz.build;
+# src/zen/common/styles/kavacha-menu.inc.css;
+# src/browser/components/preferences/kavacha-appearance.js;
+# src/browser/components/preferences/kavachaCustomization.inc.xhtml;
+# locales/en-US/browser/browser/zen-command-palette.ftl;
+# locales/en-US/browser/browser/preferences/zen-preferences.ftl.
+# NOTE the two .ftl files: `surfer import` does not copy locales/, so this patch
+# needs sync_locales() (build/bootstrap.sh) — i.e. `bootstrap.sh fast` or
+# `build`, never the bare `ui` target.
+diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+index 5204003..91d51a5 100644
+--- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
++++ b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+@@ -430,6 +430,8 @@ kavacha-customization-tabstyle-horizontal =
+     .label = Horizontal
+ kavacha-customization-tabstyle-vertical =
+     .label = Vertical
++kavacha-customization-tabstyle-arc =
++    .label = Arc
+ kavacha-customization-sidebar-label = Sidebar position
+ kavacha-customization-sidebar-left =
+     .label = Left
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index a5dcc13..e0f5e4c 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -71,6 +71,35 @@ kavacha-menu-settings = Settings
+ kavacha-menu-filter-placeholder = Search settings and commands
+ kavacha-menu-no-results = Nothing matches that
+ 
++# Kavacha patch 0063 — the Appearance panel. Replaces the menu's generated
++# Appearance section with one place that shows the colours.
++kavacha-menu-appearance = Appearance
++kavacha-appearance-title = Appearance
++kavacha-appearance-mode-dark = Dark
++kavacha-appearance-mode-light = Light
++# "Auto" follows the operating system's light/dark setting.
++kavacha-appearance-mode-system = Auto
++kavacha-appearance-theme-heading = Theme
++kavacha-appearance-accent-heading = Accent
++kavacha-appearance-accent-system = Use the system accent
++kavacha-appearance-accent-custom = Choose a custom accent
++# Shown on a theme whose text does not meet the WCAG AA contrast minimum
++# against its own background.
++kavacha-appearance-low-contrast = Low contrast
++kavacha-appearance-layout-tabs = Tabs
++kavacha-appearance-tabs-horizontal = Horizontal
++kavacha-appearance-tabs-vertical = Vertical
++kavacha-appearance-tabs-arc = Arc
++kavacha-appearance-layout-density = Density
++kavacha-appearance-density-compact = Compact
++kavacha-appearance-density-normal = Normal
++kavacha-appearance-density-comfortable = Roomy
++kavacha-appearance-layout-sidebar = Sidebar
++kavacha-appearance-sidebar-left = Left
++kavacha-appearance-sidebar-right = Right
++kavacha-appearance-sidebar-hidden = Hidden
++kavacha-appearance-all-settings = All appearance settings…
++
+ # Restore Archived Space command (patch 0032)
+ kavacha-action-restore-space = Restore Archived Space
+ kavacha-action-space-recommendations = Recommended Extensions for This Space
+diff --git a/src/browser/components/preferences/kavacha-appearance.js b/src/browser/components/preferences/kavacha-appearance.js
+index 249b85a..63c020c 100644
+--- a/src/browser/components/preferences/kavacha-appearance.js
++++ b/src/browser/components/preferences/kavacha-appearance.js
+@@ -26,6 +26,9 @@ const kNewtabFloatingPref = "zen.urlbar.replace-newtab";
+ 
+ var gKavachaAppearance = {
+   _initted: false,
++  // Bumped by every _renderThemes() run so a slower one cannot overwrite a
++  // faster one's popup. See the note there.
++  _themeGeneration: 0,
+ 
+   init() {
+     if (this._initted) {
+@@ -76,14 +79,18 @@ var gKavachaAppearance = {
+     Services.prefs.removeObserver(kNewtabFloatingPref, this);
+   },
+ 
++  // Rebuilt whenever kavacha.theme.active changes -- including by this pane's
++  // own menulist, whose write comes straight back through the observer. The
++  // previous version emptied the popup and THEN awaited resolveTheme() once per
++  // theme, so a second run could start mid-loop: the two interleaved
++  // remove()/appendChild() calls and left duplicate entries, or a `.value` that
++  // matched no child and rendered as a blank menulist. Resolve everything
++  // first, behind a generation guard, then swap the popup's contents in one go.
+   async _renderThemes() {
++    const generation = ++this._themeGeneration;
+     try {
+       const ids = await KavachaThemeEngine.listThemes();
+-      const active = KavachaThemeEngine.activeThemeId;
+-      const popup = this._themeSelect.menupopup;
+-      while (popup.firstChild) {
+-        popup.firstChild.remove();
+-      }
++      const entries = [];
+       for (const id of ids) {
+         let name = id;
+         try {
+@@ -91,12 +98,26 @@ var gKavachaAppearance = {
+         } catch (e) {
+           // Unreadable package — still offer its id so it can be selected.
+         }
++        entries.push({ id, name });
++      }
++      // A newer render started while we were reading; it owns the popup now.
++      if (generation !== this._themeGeneration) {
++        return;
++      }
++      const popup = this._themeSelect.menupopup;
++      while (popup.firstChild) {
++        popup.firstChild.remove();
++      }
++      for (const { id, name } of entries) {
+         const item = document.createXULElement("menuitem");
+         item.setAttribute("value", id);
+         item.setAttribute("label", name);
+         popup.appendChild(item);
+       }
+-      this._themeSelect.value = active;
++      // Read the active id AFTER the awaits: it may have changed during them,
++      // and setting a stale value here is what leaves the control disagreeing
++      // with the browser.
++      this._themeSelect.value = KavachaThemeEngine.activeThemeId;
+     } catch (e) {
+       console.error("KavachaAppearance: failed to list themes", e);
+     }
+@@ -112,11 +133,49 @@ var gKavachaAppearance = {
+ 
+   _renderAccent() {
+     const raw = Services.prefs.getStringPref(kAccentPref, "");
+-    // <input type="color"> only accepts #rrggbb; system keywords (AccentColor)
+-    // or gradients fall back to the input's own default swatch.
++    // <input type="color"> only accepts #rrggbb, so a system keyword
++    // (AccentColor) or a gradient cannot be shown literally.
+     if (/^#[0-9a-fA-F]{6}$/.test(raw)) {
+       this._accentInput.value = raw.toLowerCase();
++      return;
++    }
++    // ...but the guard used to end here, and "Use system accent" clears the
++    // pref -- so `raw` became "", the test failed, and the input kept showing
++    // the colour that had just been cleared. Clicking Reset did the right thing
++    // and looked like it did nothing at all.
++    //
++    // Resolve the system accent through the style system and show THAT, which
++    // is both what the browser will use and a real #rrggbb the input accepts.
++    this._accentInput.value = this._resolveSystemAccent();
++  },
++
++  // AccentColor is a CSS system colour; getComputedStyle is the only thing that
++  // knows what it currently is. The literal is Kavacha's documented
++  // --kavacha-accent-fallback, used only if the resolve fails.
++  _resolveSystemAccent() {
++    try {
++      const probe = document.createElementNS(
++        "http://www.w3.org/1999/xhtml",
++        "span"
++      );
++      probe.style.display = "none";
++      probe.style.color = "AccentColor";
++      document.documentElement.appendChild(probe);
++      const rgb = window.getComputedStyle(probe).color;
++      probe.remove();
++      const m = rgb.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/);
++      if (m) {
++        return (
++          "#" +
++          [m[1], m[2], m[3]]
++            .map(n => Number(n).toString(16).padStart(2, "0"))
++            .join("")
++        );
++      }
++    } catch (e) {
++      // Fall through to the documented fallback.
+     }
++    return "#8b7bd8";
+   },
+ 
+   _onAccentChange() {
+diff --git a/src/browser/components/preferences/kavachaCustomization.inc.xhtml b/src/browser/components/preferences/kavachaCustomization.inc.xhtml
+index 8cf7eb9..56350d0 100644
+--- a/src/browser/components/preferences/kavachaCustomization.inc.xhtml
++++ b/src/browser/components/preferences/kavachaCustomization.inc.xhtml
+@@ -21,6 +21,10 @@
+       <menupopup>
+         <menuitem value="horizontal" data-l10n-id="kavacha-customization-tabstyle-horizontal"/>
+         <menuitem value="vertical" data-l10n-id="kavacha-customization-tabstyle-vertical"/>
++        <!-- Arc (patch 0058) was missing here, so a user on Arc opened this
++             pane, saw a menulist matching none of its options, and lost the
++             setting the moment they touched it. -->
++        <menuitem value="arc" data-l10n-id="kavacha-customization-tabstyle-arc"/>
+       </menupopup>
+     </menulist>
+   </hbox>
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+index d1df7af..51eaa28 100644
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -3,6 +3,7 @@
+ # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ 
+ EXTRA_JS_MODULES += [
++  "sys/KavachaAppearancePanel.sys.mjs",
+   "sys/KavachaCommandRegistry.sys.mjs",
+   "sys/KavachaLayoutEngine.sys.mjs",
+   "sys/KavachaMarkdown.sys.mjs",
+diff --git a/src/zen/common/styles/kavacha-menu.inc.css b/src/zen/common/styles/kavacha-menu.inc.css
+index 4660583..813da61 100644
+--- a/src/zen/common/styles/kavacha-menu.inc.css
++++ b/src/zen/common/styles/kavacha-menu.inc.css
+@@ -234,6 +234,227 @@
+   overflow-x: hidden;
+ }
+ 
++/* ==========================================================================
++   The Appearance panel (patch 0063). Opened from the pinned Appearance row,
++   anchored to the same button as the menu.
++
++   Every colour below is a --kavacha-* token with a literal Midnight fallback,
++   which is this file's existing convention and, more to the point, the reason
++   this panel can show you a light theme without going white-on-white. Hardcoded
++   hex is what patch 0061 spent its time removing; do not add any here.
++   ========================================================================== */
++
++#kavacha-appearance-panel {
++  --panel-background: var(--kavacha-surface-elevated, #16131f);
++  --panel-border-color: var(--kavacha-border, #322b4a);
++  --panel-color: var(--kavacha-text-primary, #f6f4fc);
++  /* Wide enough for three theme cards on one row and the ten accent swatches
++     on another, which is what decides this number -- narrower and the palette
++     wraps into something that no longer reads as a palette. */
++  min-width: 360px;
++  max-width: 360px;
++  padding: 10px;
++}
++
++.kavacha-appearance-body {
++  display: flex;
++  flex-direction: column;
++  gap: 4px;
++  /* The panel measures the space below its anchor and sets this property on
++     open (see KavachaAppearancePanel.open). The calc() fallback is only for a
++     panel shown some other way, and is deliberately conservative: `100vh`
++     inside a XUL popup is the POPUP's viewport, measured at 808px in a 758px
++     window, so a vh-based cap over-estimates the room available. */
++  max-height: var(--kavacha-appearance-max, calc(100vh - 14rem));
++  overflow-y: auto;
++  overflow-x: hidden;
++}
++
++.kavacha-appearance-heading {
++  margin-block: 10px 2px;
++  font-size: 11px;
++  font-weight: 600;
++  text-transform: uppercase;
++  letter-spacing: 0.04em;
++  color: var(--kavacha-text-secondary, #cabfe6);
++}
++
++/* --- Segmented controls (mode, tabs, density, sidebar) ------------------- */
++.kavacha-appearance-row {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  padding-block: 3px;
++}
++
++.kavacha-appearance-row-label {
++  flex: 0 0 62px;
++  font-size: 12px;
++  color: var(--kavacha-text-secondary, #cabfe6);
++}
++
++.kavacha-appearance-segments {
++  display: flex;
++  flex: 1;
++  padding: 2px;
++  border-radius: 8px;
++  background: var(--kavacha-surface-sunken, #060409);
++}
++
++.kavacha-appearance-segment {
++  flex: 1;
++  padding: 5px 6px;
++  appearance: none;
++  border: none;
++  border-radius: 6px;
++  background: transparent;
++  color: var(--kavacha-text-secondary, #cabfe6);
++  font: inherit;
++  font-size: 12px;
++  cursor: pointer;
++}
++
++.kavacha-appearance-segment:hover {
++  background: var(
++    --kavacha-tab-hover-background,
++    color-mix(in srgb, currentColor 10%, transparent)
++  );
++}
++
++/* aria-pressed is both the accessible state and the selected style, so the
++   two cannot drift apart. */
++.kavacha-appearance-segment[aria-pressed="true"] {
++  background: var(--kavacha-tab-active-background, #241d3a);
++  color: var(--kavacha-text-primary, #f6f4fc);
++}
++
++.kavacha-appearance-segment:focus-visible {
++  outline: 2px solid var(--kavacha-accent, var(--kavacha-accent-fallback));
++  outline-offset: -2px;
++}
++
++.kavacha-appearance-mode {
++  margin-block-end: 2px;
++}
++
++/* --- Theme cards: the palette ------------------------------------------- */
++.kavacha-appearance-themes {
++  display: grid;
++  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
++  gap: 8px;
++}
++
++.kavacha-appearance-card {
++  display: flex;
++  flex-direction: column;
++  gap: 5px;
++  padding: 6px;
++  appearance: none;
++  border: 1px solid var(--kavacha-border, #322b4a);
++  border-radius: 10px;
++  background: var(--kavacha-surface, #0b0912);
++  color: var(--kavacha-text-primary, #f6f4fc);
++  font: inherit;
++  text-align: start;
++  cursor: pointer;
++}
++
++.kavacha-appearance-card:hover {
++  border-color: var(--kavacha-accent, var(--kavacha-accent-fallback));
++}
++
++.kavacha-appearance-card[aria-pressed="true"] {
++  border-color: var(--kavacha-accent, var(--kavacha-accent-fallback));
++  box-shadow: inset 0 0 0 1px
++    var(--kavacha-accent, var(--kavacha-accent-fallback));
++}
++
++.kavacha-appearance-card:focus-visible {
++  outline: 2px solid var(--kavacha-accent, var(--kavacha-accent-fallback));
++  outline-offset: 1px;
++}
++
++/* Five bands of the theme's own colours. The bands are painted from inline
++   styles set by the panel, not from tokens here: they must show the colours of
++   the theme on the card, not the colours of the theme you are wearing. */
++.kavacha-appearance-swatch {
++  display: flex;
++  height: 26px;
++  border-radius: 6px;
++  overflow: hidden;
++  /* A theme whose surface matches the card's would otherwise have no edge. */
++  border: 1px solid var(--kavacha-border, #322b4a);
++}
++
++.kavacha-appearance-band {
++  flex: 1;
++}
++
++.kavacha-appearance-card-name {
++  font-size: 12px;
++  line-height: 1.2;
++}
++
++/* Shown when the engine's WCAG check says this theme's text cannot be read on
++   its own surface. The engine repairs it on apply; this says so beforehand. */
++.kavacha-appearance-warn {
++  font-size: 10px;
++  color: var(--kavacha-warning, #e8a33d);
++}
++
++/* --- Accent palette ------------------------------------------------------ */
++.kavacha-appearance-accents {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 7px;
++  padding-block: 2px;
++}
++
++.kavacha-appearance-accent {
++  width: 24px;
++  height: 24px;
++  padding: 0;
++  appearance: none;
++  border: 1px solid var(--kavacha-border, #322b4a);
++  border-radius: 50%;
++  cursor: pointer;
++}
++
++.kavacha-appearance-accent[aria-pressed="true"] {
++  outline: 2px solid var(--kavacha-text-primary, #f6f4fc);
++  outline-offset: 2px;
++}
++
++.kavacha-appearance-accent:focus-visible {
++  outline: 2px solid var(--kavacha-accent, var(--kavacha-accent-fallback));
++  outline-offset: 2px;
++}
++
++/* "Use the system accent" paints itself with the system colour, so the button
++   is a preview of what choosing it does. */
++.kavacha-appearance-accent-system {
++  background: AccentColor;
++}
++
++.kavacha-appearance-accent-custom {
++  background: var(--kavacha-surface-sunken, #060409);
++  /* Strip the native colour input's chrome so it sits in the row as one more
++     swatch rather than as a button with a swatch inside it. */
++  padding: 2px;
++  inline-size: 24px;
++  block-size: 24px;
++}
++
++.kavacha-appearance-layout {
++  margin-block-start: 10px;
++}
++
++.kavacha-appearance-footer {
++  margin-block-start: 10px;
++  padding-block-start: 6px;
++  border-block-start: 1px solid var(--kavacha-border, #322b4a);
++}
++
+ /* ==========================================================================
+    First-launch coach mark (patch 0056). Shown once per profile, pointing at
+    the menu button. Sized so it reads as an aside, not a dialog.
+diff --git a/src/zen/common/sys/KavachaAppearancePanel.sys.mjs b/src/zen/common/sys/KavachaAppearancePanel.sys.mjs
+new file mode 100644
+index 0000000..a855364
+--- /dev/null
++++ b/src/zen/common/sys/KavachaAppearancePanel.sys.mjs
+@@ -0,0 +1,613 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// The Appearance panel (patch 0063) — one home for how Kavacha looks.
++//
++// WHY. Appearance was spread across five places and none of them was the
++// obvious one: nine command rows in the ⚙ menu's generated Appearance section,
++// a theme dropdown and accent picker in about:preferences#paneKavachaAppearance,
++// layout controls in a DIFFERENT preferences pane, the Studio at about:studio,
++// and Zen's own Look and Feel pane. Worse, the ⚙ menu showed no colour at all:
++// the accent — the control people look for first — was two clicks deep in
++// Settings, and the theme list was names with nothing to look at. You could not
++// see a theme before choosing it.
++//
++// So this panel gathers the lot, and shows the colours:
++//
++//   * Dark / Light / Auto, which Kavacha had no control for at all. Light and
++//     dark used to be a side effect of which theme you happened to pick, while
++//     Zen's own `zen.view.window.scheme` pref pointed somewhere else entirely
++//     (patch 0061 made the theme authoritative; this is where you steer it).
++//   * Theme cards painted from each theme's OWN tokens, so the palette is
++//     visible before you commit — and badged when patch 0061's contrast check
++//     says the theme cannot be read.
++//   * The accent palette, inline. Same eight swatches as the welcome flow,
++//     which now share one exported constant instead of two literal arrays.
++//   * Tab style, density and sidebar, over KavachaLayoutEngine.
++//   * Everything else the registry has in the Appearance domain, still
++//     GENERATED — so a marketplace component or a plugin that registers an
++//     appearance command still appears here without anyone editing this file.
++//
++// SHAPE. A sibling <panel> in mainPopupSet anchored to #kavacha-menu-button,
++// which is the shipped Kavacha idiom (KavachaWidgetHost.openDashboard). Not a
++// panelmultiview subview: no Kavacha panel uses one, and hide-then-open is what
++// the menu already does for the dashboard.
++
++import {
++  KavachaCommandRegistry,
++  KavachaCommandDomain,
++} from "resource:///modules/KavachaCommandRegistry.sys.mjs";
++
++import {
++  KavachaThemeEngine,
++  KAVACHA_ACCENT_SWATCHES,
++} from "resource:///modules/KavachaThemeEngine.sys.mjs";
++
++import { KavachaLayoutEngine } from "resource:///modules/KavachaLayoutEngine.sys.mjs";
++
++const kHTML = "http://www.w3.org/1999/xhtml";
++const kPanelId = "kavacha-appearance-panel";
++const kAnchorId = "kavacha-menu-button";
++const kAccentPref = "zen.theme.accent-color";
++
++// Inputs to the measured height cap in open(). The cap applies to the SCROLLING
++// BODY, so the panel's own padding and border have to come out of the budget
++// too -- leaving them in is how a cap that looks right still overhangs by
++// exactly the chrome you forgot (see the panel padding in kavacha-menu.inc.css).
++const kAnchorGap = 6; // panel offset below the button
++// Clearance kept above the window bottom. 12 rather than something rounder
++// because it is the difference between the shipped three-theme panel fitting a
++// 758px window and scrolling it: measured, that panel's body is 595px and the
++// budget at 12px of margin is 603px. Bigger margins look tidier on paper and
++// cost a scrollbar on a laptop.
++const kBottomMargin = 12;
++// The panel's own furniture around the scrolling body: 10px padding each side,
++// the border, and the arrow box. MEASURED 2026-08-03 at 54px (panel 666px
++// around a 612px body); 56 rounds it up. This is a seed, not a promise — see
++// the popupshown correction in _ensurePanel, which fixes it if it is ever wrong.
++const kPanelChrome = 56;
++
++const lazy = {};
++
++// Same Fluent bundle the menu and the palette use.
++ChromeUtils.defineLazyGetter(lazy, "l10n", () => {
++  return new Localization(["browser/zen-command-palette.ftl"], true);
++});
++
++function _label(id, fallback) {
++  try {
++    return lazy.l10n.formatValueSync(id) || fallback;
++  } catch (e) {
++    return fallback;
++  }
++}
++
++// The swatch bands on a theme card, in the order they read as a palette:
++// the page, the raised surface, the selected tab, the accent, the text.
++// Deliberately five rather than the whole eighteen — a card is a preview, and
++// eighteen 4px bands is a barcode, not a palette.
++const kSwatchTokens = [
++  "surface",
++  "surfaceElevated",
++  "tabActiveBackground",
++  "accent",
++  "textPrimary",
++];
++
++// Mirrors KavachaLayoutEngine's kTabStyles / kDensities / kSidebars. Not
++// imported because the engine does not export them; if it grows a value, this
++// list and the engine's must both learn it.
++const kLayoutControls = [
++  {
++    key: "tabStyle",
++    labelId: "kavacha-appearance-layout-tabs",
++    fallback: "Tabs",
++    values: [
++      ["horizontal", "kavacha-appearance-tabs-horizontal", "Horizontal"],
++      ["vertical", "kavacha-appearance-tabs-vertical", "Vertical"],
++      // Arc was reachable ONLY from about:studio: the palette's tab-layout
++      // command toggled two ways and the Customization pane listed two options,
++      // so anyone on Arc who touched either was silently dropped to vertical.
++      ["arc", "kavacha-appearance-tabs-arc", "Arc"],
++    ],
++  },
++  {
++    key: "density",
++    labelId: "kavacha-appearance-layout-density",
++    fallback: "Density",
++    values: [
++      ["compact", "kavacha-appearance-density-compact", "Compact"],
++      ["normal", "kavacha-appearance-density-normal", "Normal"],
++      ["comfortable", "kavacha-appearance-density-comfortable", "Comfortable"],
++    ],
++  },
++  {
++    key: "sidebar",
++    labelId: "kavacha-appearance-layout-sidebar",
++    fallback: "Sidebar",
++    values: [
++      ["left", "kavacha-appearance-sidebar-left", "Left"],
++      ["right", "kavacha-appearance-sidebar-right", "Right"],
++      ["hidden", "kavacha-appearance-sidebar-hidden", "Hidden"],
++    ],
++  },
++];
++
++// Registry commands this panel replaces with a real control. They stay
++// registered — the command palette still offers them, and they are still how a
++// keyboard shortcut reaches these settings — but listing them again under
++// "More" beneath the segmented control that does the same thing better would
++// be exactly the clutter this panel exists to remove.
++const kSupersededCommands = new Set([
++  "kavacha-action-toggle-tab-layout",
++  "kavacha-action-cycle-sidebar",
++  "kavacha-action-cycle-density",
++  "kavacha-action-switch-theme",
++]);
++
++export const KavachaAppearancePanel = {
++  // Bumped on every build, so an async fill that resolves after the panel was
++  // closed and reopened cannot write into the new DOM.
++  _generation: 0,
++
++  /** Open (building fresh) against this window's menu button. */
++  open(win) {
++    const panel = this._ensurePanel(win);
++    const anchor = win.document.getElementById(kAnchorId);
++    if (!panel || !anchor) {
++      return;
++    }
++
++    // Cap the scrolling body against the space actually below the anchor,
++    // measured, rather than against `100vh`.
++    //
++    // MEASURED 2026-08-03: inside a XUL popup `100vh` resolves to 808px in a
++    // 758px window -- the popup's viewport is not the browser window's. The
++    // menu's `calc(100vh - 10rem)` therefore yields 648px where it means ~598,
++    // which is exactly the class of drift patch 0060's D1 note warns about
++    // ("re-measure the ANCHOR rather than the overhang"). The anchor is the
++    // input, so take it directly: this is correct at any window size, on any
++    // display, and cannot rot when the toolbar moves.
++    const rect = anchor.getBoundingClientRect();
++    const available = Math.max(
++      240,
++      Math.round(
++        win.innerHeight -
++          rect.bottom -
++          kAnchorGap -
++          kBottomMargin -
++          kPanelChrome
++      )
++    );
++    panel.style.setProperty("--kavacha-appearance-max", `${available}px`);
++
++    panel.openPopup(anchor, "bottomright topright", 0, kAnchorGap, false, false);
++  },
++
++  _ensurePanel(win) {
++    const doc = win.document;
++    let panel = doc.getElementById(kPanelId);
++    if (panel) {
++      return panel;
++    }
++    const popupSet = doc.getElementById("mainPopupSet");
++    if (!popupSet) {
++      return null;
++    }
++    const frag = win.MozXULElement.parseXULToFragment(`
++      <panel id="${kPanelId}"
++        type="arrow"
++        orient="vertical"
++        role="dialog"
++        aria-label="${_label("kavacha-appearance-title", "Appearance")}" />
++    `);
++    popupSet.appendChild(frag);
++    panel = doc.getElementById(kPanelId);
++    // Rebuilt on every show: themes, layout and accent are all live state that
++    // the Studio, Settings or a command may have changed since last time.
++    panel.addEventListener("popupshowing", event => {
++      if (event.target === panel) {
++        this._build(win, panel);
++      }
++    });
++    // Self-correcting cap. open() budgets the body against the space below the
++    // anchor minus kPanelChrome, but that constant is a measurement of the
++    // panel's arrow, border and padding, and a measurement can go stale — a
++    // theme with a taller arrow, a different platform, a future restyle. Once
++    // the panel is actually laid out its overhang is knowable exactly, so if
++    // there is any, take it straight off the cap. Runs at most once per open
++    // and is a no-op in the common case where the panel already fits.
++    panel.addEventListener("popupshown", event => {
++      if (event.target !== panel) {
++        return;
++      }
++      const overhang =
++        panel.getBoundingClientRect().bottom - (win.innerHeight - kBottomMargin);
++      if (overhang <= 0) {
++        return;
++      }
++      const body = panel.querySelector(".kavacha-appearance-body");
++      if (!body) {
++        return;
++      }
++      const cap = Math.max(240, body.getBoundingClientRect().height - overhang);
++      panel.style.setProperty("--kavacha-appearance-max", `${Math.round(cap)}px`);
++    });
++    return panel;
++  },
++
++  // --------------------------------------------------------------------------
++
++  _build(win, panel) {
++    const doc = win.document;
++    const generation = ++this._generation;
++    while (panel.firstChild) {
++      panel.firstChild.remove();
++    }
++
++    const body = doc.createElementNS(kHTML, "div");
++    body.className = "kavacha-appearance-body";
++    panel.appendChild(body);
++
++    // Everything below is built synchronously so the panel has its final size
++    // before it is shown; the parts that need disk (theme names, the layout
++    // document) fill in afterwards behind the generation guard. A panel that
++    // resizes after opening is worse than one that fills in.
++    body.appendChild(this._buildMode(win));
++    body.appendChild(
++      this._section(doc, "kavacha-appearance-theme-heading", "Theme")
++    );
++    const themes = doc.createElementNS(kHTML, "div");
++    themes.className = "kavacha-appearance-themes";
++    body.appendChild(themes);
++
++    body.appendChild(
++      this._section(doc, "kavacha-appearance-accent-heading", "Accent")
++    );
++    body.appendChild(this._buildAccent(win));
++
++    const layout = doc.createElementNS(kHTML, "div");
++    layout.className = "kavacha-appearance-layout";
++    body.appendChild(layout);
++
++    body.appendChild(this._buildFooter(win, panel));
++
++    this._fillThemes(win, themes, generation);
++    this._fillLayout(win, layout, generation);
++  },
++
++  _section(doc, l10nId, fallback) {
++    const h = doc.createElementNS(kHTML, "div");
++    h.className = "kavacha-appearance-heading";
++    h.textContent = _label(l10nId, fallback);
++    return h;
++  },
++
++  // ----- Dark / Light / Auto ------------------------------------------------
++
++  _buildMode(win) {
++    const row = this._segmented(win, {
++      labelId: null,
++      values: [
++        ["dark", "kavacha-appearance-mode-dark", "Dark"],
++        ["light", "kavacha-appearance-mode-light", "Light"],
++        ["system", "kavacha-appearance-mode-system", "Auto"],
++      ],
++      onSelect: mode =>
++        KavachaThemeEngine.setMode(mode).catch(e =>
++          win.console?.error("KavachaAppearancePanel: setMode failed", e)
++        ),
++    });
++    row.classList.add("kavacha-appearance-mode");
++    // Async, because classifying a user theme means reading it off disk.
++    KavachaThemeEngine.currentMode()
++      .then(mode => this._select(row, mode))
++      .catch(() => {});
++    return row;
++  },
++
++  // ----- Themes -------------------------------------------------------------
++
++  async _fillThemes(win, host, generation) {
++    const doc = win.document;
++    let ids;
++    try {
++      ids = await KavachaThemeEngine.listThemes();
++    } catch (e) {
++      return;
++    }
++    const active = KavachaThemeEngine.activeThemeId;
++
++    // Resolve every package FIRST, then render once. Rendering inside the loop
++    // is what makes the Settings pane's theme list flicker and duplicate: each
++    // await is a window in which another caller can start the same rebuild.
++    const themes = [];
++    for (const id of ids) {
++      try {
++        themes.push(await KavachaThemeEngine.resolveTheme(id));
++      } catch (e) {
++        // Unreadable package: still offer it by id so it can be selected (or
++        // switched away from), just without a palette to show.
++        themes.push({ id, name: id, colors: {} });
++      }
++    }
++    if (generation !== this._generation || !host.isConnected) {
++      return;
++    }
++
++    for (const theme of themes) {
++      host.appendChild(this._themeCard(win, doc, theme, theme.id === active));
++    }
++  },
++
++  _themeCard(win, doc, theme, isActive) {
++    const card = doc.createElementNS(kHTML, "button");
++    card.className = "kavacha-appearance-card";
++    card.setAttribute("type", "button");
++    card.setAttribute("aria-pressed", isActive ? "true" : "false");
++
++    // The palette, which is the whole point: you can see what a theme looks
++    // like before you wear it.
++    const swatch = doc.createElementNS(kHTML, "span");
++    swatch.className = "kavacha-appearance-swatch";
++    swatch.setAttribute("aria-hidden", "true");
++    for (const token of kSwatchTokens) {
++      const band = doc.createElementNS(kHTML, "span");
++      band.className = "kavacha-appearance-band";
++      const value = theme.colors?.[token];
++      if (value) {
++        band.style.background = value;
++      }
++      swatch.appendChild(band);
++    }
++    card.appendChild(swatch);
++
++    const name = doc.createElementNS(kHTML, "span");
++    name.className = "kavacha-appearance-card-name";
++    name.textContent = theme.name || theme.id;
++    card.appendChild(name);
++
++    // Patch 0061 measures text-on-surface on every apply and repairs a theme
++    // that fails. Saying so here is the other half: a repaired theme does not
++    // look like its author intended, and silently changing someone's colours
++    // without telling them is its own bug.
++    const contrast = KavachaThemeEngine.contrastOf(theme.colors || {}, win);
++    if (theme.colors && Object.keys(theme.colors).length && !contrast.passes) {
++      const badge = doc.createElementNS(kHTML, "span");
++      badge.className = "kavacha-appearance-warn";
++      badge.textContent = _label(
++        "kavacha-appearance-low-contrast",
++        "Low contrast"
++      );
++      badge.setAttribute(
++        "title",
++        `${contrast.primary.toFixed(1)}:1 — below the 4.5:1 minimum for readable text`
++      );
++      card.appendChild(badge);
++    }
++
++    card.addEventListener("click", () => {
++      KavachaThemeEngine.setActiveTheme(theme.id).catch(e =>
++        win.console?.error("KavachaAppearancePanel: setActiveTheme failed", e)
++      );
++      for (const sibling of card.parentElement?.children || []) {
++        sibling.setAttribute(
++          "aria-pressed",
++          sibling === card ? "true" : "false"
++        );
++      }
++    });
++    return card;
++  },
++
++  // ----- Accent -------------------------------------------------------------
++
++  _buildAccent(win) {
++    const doc = win.document;
++    const row = doc.createElementNS(kHTML, "div");
++    row.className = "kavacha-appearance-accents";
++
++    const current = Services.prefs.getStringPref(kAccentPref, "");
++    const mark = chosen => {
++      for (const el of row.children) {
++        el.setAttribute(
++          "aria-pressed",
++          el.dataset.accent === chosen ? "true" : "false"
++        );
++      }
++    };
++
++    // "System" first, and it is the state a fresh profile is in: Kavacha ships
++    // no default accent by decision, and clearing the pref is how you say so.
++    const system = doc.createElementNS(kHTML, "button");
++    system.className =
++      "kavacha-appearance-accent kavacha-appearance-accent-system";
++    system.setAttribute("type", "button");
++    system.dataset.accent = "";
++    const systemLabel = _label(
++      "kavacha-appearance-accent-system",
++      "Use the system accent"
++    );
++    system.setAttribute("aria-label", systemLabel);
++    system.setAttribute("title", systemLabel);
++    system.addEventListener("click", () => {
++      Services.prefs.clearUserPref(kAccentPref);
++      mark("");
++    });
++    row.appendChild(system);
++
++    for (const color of KAVACHA_ACCENT_SWATCHES) {
++      const swatch = doc.createElementNS(kHTML, "button");
++      swatch.className = "kavacha-appearance-accent";
++      swatch.setAttribute("type", "button");
++      swatch.style.background = color;
++      swatch.dataset.accent = color;
++      swatch.setAttribute("aria-label", color);
++      swatch.setAttribute("title", color);
++      swatch.addEventListener("click", () => {
++        Services.prefs.setStringPref(kAccentPref, color);
++        mark(color);
++      });
++      row.appendChild(swatch);
++    }
++
++    // Any colour at all, for anyone the eight do not suit. The native picker is
++    // the right control here — writing our own would be a worse one.
++    const custom = doc.createElementNS(kHTML, "input");
++    custom.className =
++      "kavacha-appearance-accent kavacha-appearance-accent-custom";
++    custom.setAttribute("type", "color");
++    const customLabel = _label(
++      "kavacha-appearance-accent-custom",
++      "Choose a custom accent"
++    );
++    custom.setAttribute("aria-label", customLabel);
++    custom.setAttribute("title", customLabel);
++    if (/^#[0-9a-fA-F]{6}$/.test(current)) {
++      custom.value = current.toLowerCase();
++    }
++    custom.addEventListener("change", () => {
++      Services.prefs.setStringPref(kAccentPref, custom.value);
++      mark(custom.value);
++    });
++    row.appendChild(custom);
++
++    mark(current);
++    return row;
++  },
++
++  // ----- Layout -------------------------------------------------------------
++
++  async _fillLayout(win, host, generation) {
++    let layout;
++    try {
++      layout = await KavachaLayoutEngine.getLayout();
++    } catch (e) {
++      return;
++    }
++    if (generation !== this._generation || !host.isConnected) {
++      return;
++    }
++    for (const control of kLayoutControls) {
++      const row = this._segmented(win, {
++        labelId: control.labelId,
++        labelFallback: control.fallback,
++        values: control.values,
++        onSelect: value =>
++          KavachaLayoutEngine.setLayout({ [control.key]: value }).catch(e =>
++            win.console?.error("KavachaAppearancePanel: setLayout failed", e)
++          ),
++      });
++      this._select(row, layout[control.key]);
++      host.appendChild(row);
++    }
++  },
++
++  // ----- Generic segmented control -----------------------------------------
++
++  /**
++   * A labelled row of mutually exclusive buttons. `values` is
++   * [value, l10nId, fallback] triples. Selection is expressed with
++   * aria-pressed, which is both the accessible state and the CSS hook — one
++   * attribute rather than a class that could drift from it.
++   */
++  _segmented(win, { labelId, labelFallback, values, onSelect }) {
++    const doc = win.document;
++    const row = doc.createElementNS(kHTML, "div");
++    row.className = "kavacha-appearance-row";
++
++    if (labelId) {
++      const label = doc.createElementNS(kHTML, "span");
++      label.className = "kavacha-appearance-row-label";
++      label.textContent = _label(labelId, labelFallback);
++      row.appendChild(label);
++    }
++
++    const group = doc.createElementNS(kHTML, "div");
++    group.className = "kavacha-appearance-segments";
++    group.setAttribute("role", "group");
++    for (const [value, l10nId, fallback] of values) {
++      const button = doc.createElementNS(kHTML, "button");
++      button.className = "kavacha-appearance-segment";
++      button.setAttribute("type", "button");
++      button.setAttribute("aria-pressed", "false");
++      button.dataset.value = value;
++      button.textContent = _label(l10nId, fallback);
++      button.addEventListener("click", () => {
++        this._select(row, value);
++        onSelect(value);
++      });
++      group.appendChild(button);
++    }
++    row.appendChild(group);
++    return row;
++  },
++
++  _select(row, value) {
++    for (const button of row.querySelectorAll(".kavacha-appearance-segment")) {
++      button.setAttribute(
++        "aria-pressed",
++        button.dataset.value === value ? "true" : "false"
++      );
++    }
++  },
++
++  // ----- Footer: links out, plus whatever the registry still has -----------
++
++  _buildFooter(win, panel) {
++    const doc = win.document;
++    const footer = doc.createElementNS(kHTML, "div");
++    footer.className = "kavacha-appearance-footer";
++
++    const link = (label, onCommand) => {
++      const item = doc.createXULElement("toolbarbutton");
++      item.className = "kavacha-menu-item subviewbutton";
++      item.setAttribute("label", label);
++      item.setAttribute("tabindex", "0");
++      item.addEventListener("command", onCommand);
++      footer.appendChild(item);
++    };
++
++    // The registry is still the source of truth for what Appearance contains:
++    // marketplace components and plugins register here at runtime, and a panel
++    // that hand-listed its contents would stop showing them the day someone
++    // installed one.
++    for (const cmd of KavachaCommandRegistry.getByDomain(
++      KavachaCommandDomain.APPEARANCE
++    )) {
++      if (kSupersededCommands.has(cmd.l10nId)) {
++        continue;
++      }
++      if (cmd.isAvailable && !cmd.isAvailable(win)) {
++        continue;
++      }
++      link(cmd.rawLabel ?? _label(cmd.l10nId, cmd.l10nId), () => {
++        panel.hidePopup();
++        this._invoke(win, cmd);
++      });
++    }
++
++    link(_label("kavacha-appearance-all-settings", "All appearance settings"), () => {
++      panel.hidePopup();
++      win.openTrustedLinkIn("about:preferences#paneKavachaAppearance", "tab");
++    });
++    return footer;
++  },
++
++  // Same polymorphic contract as the menu (patch 0027): a function
++  // command(window), or a string naming a <command> node.
++  _invoke(win, cmd) {
++    try {
++      if (typeof cmd.command === "function") {
++        cmd.command(win);
++      } else if (typeof cmd.command === "string") {
++        win.document.getElementById(cmd.command)?.doCommand();
++      } else if (typeof cmd.commandId === "string") {
++        win.document.getElementById(cmd.commandId)?.doCommand();
++      }
++    } catch (e) {
++      console.error("KavachaAppearancePanel: command failed", cmd?.l10nId, e);
++    }
++  },
++};
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+index 51774f9..8ebb95f 100644
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -198,14 +198,20 @@ const BUILTIN = [
+   },
+   {
+     l10nId: "kavacha-action-toggle-tab-layout",
++    // Cycles all THREE styles. It used to be a two-way toggle written before
++    // patch 0058 added Arc, so running it from Arc silently dropped you to
++    // vertical with no way back except about:studio -- the layout engine
++    // accepts "arc" (kTabStyles), but nothing outside the Studio ever offered
++    // it. The Appearance panel (patch 0063) offers all three directly; this
++    // keeps the palette honest about the same set.
+     command: async () => {
+       const e = ChromeUtils.importESModule(
+         "resource:///modules/KavachaLayoutEngine.sys.mjs"
+       ).KavachaLayoutEngine;
+       const layout = await e.getLayout();
+-      await e.setLayout({
+-        tabStyle: layout.tabStyle === "vertical" ? "horizontal" : "vertical",
+-      });
++      const order = ["horizontal", "vertical", "arc"];
++      const next = order[(order.indexOf(layout.tabStyle) + 1) % order.length];
++      await e.setLayout({ tabStyle: next });
+     },
+     icon: "chrome://browser/skin/zen-icons/selectable/layers.svg",
+     domain: KavachaCommandDomain.APPEARANCE,
+diff --git a/src/zen/common/sys/KavachaMenu.sys.mjs b/src/zen/common/sys/KavachaMenu.sys.mjs
+index 5469418..f2c3033 100644
+--- a/src/zen/common/sys/KavachaMenu.sys.mjs
++++ b/src/zen/common/sys/KavachaMenu.sys.mjs
+@@ -34,10 +34,13 @@
+ 
+ import {
+   KavachaCommandRegistry,
++  KavachaCommandDomain,
+   KavachaCommandDomainOrder,
+   KavachaCommandDomainLabel,
+ } from "resource:///modules/KavachaCommandRegistry.sys.mjs";
+ 
++import { KavachaAppearancePanel } from "resource:///modules/KavachaAppearancePanel.sys.mjs";
++
+ const lazy = {};
+ 
+ ChromeUtils.defineESModuleGetters(lazy, {
+@@ -53,6 +56,9 @@ ChromeUtils.defineLazyGetter(lazy, "l10n", () => {
+ });
+ 
+ const kSettingsIcon = "chrome://browser/skin/zen-icons/settings.svg";
++// The same icon the Appearance pane uses in the about:preferences nav, so the
++// two entry points to appearance look like the same place.
++const kAppearanceIcon = "chrome://browser/skin/zen-icons/paintbrush.svg";
+ 
+ // Patch 0060: below this many commands the whole panel already fits without
+ // scrolling, and a filter field costs a row to save nothing. Above it the
+@@ -310,6 +316,15 @@ export const KavachaMenu = {
+     const sections = [];
+     let total = 0;
+     for (const domain of KavachaCommandDomainOrder) {
++      // Appearance is not a section any more (patch 0063). Its nine rows were
++      // the longest in the menu and the least self-explanatory -- "Cycle
++      // Interface Density" is a verb where the user wants a choice, and none of
++      // them showed a colour. They live in the Appearance panel now, which
++      // renders the same registry domain plus the controls a list cannot be:
++      // theme swatches, an accent palette and segmented layout pickers.
++      if (domain === KavachaCommandDomain.APPEARANCE) {
++        continue;
++      }
+       const commands = KavachaCommandRegistry.getByDomain(domain).filter(
+         cmd => !cmd.isAvailable || cmd.isAvailable(win)
+       );
+@@ -340,18 +355,41 @@ export const KavachaMenu = {
+     body.className = "kavacha-menu-scrollbox";
+     panel.appendChild(body);
+ 
+-    // Full settings surface, pinned: opens about:preferences.
+-    const settingsLabel = _label("kavacha-menu-settings", "Settings");
+-    const settings = this._makeItem(win, {
+-      label: settingsLabel,
++    // The two pinned rows, above the collapsed sections. Both are destinations
++    // rather than actions, which is why neither is behind a disclosure: the
++    // gear looks like it opens settings, and appearance is the thing people
++    // come to a gear menu to change.
++    const pinned = [];
++    const pin = ({ l10nId, fallback, icon, onCommand }) => {
++      const label = _label(l10nId, fallback);
++      const item = this._makeItem(win, { label, icon, onCommand });
++      item.classList.add("kavacha-menu-pinned");
++      body.appendChild(item);
++      pinned.push({ item, search: label.toLowerCase() });
++    };
++
++    pin({
++      l10nId: "kavacha-menu-settings",
++      fallback: "Settings",
+       icon: kSettingsIcon,
+       onCommand: () => {
+         panel.hidePopup();
+         win.openPreferences();
+       },
+     });
+-    settings.classList.add("kavacha-menu-pinned");
+-    body.appendChild(settings);
++
++    // Patch 0063. Replaces the generated Appearance section skipped above.
++    pin({
++      l10nId: "kavacha-menu-appearance",
++      fallback: "Appearance",
++      icon: kAppearanceIcon,
++      onCommand: () => {
++        // Hide first, then open: the panel anchors to the same button, and two
++        // arrow panels on one anchor is the dashboard's shipped behaviour too.
++        panel.hidePopup();
++        KavachaAppearancePanel.open(win);
++      },
++    });
+ 
+     // Generated sections: one per non-empty domain, in the registry's declared
+     // order. Every Kavacha feature (plus marketplace/plugin runtime commands)
+@@ -395,12 +433,14 @@ export const KavachaMenu = {
+       const searching = !!query;
+       let hits = 0;
+ 
+-      // Settings is searchable too — typing "settings" must not be the one
+-      // query that finds nothing just because the row is pinned.
+-      const settingsHit =
+-        !searching || settingsLabel.toLowerCase().includes(query);
+-      settings.hidden = !settingsHit;
+-      hits += settingsHit ? 1 : 0;
++      // The pinned rows are searchable too — typing "settings" or "appearance"
++      // must not be the one query that finds nothing just because the row sits
++      // above the sections.
++      for (const { item, search } of pinned) {
++        const hit = !searching || search.includes(query);
++        item.hidden = !hit;
++        hits += hit ? 1 : 0;
++      }
+ 
+       for (const section of sections) {
+         let shown = 0;

@@ -424,6 +424,43 @@ a build — schema validation, `node --check`, XML well-formedness, and a Fluent
 cross-check — but the arms that matter (does a fresh profile search with Brave; do
 cookies vanish across a real quit) need a build. See [SHIPPING.md](SHIPPING.md) §3.
 
+### Post-merge audit + fixes (2026-08-03)
+
+A full bug audit ran after patches 0022–0065 merged (four reviewers over the patch
+stack, build/CI, and docs). Outcome:
+
+- **Patch 0059 could never apply** — it was authored against a pre-0021 image of
+  `preferences-js.patch`, so the committed series was unbuildable and CI had been red
+  since it merged. Rebased onto the real tree (commit `293dbf9`); all patches now apply
+  on the pin and CI is green.
+- **Critical fixes (Marionette-verified), patches 0066–0068:**
+  - `0066` — the delete-cookies-on-close switch (0049) wiped browsing history on every
+    quit (it armed `sanitizeOnShutdown` while Firefox defaults the sibling
+    history/cache sweeps to true) and could not be turned off (its untick guard read
+    those siblings with a false default). Now uses explicit ownership: it pins the
+    non-cookie sweeps off to match the label and fully reverses on untick, leaving a
+    user's own pre-existing shutdown-clearing setup untouched.
+  - `0067` — the permission-manager default selectors, cookie-rule menus, and several
+    buttons rendered blank (value-only Fluent messages on XUL `menuitem`/`button`/`label`).
+    13 message-shape fixes.
+  - `0068` — the welcome flow's "Choose your look" fought patch 0064's theme-mode
+    authority (a "Light" pick was reverted, "Match my system" could never persist).
+    The radio now goes through `KavachaThemeEngine.setMode`.
+- **CI/build hardening** (commit `5d64a8c`): nightly publish is now an atomic upsert
+  (was delete-then-create, which could destroy the release on a failed create),
+  serialized by a concurrency group, and labels carried-forward stale assets in the
+  notes; `bootstrap.sh update` re-syncs to the pin instead of Zen's moving dev tip,
+  and an off-pin existing clone hard-stops instead of building against the wrong base.
+- **Still open from the audit (not yet fixed):** a baked default accent `#e8a33d` in
+  patch 0061 contradicts the no-default-accent directive (decision needed); layout-engine
+  partial-patch field clobbering; the Studio "toolbar position" control is a no-op;
+  sideloaded theme/marketplace manifests aren't schema-validated (ADR 0010 says they
+  are); the SDK `tabs.open` allows any `about:` page with the system principal;
+  privacy-score "fix" buttons write the same proxy pref their check reads; several
+  docs are stale (ARCHITECTURE.md still describes container-per-workspace; VERIFICATION.md
+  rows for 0059–0065 describe verifications of a tree the committed patches couldn't
+  produce). Full per-finding detail is in the audit reviewers' reports.
+
 ## Phase 5 — Kavacha Account & Ownership (Months 8–10) — Y1
 
 > **Ruled out (2026-07-31): Google account sync.** Considered as an opt-in setting,

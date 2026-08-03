@@ -34,7 +34,7 @@ anyone — even a developer preview — means shipping something that cannot be 
 |---|---|
 | Everything above | ❌ |
 | Phase 3 complete | ✅ Shipped, ⚠️ partially verified. |
-| Phase 4 complete | ❌ 3 of 5 items open — see [REMAINING_WORK.md](REMAINING_WORK.md) §2. |
+| Phase 4 complete | ⚠️ **Features shipped, none build-verified.** Patches 0047–0050 (2026-08-02) closed every Phase 4 feature item; one follow-up (blocked-today badge surface) and R3 remain — see [REMAINING_WORK.md](REMAINING_WORK.md) §2. |
 | Reproducible builds | ❌ Not started — R4. |
 | Disclosure program live | ❌ Not started — R5. |
 
@@ -97,9 +97,9 @@ eyeballing; the 0030 → 0036 saga is the argument for that.
 | 0012 | Universal search — named in the Dev Preview gate, no L4 probe has run. Note XUL panels do not appear in Marionette screenshots; verify with computed styles and rects, not pixels. |
 | 0022 | `hiddenElements` / `componentSizes`; the four palette commands invoked individually |
 | 0023 | Zero-flash on default Midnight; theme discovery from profile `kavacha-themes/` |
-| 0025 | History + revert — blocked behind defect **D8** ([REMAINING_WORK.md](REMAINING_WORK.md) §1) |
+| 0025 | History + revert — **unblocked**; D8 fixed by patch 0045. Logic verified against the module; re-run through about:studio's Advanced tab on the next build. (The Advanced tab itself was driven on 2026-08-02 for patch 0056's highlighting, so the page and tab work; the history list was not exercised.) |
 | 0026 | The **bright** custom-surface arm — the one that would actually prove the luminance branch flips `color-scheme` |
-| 0028 | Bundle install ("Research Mode"); reserved `widget`/`panel` type rejection |
+| 0028 | Bundle install ("Research Mode"). The reserved-type rejection arm is **retired**: patch 0057 supplied the host, so `widget`/`panel` are installable types now and applying each was verified — see [VERIFICATION.md](VERIFICATION.md) §4b |
 | 0029 | **The entire plugin lifecycle.** Both modules import and `list()` returns `[]`, but nothing has been sideloaded: grant → enable → command reaches Cmd+K → disable → command leaves → revoke → uninstall. **Not blocked** — a throwaway test plugin needs no credentials. |
 | 0030 | That a *marketplace-installed* command reaches the ⚙ panel (proven to reach the registry) |
 | 0032 | "Sleep inactive tabs now"; unload-threshold write-back; template buttons; the **Restore an archived space…** picker; dashboard Settings link; welcome closing line |
@@ -108,6 +108,22 @@ eyeballing; the 0030 → 0036 saga is the argument for that.
 | 0035 | The vertical/sidebar arm — Zen's inset must be *kept* there (horizontal measured clean: gaps 0/0/0) |
 | 0038 | Cross-Space sign-in carry-over — **blocked (B1)**, requires real credentials |
 | 0004 | Tab-switch latency with heavy addon sets — flagged "keep an eye on" when shipped, never measured |
+| 0047 | **That a fresh profile actually searches with Brave.** The config validates against Firefox's own schema, but no build has run a query. Pairs naturally with R3 — both are assertions about what a fresh profile talks to |
+| 0048 | The permission dashboard against a live permission store: that clear-by-type empties it, and that the default selector changes what a site is asked |
+| 0049 | **That cookies actually survive or vanish across a real quit.** The whole feature is a claim about what is on disk after the browser is gone; run it alongside 0034's quit/relaunch test |
+| 0050 | The privacy-score fix buttons, and the per-site card against real stored permissions |
+
+**Arms opened by patches 0051–0058** (2026-08-02). These eight were built and driven over
+Marionette — 114 checks, 0 failures, [VERIFICATION.md](VERIFICATION.md) §4b — so what is
+listed here is only what that pass could *not* settle, stated rather than implied:
+
+| Patch | Unproven |
+|---|---|
+| 0051 | That a real container switch actually leaves the cookies behind — i.e. that the warning tells the truth. **Blocked (B1)**: it needs a real sign-in. The menu, the sharing counts and the confirm itself are verified |
+| 0053 | The panel against a profile where the recommended extensions are actually installed (the "Already installed" state and "Run only these in this Space" writing the allowlist). No install was performed — that is the user's call, not the harness's |
+| 0056 | How Arc and the light theme **look**. Tokens, attributes and `color-scheme` are asserted; appearance is subjective and needs a human. Also: the coach mark on a genuinely first-run profile, rather than one driven by resetting the pref |
+| 0055 | The universal-search shortcut firing from a real key press. It ships **unbound** by design, so there is no default chord to press — verify after binding one |
+| 0057 | A **sideloaded** (rather than bundled) widget component, which is the case the narrow `render(doc, win)` contract exists to contain. Pairs with 0029's plugin-lifecycle arm |
 
 ---
 

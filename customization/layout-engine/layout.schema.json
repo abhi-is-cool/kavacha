@@ -21,9 +21,9 @@
     },
     "tabStyle": {
       "type": "string",
-      "enum": ["vertical", "horizontal"],
+      "enum": ["vertical", "horizontal", "arc"],
       "default": "horizontal",
-      "description": "Horizontal tabs are Kavacha's default look (zen.tabs.vertical=false); vertical is one toggle away."
+      "description": "Horizontal tabs are Kavacha's default look (zen.tabs.vertical=false); vertical is one toggle away. \"arc\" (patch 0058) is the vertical layout with an Arc-style presentation: it sets the same zen.tabs.vertical pref as \"vertical\" and additionally selects the kavacha-arc-tabs chrome layer."
     },
     "density": {
       "type": "string",
@@ -44,6 +44,12 @@
       "items": { "type": "string" },
       "uniqueItems": true,
       "default": []
+    },
+    "widgets": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Dashboard widget ids, in display order (patch 0057). Empty or absent means the widget host's built-ins in their declared order; unknown ids are ignored, since a widget disappears when its marketplace component is uninstalled."
     },
     "componentSizes": {
       "type": "object",

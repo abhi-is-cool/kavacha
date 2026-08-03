@@ -1,0 +1,706 @@
+# Kavacha patch 0060 — the ⚙ menu was a list, not a menu. Collapse it.
+#
+# SYMPTOM, as reported: "when you click on the settings button the dropdown menu
+# has too many options ... unclog it in a way that it is clean and minimalistic
+# but still retains most info/options."
+#
+# WHAT IT WAS: patch 0030 generates the panel from the command registry, which
+# is right and stays — a hand-maintained menu drifts from the registry the first
+# time a plugin registers anything. What was wrong is that it rendered the
+# result as ONE FLAT LIST: Settings, then a dim domain header, then every
+# available command, then the next header, and so on. Measured on the reporter's
+# own profile that is 22 command rows + 6 headers + Settings, and the panel came
+# out ~720px tall in a 758px window. Patches 0037 and 0040 are both scars from
+# this — 0037 added a scrolling box because the tail was unreachable, 0040
+# re-tightened the cap after the anchor moved. Neither was the actual defect.
+# You cannot read 28 options; you can only search them, and there was no search.
+#
+# WHAT IT IS NOW. Nothing was removed — every command the registry offers is
+# still one or two interactions away — but the same commands arrive in three
+# shapes instead of one:
+#
+#   1. Settings stays PINNED at the top. It is what the gear looks like it does,
+#      so it must not be behind a disclosure.
+#   2. Each domain collapses to ONE row carrying its command count: "Appearance
+#      9". The count is the half of collapsing that keeps the information — a
+#      closed section still says how much is behind it. Opening a section closes
+#      the previous one, so the panel is never taller than its largest single
+#      domain.
+#   3. A FILTER FIELD searches every domain at once, focused the moment the panel
+#      opens. This is the part that makes collapsing cheap rather than annoying:
+#      if you know what you want, typing three letters beats both the accordion
+#      AND the old flat list.
+#
+# THE ONE DESIGN DECISION WORTH ARGUING WITH: the accordion and the filter are
+# the SAME nodes, not two renderings of the registry. Filtering expands every
+# section and hides the rows that miss, rather than building a second flat list
+# of matches. Two node sets would mean two places for a row to be stale, and
+# dropping the grouping the instant you type would throw away the only context
+# that tells you a match is an Appearance command rather than a Privacy one.
+#
+# WHY NOT A PREF, AND WHY NOT A DISK FILE: the open section is remembered in
+# module state for the session and nowhere else. It is not a setting — it is
+# which part of the menu you happened to be using — and writing it to a pref
+# would sync it, back it up, and survive a profile reset for no benefit.
+#
+# WHY NOT AN OVERLAY: the panel's contents are BUILT IN JS, in KavachaMenu
+# .sys.mjs, from the registry, at every popupshowing. There is no markup for a
+# chrome CSS overlay to restyle and no static list for it to trim; a CSS-only
+# attempt could hide rows but could not add a filter, could not count what it
+# hid, and could not put back what it hid. This is the same file patch 0030
+# introduced, so it is a patch either way.
+#
+# ONE NON-OBVIOUS CSS FACT, recorded because getting it wrong silently un-does
+# the whole feature: collapsing and filtering both work by setting the `hidden`
+# attribute, and every class involved sets an explicit `display`. A class rule
+# beats the UA's [hidden] rule, so without the explicit `[hidden] { display:
+# none }` block added here, `hidden` sets an attribute and changes nothing on
+# screen. Any new class in this panel that sets `display` belongs in that list.
+#
+# ACCESSIBILITY: the rows live in an HTML container rather than a <menupopup>,
+# so none of a menu's keyboard behaviour arrives for free — and did not, before
+# this patch either. Added: rows and section headers are focusable, Up/Down walk
+# the visible ones and wrap back into the filter, Enter in the filter takes the
+# first match, Escape clears a non-empty filter before it closes the panel.
+# Section headers are html:button with aria-expanded (an html:button rather than
+# a XUL toolbarbutton because a header carries three pieces of content and
+# MozToolbarbutton owns its own anonymous children).
+#
+# VERIFIED LIVE over Marionette against this build, on a 758px-tall window with
+# the panel anchored at y=94 — not by reading the diff:
+#
+#   * resting panel 291px tall, 7 rows, scrollbox scrollHeight == clientHeight
+#     (nothing to scroll) — against ~720px and scrolling before.
+#   * six sections present with live counts 3/4/3/9/1/1, all aria-expanded
+#     false, chevrons at rotate(-45deg).
+#   * expanding each section in turn: bottom edge 423–679 in a 758px window, so
+#     EVERY section fits without scrolling; opening a second section closes the
+#     first (rowsVisible 5, not 14).
+#   * filter "theme" -> 1 row, Appearance auto-expanded, other five sections
+#     hidden with count 0. Filter "settings" -> the pinned row survives, which
+#     is the one query that would otherwise find nothing. Filter "zzzz" -> 0
+#     rows and the empty state. Clearing -> back to the 291px resting state.
+#   * focus lands in the filter on popupshown; ArrowDown/ArrowUp walk
+#     filter -> Settings -> Navigation and back into the filter, each with
+#     defaultPrevented true.
+#   * min-width 340px was chosen from measurement, not taste: five of the six
+#     sections fit inside it, so opening one usually no longer resizes the
+#     panel. At the old 280px every section resized it.
+#
+# Files: src/zen/common/sys/KavachaMenu.sys.mjs (panel construction),
+# src/zen/common/styles/kavacha-menu.inc.css (sections, filter, [hidden]
+# guards), locales/en-US/browser/browser/zen-command-palette.ftl (two new keys
+# — note these reach the app only via bootstrap.sh's sync_locales, since
+# `surfer import` does not touch the top-level locales/ tree).
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index 1dbb1df..a5dcc13 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -67,6 +67,10 @@ kavacha-command-domain-automation = Automation
+ kavacha-menu-button = Menu
+ kavacha-menu-settings = Settings
+ 
++# Kavacha patch 0060 — the menu panel's filter field and its empty state.
++kavacha-menu-filter-placeholder = Search settings and commands
++kavacha-menu-no-results = Nothing matches that
++
+ # Restore Archived Space command (patch 0032)
+ kavacha-action-restore-space = Restore Archived Space
+ kavacha-action-space-recommendations = Recommended Extensions for This Space
+diff --git a/src/zen/common/styles/kavacha-menu.inc.css b/src/zen/common/styles/kavacha-menu.inc.css
+index 8ca7810..4660583 100644
+--- a/src/zen/common/styles/kavacha-menu.inc.css
++++ b/src/zen/common/styles/kavacha-menu.inc.css
+@@ -24,22 +24,142 @@
+   --panel-background: var(--kavacha-surface-elevated, #1d1930);
+   --panel-border-color: var(--kavacha-border, #2e2846);
+   --panel-color: var(--kavacha-text-primary, #edeaf7);
+-  min-width: 280px;
++  /* Wide enough that opening a section usually does not resize the panel.
++     Measured at the shipped registry: five of the six sections fit inside
++     340px, so only Appearance (374px, its labels are the longest) still nudges
++     the width. At the old 280px every single section resized it. */
++  min-width: 340px;
+   padding: 6px;
+ }
+ 
+-/* Small, dim, uppercase domain headers. */
+-.kavacha-menu-header {
+-  margin: 8px 10px 2px;
++/* Patch 0060 collapses and filters the panel by setting the `hidden` attribute
++   on rows, section bodies and the empty state. Every one of those carries an
++   explicit `display` below, and a class rule beats the UA's [hidden] rule — so
++   without this block `hidden` would set an attribute and change nothing on
++   screen. Any new class here that sets `display` belongs in this list. */
++.kavacha-menu-item[hidden],
++.kavacha-menu-section[hidden],
++.kavacha-menu-section-body[hidden],
++.kavacha-menu-empty[hidden] {
++  display: none;
++}
++
++/* --- Filter field (patch 0060) ------------------------------------------- */
++/* A child of the panel rather than the scrollbox, so it stays put while the
++   results scroll under it. */
++.kavacha-menu-search {
++  padding: 2px 2px 6px;
++}
++
++.kavacha-menu-filter {
++  width: 100%;
++  box-sizing: border-box;
++  appearance: none;
++  margin: 0;
++  padding: 6px 10px;
++  border: 1px solid var(--kavacha-border, #2e2846);
++  border-radius: 8px;
++  background: var(--kavacha-surface, #16132a);
++  color: var(--kavacha-text-primary, #edeaf7);
++  font: inherit;
++}
++
++.kavacha-menu-filter::placeholder {
++  color: var(--kavacha-text-secondary, #a79fc4);
++  opacity: 0.85;
++}
++
++.kavacha-menu-filter:focus-visible {
++  outline: none;
++  border-color: var(--kavacha-accent, var(--kavacha-accent-fallback));
++}
++
++/* --- Domain sections (patch 0060) ---------------------------------------- */
++/* One row per domain, collapsed by default: chevron, name, command count. */
++.kavacha-menu-section {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  width: 100%;
++  margin: 0;
++  padding: 8px 10px;
++  appearance: none;
++  border: none;
++  border-radius: 8px;
++  background: transparent;
++  color: var(--kavacha-text-primary, #edeaf7);
++  font: inherit;
++  font-weight: 600;
++  text-align: start;
++  cursor: pointer;
++}
++
++.kavacha-menu-section:hover,
++.kavacha-menu-section:focus-visible {
++  background-color: var(
++    --kavacha-tab-hover-background,
++    color-mix(in srgb, currentColor 10%, transparent)
++  );
++  outline: none;
++}
++
++.kavacha-menu-section-label {
++  flex: 1;
++}
++
++/* The count is the half of collapsing that keeps the information: a closed
++   section still says how much is behind it, and while filtering it says how
++   many of those matched. */
++.kavacha-menu-count {
+   font-size: 11px;
+-  font-weight: 700;
+-  text-transform: uppercase;
+-  letter-spacing: 0.04em;
++  font-variant-numeric: tabular-nums;
++  color: var(--kavacha-text-secondary, #a79fc4);
++}
++
++/* Two borders of a square, rotated: right when closed, down when open. */
++.kavacha-menu-chevron {
++  width: 6px;
++  height: 6px;
++  margin-inline-start: 3px;
++  border-right: 1.5px solid currentColor;
++  border-bottom: 1.5px solid currentColor;
++  opacity: 0.5;
++  transform: rotate(-45deg);
++  transition: transform 120ms ease;
++}
++
++.kavacha-menu-section[aria-expanded="true"] .kavacha-menu-chevron {
++  transform: rotate(45deg);
++}
++
++@media (prefers-reduced-motion: reduce) {
++  .kavacha-menu-chevron {
++    transition: none;
++  }
++}
++
++/* An open section's rows, hung off a hairline so the nesting reads without
++   indenting far enough to start wrapping the labels. */
++.kavacha-menu-section-body {
++  display: block;
++  margin: 2px 0 4px;
++  margin-inline-start: 15px;
++  padding-inline-start: 6px;
++  border-inline-start: 1px solid var(--kavacha-border, #2e2846);
++}
++
++.kavacha-menu-empty {
++  display: block;
++  padding: 14px 10px;
++  text-align: center;
++  font-size: 0.9em;
+   color: var(--kavacha-text-secondary, #a79fc4);
+ }
+ 
+-.kavacha-menu-header:first-child {
+-  margin-top: 2px;
++/* Settings is pinned above the sections; the gap is the only separation it
++   needs, so no rule is drawn. */
++.kavacha-menu-pinned {
++  margin-block-end: 6px;
+ }
+ 
+ /* Rows: icon + label, full-width, subtle theme-aware hover. */
+@@ -94,7 +214,13 @@
+    window -- a 6px overhang. The caps below are each 1rem tighter, which puts
+    the bottom at ~748 and restores the intended clearance. If this drifts
+    again, re-measure the ANCHOR rather than the overhang: the overhang is the
+-   symptom, the anchor is the input. */
++   symptom, the anchor is the input.
++
++   Patch 0060 collapsed the sections, so the resting panel is now seven rows and
++   the caps below are no longer load-bearing at the shipped registry. They stay:
++   the panel is still generated, an open Appearance section is still nine rows,
++   and a plugin can still register enough commands into one domain to reach the
++   viewport. */
+ #kavacha-menu-panel {
+   max-height: calc(100vh - 9rem);
+ }
+diff --git a/src/zen/common/sys/KavachaMenu.sys.mjs b/src/zen/common/sys/KavachaMenu.sys.mjs
+index 980aa2b..5469418 100644
+--- a/src/zen/common/sys/KavachaMenu.sys.mjs
++++ b/src/zen/common/sys/KavachaMenu.sys.mjs
+@@ -21,6 +21,14 @@
+ // full settings surface — so the button is the single discoverable entry point
+ // to both Kavacha's features and Firefox/Zen preferences.
+ //
++// Patch 0060 changed the panel's SHAPE, not what it contains. Generating from
++// the registry is the right call and stays; rendering the result as one flat
++// list was not. At the shipped registry that flat list is 22 command rows plus
++// five domain headers plus Settings — ~720px of menu, which is why the CSS had
++// to cap it against the viewport and scroll it. A menu you scroll to read is a
++// list, not a menu. Nothing was removed; the same commands now arrive in three
++// shapes instead of one (see _buildPanel).
++//
+ // A process singleton (init) with per-window UI (setupWindow); ZenStartup calls
+ // both per window, mirroring the layout/theme engines (ADR 0008).
+ 
+@@ -46,6 +54,13 @@ ChromeUtils.defineLazyGetter(lazy, "l10n", () => {
+ 
+ const kSettingsIcon = "chrome://browser/skin/zen-icons/settings.svg";
+ 
++// Patch 0060: below this many commands the whole panel already fits without
++// scrolling, and a filter field costs a row to save nothing. Above it the
++// field is the fastest path to any command and earns its row.
++const kFilterThreshold = 8;
++
++const kHTML = "http://www.w3.org/1999/xhtml";
++
+ // Patch 0056: the first-launch coach mark. Patch 0030 added the button
+ // precisely because "every Kavacha feature was reachable ONLY through Cmd+K"
+ // — but a gear icon among other toolbar icons is not self-explanatory either,
+@@ -71,6 +86,14 @@ function _label(id, fallback) {
+ export const KavachaMenu = {
+   _initialized: false,
+ 
++  // Which domain's section is expanded, or null for "all collapsed" — the
++  // resting state. Deliberately process-wide rather than per-window: it is a
++  // preference about which part of the menu you use, and it would be odd for
++  // that to differ between two windows of the same browser. Deliberately NOT a
++  // pref either: it is a session convenience, not a setting worth persisting
++  // to disk or syncing.
++  _openDomain: null,
++
+   /** Process-singleton init. Idempotent; per-window UI is setupWindow(). */
+   init() {
+     if (this._initialized) {
+@@ -233,6 +256,17 @@ export const KavachaMenu = {
+         this._buildPanel(win, panel);
+       }
+     });
++    // Put the caret in the filter as the panel lands, so the fastest route to
++    // any command is to open the menu and type. Wired once, at inject time,
++    // rather than per build: _buildPanel replaces the panel's children on
++    // every show, and re-adding listeners to the panel itself each time would
++    // stack them.
++    panel.addEventListener("popupshown", event => {
++      if (event.target === panel) {
++        panel.querySelector(".kavacha-menu-filter")?.focus();
++      }
++    });
++    panel.addEventListener("keydown", event => this._onKeyDown(panel, event));
+   },
+ 
+   _openPanel(win) {
+@@ -244,82 +278,313 @@ export const KavachaMenu = {
+     }
+   },
+ 
+-  // Clear + rebuild the panel from the live registry every show.
++  // Clear + rebuild the panel from the live registry every show, so
++  // runtime-registered commands and per-window availability stay live.
++  //
++  // The same commands, three shapes (patch 0060):
++  //
++  //   * Settings stays pinned at the top. It is what the button looks like it
++  //     does, so it must not be something you expand a section to find.
++  //   * Each domain collapses to ONE row carrying its command count. Opening a
++  //     section closes the previous one, so the panel is never taller than its
++  //     largest single domain and the resting state is seven rows instead of
++  //     twenty-eight.
++  //   * A filter searches every domain at once. For anyone who knows what they
++  //     want this beats both the old flat list and the accordion, and it is
++  //     what makes collapsing by default cheap rather than annoying.
++  //
++  // The accordion and the filter are the SAME nodes, not two renderings of the
++  // registry: filtering expands every section and hides the rows that miss,
++  // rather than building a second flat list. One node set means a row cannot
++  // be stale in one view and current in the other, and it keeps a match's
++  // domain visible instead of dropping the grouping the moment you type.
+   _buildPanel(win, panel) {
+     const doc = win.document;
+     while (panel.firstChild) {
+       panel.firstChild.remove();
+     }
+ 
+-    // Rows go inside an arrowscrollbox, not straight into the panel. A XUL
+-    // panel lays its children out as a box, so a max-height on the panel
+-    // COMPRESSES the rows instead of overflowing them -- measured: content
+-    // clamped to 692px with scrollHeight == clientHeight, i.e. nothing to
+-    // scroll and the tail unreachable. arrowscrollbox is what Firefox uses for
+-    // long menus and scrolls properly inside a popup.
+-    const body = doc.createElementNS(
+-      "http://www.w3.org/1999/xhtml",
+-      "div"
+-    );
++    // Resolve the registry ONCE. isAvailable() is evaluated here and nowhere
++    // else below, so a command can never be counted in a section header and
++    // then be missing from the section.
++    const sections = [];
++    let total = 0;
++    for (const domain of KavachaCommandDomainOrder) {
++      const commands = KavachaCommandRegistry.getByDomain(domain).filter(
++        cmd => !cmd.isAvailable || cmd.isAvailable(win)
++      );
++      if (!commands.length) {
++        continue;
++      }
++      const labelId = KavachaCommandDomainLabel[domain];
++      sections.push({
++        domain,
++        label: labelId ? _label(labelId, domain) : domain,
++        commands,
++        rows: [],
++      });
++      total += commands.length;
++    }
++
++    // The filter is a child of the PANEL, not of the scrollbox below it, so it
++    // stays put while the results scroll under it.
++    const filter =
++      total > kFilterThreshold ? this._makeFilter(win, panel) : null;
++
++    // Rows go inside a scrolling div, not straight into the panel. A XUL panel
++    // lays its children out as a box, so a max-height on the panel COMPRESSES
++    // the rows instead of overflowing them -- measured: content clamped to
++    // 692px with scrollHeight == clientHeight, i.e. nothing to scroll and the
++    // tail unreachable. The cap belongs on a scrolling block instead.
++    const body = doc.createElementNS(kHTML, "div");
+     body.className = "kavacha-menu-scrollbox";
+     panel.appendChild(body);
+ 
+-    // Full settings surface at the top: opens about:preferences.
+-    body.appendChild(
+-      this._makeItem(win, {
+-        label: _label("kavacha-menu-settings", "Settings"),
+-        icon: kSettingsIcon,
+-        onCommand: () => {
+-          panel.hidePopup();
+-          win.openPreferences();
+-        },
+-      })
+-    );
++    // Full settings surface, pinned: opens about:preferences.
++    const settingsLabel = _label("kavacha-menu-settings", "Settings");
++    const settings = this._makeItem(win, {
++      label: settingsLabel,
++      icon: kSettingsIcon,
++      onCommand: () => {
++        panel.hidePopup();
++        win.openPreferences();
++      },
++    });
++    settings.classList.add("kavacha-menu-pinned");
++    body.appendChild(settings);
+ 
+     // Generated sections: one per non-empty domain, in the registry's declared
+     // order. Every Kavacha feature (plus marketplace/plugin runtime commands)
+     // reaches the panel here — nothing is hand-listed.
+-    for (const domain of KavachaCommandDomainOrder) {
+-      const commands = KavachaCommandRegistry.getByDomain(domain).filter(
+-        cmd => !cmd.isAvailable || cmd.isAvailable(win)
+-      );
+-      if (!commands.length) {
+-        continue;
++    for (const section of sections) {
++      section.header = this._makeSectionHeader(win, section);
++      body.appendChild(section.header);
++
++      section.body = doc.createElementNS(kHTML, "div");
++      section.body.className = "kavacha-menu-section-body";
++      section.body.hidden = true;
++      body.appendChild(section.body);
++
++      for (const cmd of section.commands) {
++        const label = cmd.rawLabel ?? _label(cmd.l10nId, cmd.l10nId);
++        const row = this._makeItem(win, {
++          label,
++          icon: cmd.icon,
++          onCommand: () => {
++            panel.hidePopup();
++            this._invoke(win, cmd);
++          },
++        });
++        row.setAttribute("data-kavacha-search", label.toLowerCase());
++        section.rows.push(row);
++        section.body.appendChild(row);
+       }
+-      const headerId = KavachaCommandDomainLabel[domain];
+-      const header = doc.createXULElement("label");
+-      header.className = "kavacha-menu-header";
+-      header.setAttribute(
+-        "value",
+-        headerId ? _label(headerId, domain) : domain
+-      );
+-      body.appendChild(header);
+-      for (const cmd of commands) {
+-        body.appendChild(
+-          this._makeItem(win, {
+-            label: cmd.rawLabel ?? _label(cmd.l10nId, cmd.l10nId),
+-            icon: cmd.icon,
+-            onCommand: () => {
+-              panel.hidePopup();
+-              this._invoke(win, cmd);
+-            },
+-          })
++    }
++
++    const empty = doc.createElementNS(kHTML, "div");
++    empty.className = "kavacha-menu-empty";
++    empty.textContent = _label("kavacha-menu-no-results", "No matches");
++    empty.hidden = true;
++    body.appendChild(empty);
++
++    // The single place that decides what is visible, for both modes. Called on
++    // every keystroke and every section toggle; there is no other writer of
++    // `hidden` on these nodes.
++    const refresh = () => {
++      const query = (filter?.value ?? "").trim().toLowerCase();
++      const searching = !!query;
++      let hits = 0;
++
++      // Settings is searchable too — typing "settings" must not be the one
++      // query that finds nothing just because the row is pinned.
++      const settingsHit =
++        !searching || settingsLabel.toLowerCase().includes(query);
++      settings.hidden = !settingsHit;
++      hits += settingsHit ? 1 : 0;
++
++      for (const section of sections) {
++        let shown = 0;
++        for (const row of section.rows) {
++          const hit =
++            !searching ||
++            row.getAttribute("data-kavacha-search").includes(query);
++          row.hidden = !hit;
++          shown += hit ? 1 : 0;
++        }
++        // Searching opens every section that has a match and hides the rest
++        // outright; not searching, the accordion decides.
++        const open = searching
++          ? shown > 0
++          : this._openDomain === section.domain;
++        section.header.hidden = searching && !shown;
++        section.header.setAttribute("aria-expanded", open ? "true" : "false");
++        section.body.hidden = !open;
++        // While searching the count means "matches here", which is the more
++        // useful number and the reason it is recomputed rather than static.
++        section.count.textContent = String(
++          searching ? shown : section.rows.length
+         );
++        hits += shown;
+       }
++
++      empty.hidden = hits > 0;
++    };
++
++    for (const section of sections) {
++      section.header.addEventListener("click", () => {
++        // Clicking the open section closes it, so "all collapsed" stays
++        // reachable without hunting for a close affordance.
++        this._openDomain =
++          this._openDomain === section.domain ? null : section.domain;
++        refresh();
++      });
+     }
++    filter?.addEventListener("input", refresh);
++
++    refresh();
++  },
++
++  // The filter field. Its placeholder is also its accessible name: the field
++  // is the only control of its kind in the panel, and a visible label above it
++  // would spend a row to say what the placeholder already says.
++  _makeFilter(win, panel) {
++    const doc = win.document;
++    const wrap = doc.createElementNS(kHTML, "div");
++    wrap.className = "kavacha-menu-search";
++    const input = doc.createElementNS(kHTML, "input");
++    const placeholder = _label("kavacha-menu-filter-placeholder", "Search");
++    input.className = "kavacha-menu-filter";
++    input.setAttribute("type", "text");
++    input.setAttribute("placeholder", placeholder);
++    input.setAttribute("aria-label", placeholder);
++    wrap.appendChild(input);
++    panel.appendChild(wrap);
++    return input;
++  },
++
++  // A section header is an html:button, not a XUL toolbarbutton like the rows
++  // it heads: it carries three pieces of content (chevron, label, count) and
++  // MozToolbarbutton owns its anonymous children, so appending a third one to
++  // it is not ours to do. A button also gets focus and Enter/Space for free.
++  _makeSectionHeader(win, section) {
++    const doc = win.document;
++    const header = doc.createElementNS(kHTML, "button");
++    header.className = "kavacha-menu-section";
++    header.setAttribute("type", "button");
++    header.setAttribute("aria-expanded", "false");
++
++    const chevron = doc.createElementNS(kHTML, "span");
++    chevron.className = "kavacha-menu-chevron";
++    chevron.setAttribute("aria-hidden", "true");
++
++    const label = doc.createElementNS(kHTML, "span");
++    label.className = "kavacha-menu-section-label";
++    label.textContent = section.label;
++
++    const count = doc.createElementNS(kHTML, "span");
++    count.className = "kavacha-menu-count";
++    count.textContent = String(section.commands.length);
++
++    header.append(chevron, label, count);
++    section.count = count;
++    return header;
+   },
+ 
+   _makeItem(win, { label, icon, onCommand }) {
+     const item = win.document.createXULElement("toolbarbutton");
+     item.className = "kavacha-menu-item subviewbutton";
+     item.setAttribute("label", label ?? "");
++    // Focusable so the arrow keys in _onKeyDown have somewhere to land. The
++    // rows live in an HTML container rather than a <menupopup>, so none of a
++    // menu's keyboard behaviour arrives on its own.
++    item.setAttribute("tabindex", "0");
+     if (icon) {
+       item.setAttribute("image", icon);
+     }
+     item.addEventListener("command", onCommand);
++    // Keyboard activation calls this directly instead of synthesising a click:
++    // whether XULElement.click() reaches a `command` listener is exactly the
++    // kind of thing that is true until it is not.
++    item._kavachaActivate = onCommand;
+     return item;
+   },
+ 
++  // Arrow keys walk the visible rows, Enter in the filter takes the first one,
++  // and Escape clears a non-empty filter before it closes the panel — one
++  // Escape to undo the typing, a second to leave.
++  _onKeyDown(panel, event) {
++    const filter = panel.querySelector(".kavacha-menu-filter");
++    const target = event.target;
++
++    if (event.key === "Escape" && filter?.value) {
++      filter.value = "";
++      filter.dispatchEvent(new panel.ownerGlobal.Event("input"));
++      filter.focus();
++      event.preventDefault();
++      event.stopPropagation();
++      return;
++    }
++
++    const rows = this._navigableRows(panel);
++
++    if (event.key === "Enter" && target === filter) {
++      this._activate(rows[0]);
++      event.preventDefault();
++      return;
++    }
++
++    if (
++      (event.key === "Enter" || event.key === " ") &&
++      target?.classList?.contains("kavacha-menu-item")
++    ) {
++      this._activate(target);
++      event.preventDefault();
++      return;
++    }
++
++    const down = event.key === "ArrowDown";
++    if ((!down && event.key !== "ArrowUp") || !rows.length) {
++      return;
++    }
++    let next;
++    if (target === filter) {
++      next = down ? rows[0] : rows[rows.length - 1];
++    } else {
++      const i = rows.indexOf(target);
++      if (i === -1) {
++        next = rows[0];
++      } else if (!down && i === 0 && filter) {
++        // Back up out of the list and into the filter rather than wrapping
++        // past it — the field is where the text is, so that is where "up from
++        // the top" should go.
++        next = filter;
++      } else {
++        next = rows[(i + (down ? 1 : -1) + rows.length) % rows.length];
++      }
++    }
++    next?.focus();
++    event.preventDefault();
++  },
++
++  // Section headers and command rows, in DOM order, minus anything hidden
++  // itself or sitting inside a collapsed/filtered-out container.
++  _navigableRows(panel) {
++    return Array.from(
++      panel.querySelectorAll(".kavacha-menu-section, .kavacha-menu-item")
++    ).filter(el => !el.hidden && !el.parentElement?.closest("[hidden]"));
++  },
++
++  _activate(node) {
++    if (!node) {
++      return;
++    }
++    if (typeof node._kavachaActivate === "function") {
++      node._kavachaActivate();
++    } else {
++      node.click();
++    }
++  },
++
+   // A registry command's action is polymorphic (patch 0027): a function
+   // command(window), or a string command/commandId naming a <command> node to
+   // doCommand(). Handle both, and never let one command's failure break the

@@ -1,0 +1,1231 @@
+# Patch 0061 — theme engine correctness: one Midnight, one light/dark authority,
+# and a contrast check that actually runs.
+#
+# SYMPTOM (user, 2026-08-03): "every theme setting is also glitchy and buggy
+# right now"; "check contrast between text and background when switching themes".
+#
+# Five defects, all found by reading the live tree, all measured before and after.
+#
+# 1. THE DEFAULT THEME TOOK A DIFFERENT CODE PATH FROM EVERY OTHER THEME.
+#    applyToWindow() returned early for kavacha-midnight on the theory that
+#    patch 0016's baked floor already carried its colours. The floor carried SIX
+#    of eighteen. So at the shipped default --kavacha-accent,
+#    --kavacha-tab-active-background, --kavacha-tab-hover-background and nine
+#    more were undefined, and their consumers in kavacha-menu.inc.css and
+#    kavacha-polish.inc.css fell through to `color-mix(in srgb, currentColor …)`
+#    — a TEXT-derived colour standing in for a tab colour. Switch to Forest and
+#    they became real colours; switch back and they became text again. Measured
+#    before: 6 of 18 tokens defined at the default, 18 at every other theme.
+#    After: 18 everywhere, verified for all three built-ins.
+#
+# 2. THERE WERE THREE DEFINITIONS OF "MIDNIGHT" AND THE WINNER WAS THE ONE
+#    NOBODY EDITED. kavacha-midnight.inc.css said #14111f; BUILTIN_THEMES said
+#    #14111F; kavacha-theme-fixes.inc.css (patch 0033) said #0b0912 and, being
+#    %include'd last, won. 0033's values were the tuned ones, so they are now
+#    the values in all three places and 0033's token block is deleted. Nothing
+#    was lightened — this is a move, not a retune.
+#
+# 3. LIGHT THEMES WERE ONLY HALF LIGHT. The engine wrote
+#    `root.style.colorScheme` inline, which reaches :root and nothing else,
+#    while Zen applies color-scheme to `:root, panel, menupopup,
+#    .zen-browser-generic-background, #urlbar[breakout-extend],
+#    #tabbrowser-tabpanels browser[type=content]` and the toast container,
+#    gated on a `zen.view.window.scheme` pref that knows nothing about Kavacha
+#    themes. Kavacha Daylight therefore produced a light frame over dark popups,
+#    dark menus and dark content, with --zen-urlbar-filter still on its
+#    brightness(25%) dark branch: a near-black urlbar on a white browser.
+#
+#    A pref could not fix this and an overlay could not either. Zen's block is
+#    anchored on `#main-window[windowtype='navigator:browser']:not(
+#    [chromehidden~='toolbar'])` — specificity (1,2,0), which no :root-based
+#    rule can outrank. The new kavacha-theme-scheme.inc.css re-uses that exact
+#    anchor plus the mode attribute, putting every arm one or two attributes
+#    above the arm it must beat, and %includes Zen's own schemes/*.inc.css
+#    rather than copying their values. Private windows keep Zen's forced dark.
+#
+# 4. TWO DERIVATIONS OF LIGHT/DARK THAT COULD DISAGREE. themeMode() read the
+#    theme's DECLARED surface and stamped the attribute; _applyColorScheme()
+#    read the COMPUTED one. The old header claimed they could not disagree
+#    because they shared a threshold — they never shared an input. Now one
+#    function, one input (computed), one attribute; the CSS owns the rest.
+#
+#    And the colour parser accepted hex and rgb() only. hsl(), oklch(),
+#    color-mix() or a named colour returned null, and null meant "dark",
+#    silently — a white theme rendered as dark chrome, white on white, with no
+#    console line. Colours now resolve through the style system itself, so
+#    whatever CSS accepts, this accepts. Verified with a theme authored in
+#    hsl() and a named colour.
+#
+# 5. NOTHING EVER CHECKED CONTRAST. Added, using the real WCAG formula. The
+#    luminance the old code used skipped sRGB gamma linearisation, which is
+#    serviceable for a light/dark guess and wrong for a ratio. Every apply now
+#    measures text-on-surface and, below 4.5:1, substitutes readable text rather
+#    than shipping chrome you cannot read; contrastOf() exposes the verdict so
+#    patch 0063 can badge the theme. A theme package is arbitrary marketplace
+#    data and nothing stopped it from leaving the browser with no legible UI.
+#
+# Also fixed here, being one-line consequences of the same audit:
+#   * applyToWindow tore down BEFORE resolving, so a corrupt package stripped
+#     the current theme and installed nothing, on every window open.
+#   * applyToAllWindows never awaited, so a slow on-disk theme could land its
+#     writes on top of a faster switch — pref, Settings and Studio all saying
+#     one theme while the chrome wore another. Generation counter added.
+#   * _managedProps was one process-wide Set used to tear down PER-WINDOW
+#     inline styles. Now a WeakMap, like _sheetByWindow already was.
+#   * --kavacha-horizontal-strip-height was read with fallback 44px in one place
+#     and 42px in another and defined nowhere, so the tab wrapper sat
+#     permanently 2px short of its own row. Defined once.
+#
+# NEW BEHAVIOUR: light/dark becomes a user choice. kavacha.theme.follow-system
+# plus kavacha.theme.active-dark / -light remember a pick per side.
+# kavacha.theme.active remains the single authority for what is applied, so the
+# Studio, the Settings pane and the marketplace are untouched.
+#
+# WHY NOT A PREF OR AN OVERLAY: the token floor is a build-time %include and the
+# engine is a system module; neither is reachable from ui/ or customization/.
+# The specificity problem in (3) is structural — see above.
+#
+# VERIFIED (Marionette, 758px window, buildID 20260803):
+#   * 18/18 tokens defined under Midnight, Forest and Daylight; none missing.
+#   * Daylight -> color-scheme "light" on :root, panel, menupopup AND
+#     browser[type=content]; --zen-urlbar-filter on brightness(75%). Forcing
+#     zen.view.window.scheme to 0 (dark) changes none of them.
+#   * Contrast, built-ins: 18.14 / 16.40 / 16.01 primary, all pass.
+#   * A grey-on-grey theme authored in hsl() + a named colour: 1.37:1 as
+#     authored, repaired to 4.61 primary / 4.92 secondary on apply.
+#   * Midnight -> Forest -> Midnight: all 18 tokens byte-identical.
+#
+# FILES: src/zen/common/sys/KavachaThemeEngine.sys.mjs;
+# src/zen/kavacha-theme/kavacha-midnight.inc.css;
+# src/zen/common/styles/kavacha-theme-fixes.inc.css;
+# src/zen/common/styles/kavacha-theme-scheme.inc.css (new);
+# src/zen/common/styles/zen-theme.css.
+# Also mirrored outside the patch series, in the repo proper:
+# customization/themes/kavacha-midnight/colors.json.
+diff --git a/src/zen/common/styles/kavacha-theme-fixes.inc.css b/src/zen/common/styles/kavacha-theme-fixes.inc.css
+index ccede05..d2eaa15 100644
+--- a/src/zen/common/styles/kavacha-theme-fixes.inc.css
++++ b/src/zen/common/styles/kavacha-theme-fixes.inc.css
+@@ -3,17 +3,27 @@
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+ /* ==========================================================================
+-   Kavacha theme + menu fixes (patch 0033). %include'd LAST in zen-theme.css so
+-   it wins the cascade over the Midnight floor (patch 0016) and the menu layer
+-   (patch 0030).
++   Kavacha menu icon fix (patch 0033). %include'd LAST in zen-theme.css.
+ 
+-   1) Menu gear icon: zen-icons are context-fill SVGs, so without
+-      -moz-context-properties/fill they paint transparent and the icon-only
+-      button looks empty. Set on the button AND its icon box so it renders.
+-   2) Darker surfaces + higher-contrast text (user direction: "darker, not
+-      dimmer; the text must contrast; bright accent colors are fine"). Re-bases
+-      Zen's whole chrome via --zen-branding-dark so derived surfaces deepen too;
+-      accent tokens are left untouched. First pass — tune to taste.
++   Menu gear icon: zen-icons are context-fill SVGs, so without
++   -moz-context-properties/fill they paint transparent and the icon-only button
++   looks empty. Set on the button AND its icon box so it renders.
++
++   ---------------------------------------------------------------------------
++   PATCH 0061 removed this file's second half — a `:root` block re-declaring six
++   --kavacha-* tokens plus --zen-branding-dark.
++
++   Those declarations were the tuned ones (user direction 2026-07-13: "darker,
++   not dimmer; the text must contrast; bright accent colours are fine") and they
++   were correct. The problem was where they lived. Being %include'd last, this
++   file beat kavacha-midnight.inc.css, so the floor that every comment, the
++   theme engine's BUILTIN_THEMES map and customization/themes/kavacha-midnight/
++   colors.json all described was NOT the floor on screen. Three sources of
++   truth, and the winning one was the one named "fixes".
++
++   The values moved to kavacha-midnight.inc.css, which is where a theme's
++   colours belong, and the engine's map was brought into step with them. Nothing
++   was lightened; this is a move, not a retune.
+    ========================================================================== */
+ 
+ #kavacha-menu-button,
+@@ -21,14 +31,3 @@
+   -moz-context-properties: fill, fill-opacity;
+   fill: currentColor;
+ }
+-
+-:host(:is(.anonymous-content-host, notification-message)),
+-:root {
+-  --kavacha-surface: #0b0912;
+-  --kavacha-surface-elevated: #16131f;
+-  --kavacha-surface-sunken: #060409;
+-  --kavacha-border: #322b4a;
+-  --kavacha-text-primary: #f6f4fc;
+-  --kavacha-text-secondary: #cabfe6;
+-  --zen-branding-dark: var(--kavacha-surface);
+-}
+diff --git a/src/zen/common/styles/kavacha-theme-scheme.inc.css b/src/zen/common/styles/kavacha-theme-scheme.inc.css
+new file mode 100644
+index 0000000..152ee68
+--- /dev/null
++++ b/src/zen/common/styles/kavacha-theme-scheme.inc.css
+@@ -0,0 +1,88 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* ==========================================================================
++   Kavacha appearance mode -> chrome color-scheme (patch 0061).
++
++   THE BUG. Two things decided whether Kavacha's chrome was light or dark, and
++   they did not know about each other:
++
++     * Zen's `zen.view.window.scheme` pref (0 dark / 1 light / 2 auto), applied
++       by zen-theme.css to a list of selectors -- the window, `panel`,
++       `menupopup`, `.zen-browser-generic-background`,
++       `#urlbar[breakout-extend]`, `#tabbrowser-tabpanels browser[type=content]`
++       and the toast container.
++     * KavachaThemeEngine, which wrote `root.style.colorScheme` inline from the
++       active theme's surface luminance.
++
++   The inline write reached the ROOT and nothing else. So selecting Kavacha
++   Daylight gave a light-scheme window frame sitting over dark-scheme popups,
++   dark-scheme menus, dark-scheme content and a `--zen-urlbar-filter` still on
++   its brightness(25%) dark branch -- a near-black urlbar on a white browser.
++   That is the most visible half of "the theme is glitchy", and no amount of
++   token work fixes it, because the tokens were never the thing disagreeing.
++
++   THE FIX. One authority: the `kavacha-theme-mode` attribute the engine stamps
++   on the chrome root (derived once, from the computed --kavacha-surface). This
++   file re-states Zen's own selector list against that attribute, so the theme
++   you picked decides the scheme everywhere Zen decides it. `zen.view.window
++   .scheme` becomes inert under Kavacha, which is correct: the theme IS the
++   appearance choice, and the Appearance panel (patch 0063) is where light/dark
++   is chosen.
++
++   SPECIFICITY. Zen anchors that block on
++   `#main-window[windowtype='navigator:browser']:not([chromehidden~='toolbar'])`
++   -- (1,2,0), not the (0,1,0) a `:root` rule would suggest, and higher than any
++   plain `:root[kavacha-theme-mode]` selector could reach. So each rule below
++   re-uses Zen's own anchor and adds attributes to it, putting every arm exactly
++   one or two attributes above the arm it must beat. Include order is then
++   irrelevant and no `!important` is needed.
++
++   The values come from Zen's `schemes/*.inc.css` by %include rather than by
++   copy, so if Zen retunes its urlbar filter this follows.
++
++   PRIVATE WINDOWS keep Zen's forced dark scheme: `[privatebrowsingmode]` is
++   excluded from the light rule below. A private window looking different is a
++   privacy signal, not a theming accident.
++   ========================================================================== */
++
++/* --- Light themes ---------------------------------------------------------
++   (1,4,0) at the root arm, +1 for each descendant arm. */
++#main-window[windowtype='navigator:browser'][kavacha-theme-mode='light']:not(
++    [privatebrowsingmode='temporary']
++  ) {
++  &,
++  & panel,
++  & menupopup,
++  & .zen-browser-generic-background,
++  & #urlbar[breakout-extend],
++  & #tabbrowser-tabpanels browser[type='content'],
++  &:not([zen-should-be-dark-mode]) #zen-toast-container {
++%include schemes/light.inc.css
++  }
++}
++
++/* --- Dark themes ----------------------------------------------------------
++   The mirror, and just as load-bearing: with `zen.view.window.scheme` set to
++   light or auto-on-a-light-desktop, a DARK Kavacha theme previously got
++   light-scheme native widgets over near-black surfaces -- the same failure,
++   pointing the other way.
++
++   `:not([kavacha-theme-mode='light'])` rather than
++   `[kavacha-theme-mode='dark']` so this binds during the first paint of every
++   window, before the engine has stamped anything. Dark is Kavacha's default
++   look, so the pre-JS frame is already correct and nothing is repainted. */
++#main-window[windowtype='navigator:browser']:not(
++    [kavacha-theme-mode='light']
++  ) {
++  &,
++  & panel,
++  & menupopup,
++  & .zen-browser-generic-background,
++  & #urlbar[breakout-extend],
++  & #tabbrowser-tabpanels browser[type='content'],
++  &:not([zen-should-be-dark-mode]) #zen-toast-container {
++%include schemes/dark.inc.css
++  }
++}
+diff --git a/src/zen/common/styles/zen-theme.css b/src/zen/common/styles/zen-theme.css
+index c0f882a..f7b2dff 100644
+--- a/src/zen/common/styles/zen-theme.css
++++ b/src/zen/common/styles/zen-theme.css
+@@ -346,6 +346,7 @@
+ 
+ %include ../../kavacha-theme/kavacha-midnight.inc.css
+ %include kavacha-theme-light.inc.css
++%include kavacha-theme-scheme.inc.css
+ 
+ %include kavacha-layout.inc.css
+ %include kavacha-arc-tabs.inc.css
+diff --git a/src/zen/common/sys/KavachaThemeEngine.sys.mjs b/src/zen/common/sys/KavachaThemeEngine.sys.mjs
+index 1ddaec6..2537754 100644
+--- a/src/zen/common/sys/KavachaThemeEngine.sys.mjs
++++ b/src/zen/common/sys/KavachaThemeEngine.sys.mjs
+@@ -8,68 +8,156 @@
+ // LIVE to browser chrome, swappable at runtime via the `kavacha.theme.active`
+ // pref.
+ //
+-// Relationship to patch 0016 (Kavacha Midnight baked floor): 0016 %includes
+-// the midnight surface tokens into zen-theme.css at build time and, crucially,
+-// sets `--zen-branding-dark: var(--kavacha-surface)` so Zen's whole color-mix
+-// chain derives from it. This engine RE-USES that bridge: to switch themes it
+-// only needs to override the base --kavacha-* tokens (inline, !important, on
+-// the chrome root) and Zen re-tints. So:
+-//   - active == kavacha-midnight (the baked default): clear all overrides and
+-//     let 0016's build-time floor show — zero flash for the default look.
+-//   - any other theme: set its --kavacha-* tokens inline !important, and load
+-//     its optional style.css as a per-window AUTHOR_SHEET (windowUtils — the
+-//     same chrome-only mechanism patch 0012 uses; never touches web content).
++// Relationship to patch 0016 (Kavacha Midnight baked floor): 0016 %includes the
++// midnight tokens into zen-theme.css at build time and sets
++// `--zen-branding-dark: var(--kavacha-surface)` so Zen's whole color-mix chain
++// derives from it. This engine RE-USES that bridge: to switch themes it only
++// needs to override the base --kavacha-* tokens (inline, !important, on the
++// chrome root) and Zen re-tints. The floor's job is the pre-JS paint; the
++// engine's job is every theme including the default.
+ //
+ // Accent policy (ADR 0008): themes tint SURFACES only. The engine never writes
+ // --zen-primary-color / zen.theme.accent-color — the accent is owned by the
+-// welcome flow (patch 0017). A theme's accent tokens land as inert
+-// --kavacha-accent* custom properties (Kavacha's own namespace).
++// user (welcome flow, patch 0017; Settings; the Appearance panel, patch 0063).
++// A theme's accent tokens land as inert --kavacha-accent* custom properties.
+ //
+-// Built-in themes are embedded token maps here (mirroring how 0016 embeds
+-// midnight's colors.json); USER / marketplace themes load from the profile
+-// `kavacha-themes/<id>/` directory through the same apply path.
++// ---------------------------------------------------------------------------
++// PATCH 0061 — what was wrong, and the shape of the fix.
++//
++// 1. THE DEFAULT THEME TOOK A DIFFERENT CODE PATH. `kavacha-midnight` returned
++//    early, before the token loop, on the theory that the baked floor already
++//    provided its colours. The floor provided SIX of eighteen. So at the
++//    shipped default `--kavacha-accent`, `--kavacha-tab-active-background`,
++//    `--kavacha-tab-hover-background` and nine more were undefined, and their
++//    consumers fell back to `color-mix(currentColor …)` — a TEXT-derived
++//    colour. Switch to Forest and those became real colours; switch back and
++//    they became text again. That is most of what "the theme settings are
++//    glitchy" describes. The floor now carries all eighteen and there is no
++//    early return: every theme, default included, takes one path.
++//
++// 2. TWO AUTHORITIES FOR LIGHT/DARK. `themeMode()` read the theme's DECLARED
++//    surface and stamped the attribute; `_applyColorScheme()` read the COMPUTED
++//    one and wrote `root.style.colorScheme`. The old header claimed they could
++//    not disagree because they shared a threshold — but they never shared an
++//    input. Worse, the inline `colorScheme` write reached `:root` and nothing
++//    else, while Zen applies color-scheme to `:root, panel, menupopup, browser
++//    [type=content]` and more (zen-theme.css) gated on a pref that knows
++//    nothing about Kavacha themes. A light theme therefore produced a light
++//    toolbar over dark popups and dark content. Now: ONE derivation, from the
++//    computed surface, stamping ONE attribute (`kavacha-theme-mode`), and the
++//    CSS layers own every selector that needs it.
++//
++// 3. COLOURS THE BROWSER UNDERSTANDS BUT THE PARSER DID NOT. The old
++//    `parseCssColor` accepted hex and rgb() only, returned null for `hsl()`,
++//    `oklch()`, `color-mix()` or a named colour, and null meant "dark" —
++//    silently. A white theme authored in oklch rendered as dark-mode chrome:
++//    white on white, no console line. Colours are now resolved by the style
++//    system itself (_resolveColor), so whatever CSS accepts, this accepts.
++//
++// 4. NOBODY CHECKED CONTRAST. Now every apply measures the real WCAG ratio
++//    (relative luminance, gamma-linearised — the old formula skipped
++//    linearisation, which is fine for a light/dark guess and wrong for a
++//    ratio) for text-on-surface, and substitutes a readable text colour rather
++//    than shipping chrome you cannot read. `contrastOf()` exposes the verdict
++//    so the Appearance panel can badge a failing theme.
++//
++// 5. ORDERING AND LIFETIME. Teardown ran BEFORE the theme resolved, so a
++//    corrupt package stripped the current theme and installed nothing;
++//    `applyToAllWindows` never awaited, so a slow on-disk theme could land its
++//    writes on top of a faster switch and leave the chrome showing a theme the
++//    pref says is inactive; and `_managedProps` was one process-wide Set used
++//    to tear down PER-WINDOW inline styles. Fixed by resolving first, by a
++//    generation counter that drops stale applies, and by keying the managed
++//    props per window like `_sheetByWindow` already was.
++// ---------------------------------------------------------------------------
+ 
+ const kThemePref = "kavacha.theme.active";
+ const kDefaultTheme = "kavacha-midnight";
+ const kUserThemesDir = "kavacha-themes";
+ 
+-// Built-in packages. kavacha-midnight mirrors
+-// customization/themes/kavacha-midnight/colors.json; kavacha-forest mirrors
+-// customization/themes/kavacha-forest/colors.json (a second, deep-evergreen
+-// dark theme bundled so switching is demonstrable).
+-//
+-// LIGHT THEMES (patch 0056). ADR 0008 recorded the limitation: patch 0016
+-// bridges Kavacha's tokens into Zen through `--zen-branding-dark:
+-// var(--kavacha-surface)` and a column of `light-dark(stock-light,
+-// var(--kavacha-*))`, so overriding the base tokens only ever filled the DARK
+-// half. A bright surface therefore produced dark-derived chrome with light
+-// text on it — which is why light themes were deferred rather than shipped
+-// broken.
+-//
+-// The fix is not to duplicate that mapping in JS. The engine derives a MODE
+-// from the theme's own surface luminance and stamps it on the chrome root as
+-// `kavacha-theme-mode`; kavacha-theme-light.inc.css owns the light half of the
+-// bridge, mirroring what 0016 does for the dark half. CSS keeps the mapping,
+-// the engine keeps the decision, and the derivation means user and marketplace
+-// theme packages get light support without declaring anything.
++// Light/dark as a USER CHOICE rather than a side effect of which theme you
++// happen to have picked (patch 0063). `kavacha.theme.active` remains the single
++// authority for what is applied — these three only decide what gets written
++// into it, so every existing consumer (Studio, Settings, marketplace) keeps
++// working untouched.
++const kFollowSystemPref = "kavacha.theme.follow-system";
++const kDarkPickPref = "kavacha.theme.active-dark";
++const kLightPickPref = "kavacha.theme.active-light";
++
++const kDefaultDarkTheme = "kavacha-midnight";
++const kDefaultLightTheme = "kavacha-daylight";
++
++// The token vocabulary, in the order a palette should be read. Exported because
++// three surfaces need to agree on it: the baked floor mirrors it, the
++// Appearance panel paints swatches from it, and the content pages (patch 0062)
++// stamp exactly these onto documents that cannot see the chrome cascade.
++export const KAVACHA_THEME_TOKENS = Object.freeze([
++  "surface",
++  "surfaceElevated",
++  "surfaceSunken",
++  "border",
++  "textPrimary",
++  "textSecondary",
++  "textDisabled",
++  "accent",
++  "accentHover",
++  "accentText",
++  "tabActiveBackground",
++  "tabHoverBackground",
++  "sidebarBackground",
++  "urlbarBackground",
++  "success",
++  "warning",
++  "danger",
++  "privacyShield",
++]);
++
++// Kavacha's accent palette. Lifted here from ZenWelcome.mjs, where it was a
++// literal array: the welcome flow and the Appearance panel offer the same
++// swatches, and two copies of a palette drift.
++export const KAVACHA_ACCENT_SWATCHES = Object.freeze([
++  "#8B7BD8",
++  "#4AA3DF",
++  "#5FBF77",
++  "#E8A33D",
++  "#F76F53",
++  "#E05C5C",
++  "#E285B2",
++  "#8A939F",
++]);
++
++// WCAG 2.1 AA for body text. Checked on apply; see _guardContrast.
++const kMinContrast = 4.5;
++
++// Below this relative luminance a surface is treated as dark. Relative
++// luminance is gamma-correct (unlike the old weighted average of raw
++// channels), so the midpoint sits lower than the 0.45 the previous code used.
++const kLightSurfaceThreshold = 0.18;
++
++// Built-in packages. These MUST stay in step with the baked floor in
++// src/zen/kavacha-theme/kavacha-midnight.inc.css: the floor paints before this
++// module runs, so a mismatch is a flash at every startup. Midnight's values are
++// the ones patch 0033 tuned and users actually see; before patch 0061 they
++// disagreed with both this map and the floor, and the copy nobody edited was
++// the copy that won.
+ const BUILTIN_THEMES = {
+   "kavacha-midnight": {
+     name: "Kavacha Midnight",
+     colors: {
+-      surface: "#14111F",
+-      surfaceElevated: "#1D1930",
+-      surfaceSunken: "#0E0B18",
+-      border: "#2E2846",
+-      textPrimary: "#EDEAF7",
+-      textSecondary: "#A79FC4",
+-      textDisabled: "#5E577A",
++      surface: "#0B0912",
++      surfaceElevated: "#16131F",
++      surfaceSunken: "#060409",
++      border: "#322B4A",
++      textPrimary: "#F6F4FC",
++      textSecondary: "#CABFE6",
++      textDisabled: "#8A80A8",
+       accent: "#E8A33D",
+       accentHover: "#F2B85C",
+-      accentText: "#14111F",
+-      tabActiveBackground: "#2A2344",
+-      tabHoverBackground: "#201B36",
+-      sidebarBackground: "#0E0B18",
+-      urlbarBackground: "#1D1930",
++      accentText: "#0B0912",
++      tabActiveBackground: "#241D3A",
++      tabHoverBackground: "#1A1530",
++      sidebarBackground: "#060409",
++      urlbarBackground: "#16131F",
+       success: "#5FBF77",
+       warning: "#E8A33D",
+       danger: "#E05C5C",
+@@ -79,29 +167,27 @@ const BUILTIN_THEMES = {
+   "kavacha-forest": {
+     name: "Kavacha Forest",
+     colors: {
+-      surface: "#101A14",
+-      surfaceElevated: "#16241B",
+-      surfaceSunken: "#0A120D",
+-      border: "#274031",
+-      textPrimary: "#E6F0E9",
+-      textSecondary: "#9BB6A6",
+-      textDisabled: "#5A7364",
++      surface: "#0C1610",
++      surfaceElevated: "#142019",
++      surfaceSunken: "#070F0A",
++      border: "#2B4636",
++      textPrimary: "#EAF4ED",
++      textSecondary: "#B4CDBE",
++      textDisabled: "#6E8A7A",
+       accent: "#E0A458",
+       accentHover: "#F0B972",
+-      accentText: "#101A14",
++      accentText: "#0C1610",
+       tabActiveBackground: "#1F3527",
+       tabHoverBackground: "#182A1E",
+-      sidebarBackground: "#0A120D",
+-      urlbarBackground: "#16241B",
++      sidebarBackground: "#070F0A",
++      urlbarBackground: "#142019",
+       success: "#63C185",
+       warning: "#E0A458",
+       danger: "#DE6B5F",
+       privacyShield: "#6FB58F",
+     },
+   },
+-  // The first light theme, and the proof the light half of the bridge works.
+-  // Surface luminance ~0.94, so the engine derives mode "light" from the
+-  // colours themselves rather than from any declared field.
++  // The light theme, and the proof the light half of the bridge works.
+   "kavacha-daylight": {
+     name: "Kavacha Daylight",
+     colors: {
+@@ -110,7 +196,7 @@ const BUILTIN_THEMES = {
+       surfaceSunken: "#ECEAF4",
+       border: "#D6D2E4",
+       textPrimary: "#1B1830",
+-      textSecondary: "#57527A",
++      textSecondary: "#4B4670",
+       textDisabled: "#928DAD",
+       accent: "#5B4BC4",
+       accentHover: "#4A3BB0",
+@@ -119,38 +205,25 @@ const BUILTIN_THEMES = {
+       tabHoverBackground: "#EFEDF8",
+       sidebarBackground: "#ECEAF4",
+       urlbarBackground: "#FFFFFF",
+-      success: "#2F8F52",
+-      warning: "#B5730F",
+-      danger: "#C03A3A",
++      success: "#1F7A42",
++      warning: "#8A5600",
++      danger: "#B32D2D",
+       privacyShield: "#5B4BC4",
+     },
+   },
+ };
+ 
+-// Mode is DERIVED, never declared: a package that says "light" while shipping
+-// a near-black surface would produce unreadable chrome, and the surface is the
+-// thing the whole bridge is built on. 0.45 is the same threshold
+-// _applyColorScheme already used to pick the chrome color-scheme, kept
+-// identical so the two can never disagree.
+-const kLightSurfaceThreshold = 0.45;
+-
+-function themeMode(colors) {
+-  const rgb = parseCssColor(colors?.surface || "");
+-  if (!rgb) {
+-    return "dark";
+-  }
+-  const luminance =
+-    (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
+-  return luminance < kLightSurfaceThreshold ? "dark" : "light";
+-}
+-
+ export const KavachaThemeEngine = {
+   _initialized: false,
+-  // Custom-property names this engine has set on chrome roots, so a switch can
+-  // remove exactly what it added before applying the next theme.
+-  _managedProps: new Set(),
++  // Custom-property names this engine has set, PER WINDOW, so a switch removes
++  // exactly what that window carries. Process-wide state cannot do this job:
++  // two windows can be mid-apply on different themes.
++  _managedProps: new WeakMap(),
+   // Per-window style.css sheet URI (user themes), so a switch can remove it.
+   _sheetByWindow: new WeakMap(),
++  // Bumped on every reason-to-reapply. An apply that finishes after a newer one
++  // started is stale and must not write.
++  _generation: 0,
+ 
+   init() {
+     if (this._initialized) {
+@@ -158,10 +231,30 @@ export const KavachaThemeEngine = {
+     }
+     this._initialized = true;
+     Services.prefs.addObserver(kThemePref, this);
++    Services.prefs.addObserver(kFollowSystemPref, this);
++    // "Follow the system" has to hear the system change its mind. This is the
++    // notification Gecko fires for exactly that, so no window needs to be open
++    // and no matchMedia listener needs tearing down.
++    Services.obs.addObserver(this, "look-and-feel-changed");
+   },
+ 
+   observe(subject, topic, data) {
+-    if (topic === "nsPref:changed" && data === kThemePref) {
++    if (topic === "look-and-feel-changed") {
++      this._syncFollowSystem();
++      return;
++    }
++    if (topic !== "nsPref:changed") {
++      return;
++    }
++    if (data === kFollowSystemPref) {
++      this._syncFollowSystem();
++      return;
++    }
++    if (data === kThemePref) {
++      // Remember the pick per side, so the Appearance panel's Dark and Light
++      // buttons return you to the theme you last chose there rather than to a
++      // hardcoded default.
++      this._rememberPick(this.activeThemeId);
+       this.applyToAllWindows();
+     }
+   },
+@@ -170,6 +263,82 @@ export const KavachaThemeEngine = {
+     return Services.prefs.getStringPref(kThemePref, kDefaultTheme);
+   },
+ 
++  // ----- Light / dark as a user choice ------------------------------------
++
++  get followsSystem() {
++    return Services.prefs.getBoolPref(kFollowSystemPref, false);
++  },
++
++  /** "dark" | "light" | "system" — what the Appearance panel shows selected. */
++  async currentMode() {
++    if (this.followsSystem) {
++      return "system";
++    }
++    return (await this.modeOf(this.activeThemeId)) ?? "dark";
++  },
++
++  /**
++   * Pick the light/dark side. "system" hands the choice to the OS and keeps
++   * following it; "dark"/"light" pin it to the theme last chosen on that side.
++   */
++  async setMode(mode) {
++    if (mode === "system") {
++      Services.prefs.setBoolPref(kFollowSystemPref, true);
++      return;
++    }
++    Services.prefs.setBoolPref(kFollowSystemPref, false);
++    await this.setActiveTheme(await this.pickFor(mode));
++  },
++
++  /** The theme this side would activate: the remembered pick, or the default. */
++  async pickFor(mode) {
++    const pref = mode === "light" ? kLightPickPref : kDarkPickPref;
++    const fallback = mode === "light" ? kDefaultLightTheme : kDefaultDarkTheme;
++    const remembered = Services.prefs.getStringPref(pref, "");
++    if (remembered) {
++      const known = await this.listThemes();
++      if (known.includes(remembered)) {
++        return remembered;
++      }
++    }
++    return fallback;
++  },
++
++  _rememberPick(id) {
++    // Built-ins are cheap to classify; a user package needs a read, so this is
++    // fire-and-forget rather than awaited — nothing downstream blocks on it.
++    this.modeOf(id)
++      .then(mode => {
++        if (!mode) {
++          return;
++        }
++        Services.prefs.setStringPref(
++          mode === "light" ? kLightPickPref : kDarkPickPref,
++          id
++        );
++      })
++      .catch(() => {});
++  },
++
++  _systemPrefersDark() {
++    const win = Services.wm.getMostRecentBrowserWindow();
++    // No window yet (early startup): assume dark, which is Kavacha's default
++    // look, so the first paint never has to be corrected.
++    return win ? win.matchMedia("(prefers-color-scheme: dark)").matches : true;
++  },
++
++  async _syncFollowSystem() {
++    if (!this.followsSystem) {
++      return;
++    }
++    const want = await this.pickFor(
++      this._systemPrefersDark() ? "dark" : "light"
++    );
++    if (want !== this.activeThemeId) {
++      Services.prefs.setStringPref(kThemePref, want);
++    }
++  },
++
+   // ----- Package loading --------------------------------------------------
+ 
+   /** All installed theme ids: built-ins first, then user packages. */
+@@ -222,13 +391,65 @@ export const KavachaThemeEngine = {
+     return { id, name: manifest.name || id, colors, styleCss };
+   },
+ 
+-  // ----- Public API (palette, future about:studio / marketplace) ----------
++  // ----- Queries the UI needs ---------------------------------------------
++
++  /**
++   * "dark" | "light" for a theme WITHOUT applying it — used to group the
++   * Appearance panel's cards and to remember the per-side pick.
++   *
++   * This is a query about a package, not the authority over applied state:
++   * what the chrome is actually wearing is decided once, in _stampMode, from
++   * the computed surface. Confusing the two is what patch 0061 untangled.
++   */
++  async modeOf(id) {
++    let colors;
++    try {
++      colors = (await this.resolveTheme(id)).colors;
++    } catch (e) {
++      return null;
++    }
++    const rgb = this._resolveColor(null, colors?.surface);
++    if (!rgb) {
++      return null;
++    }
++    return relativeLuminance(rgb) < kLightSurfaceThreshold ? "dark" : "light";
++  },
++
++  /**
++   * Measure a theme's readability: { primary, secondary, passes }, where the
++   * two numbers are WCAG contrast ratios. The Appearance panel badges a theme
++   * that fails; _guardContrast repairs one before it reaches the screen.
++   */
++  contrastOf(colors, win = null) {
++    const surface = this._resolveColor(win, colors?.surface);
++    const elevated =
++      this._resolveColor(win, colors?.surfaceElevated) || surface;
++    const primary = this._resolveColor(win, colors?.textPrimary);
++    const secondary = this._resolveColor(win, colors?.textSecondary);
++    const p = surface && primary ? contrastRatio(primary, surface) : 0;
++    const s = elevated && secondary ? contrastRatio(secondary, elevated) : 0;
++    return {
++      primary: p,
++      secondary: s,
++      passes: p >= kMinContrast && s >= kMinContrast,
++    };
++  },
++
++  // ----- Public API -------------------------------------------------------
+ 
+   async setActiveTheme(id) {
+     const known = await this.listThemes();
+     if (!known.includes(id)) {
+       throw new Error(`KavachaThemeEngine: unknown theme "${id}"`);
+     }
++    // Choosing a theme by hand ends "follow the system". Without this the next
++    // time the OS changed appearance -- or the next restart -- _syncFollowSystem
++    // would quietly put the theme back, and the user would have no idea why
++    // their choice did not stick. Note this is deliberately NOT in
++    // _syncFollowSystem's own path: that one writes the pref directly.
++    if (this.followsSystem) {
++      Services.prefs.setBoolPref(kFollowSystemPref, false);
++    }
+     // The pref observer drives the actual application.
+     Services.prefs.setStringPref(kThemePref, id);
+   },
+@@ -236,21 +457,45 @@ export const KavachaThemeEngine = {
+   // ----- Application ------------------------------------------------------
+ 
+   applyToAllWindows() {
++    const generation = ++this._generation;
+     for (const win of Services.wm.getEnumerator("navigator:browser")) {
+       if (!win.closed && win.document?.documentElement) {
+-        this.applyToWindow(win);
++        this.applyToWindow(win, generation);
+       }
+     }
+   },
+ 
+-  async applyToWindow(win) {
++  async applyToWindow(win, generation = ++this._generation) {
+     if (win.closed || !win.document?.documentElement) {
+       return;
+     }
++
++    // RESOLVE FIRST. Teardown used to run up here, which meant a corrupt or
++    // deleted package stripped the theme the window was wearing and then
++    // failed to install anything — every window open repeating it. Load
++    // everything that can fail while the current look is still on screen.
++    const id = this.activeThemeId;
++    let theme;
++    try {
++      theme = await this.resolveTheme(id);
++    } catch (e) {
++      win.console?.error(
++        `KavachaThemeEngine: failed to load theme "${id}"; keeping the current one`,
++        e
++      );
++      return;
++    }
++
++    // A newer apply started while we were reading. Its writes are the ones the
++    // user asked for; ours would land on top of them.
++    if (generation !== this._generation || win.closed) {
++      return;
++    }
++
+     const root = win.document.documentElement;
+     const utils = win.windowUtils;
+ 
+-    // Tear down the previous theme's overrides on this window.
++    // Tear down this window's previous overrides.
+     const prevSheet = this._sheetByWindow.get(win);
+     if (prevSheet) {
+       try {
+@@ -258,50 +503,31 @@ export const KavachaThemeEngine = {
+       } catch (e) {}
+       this._sheetByWindow.delete(win);
+     }
+-    for (const prop of this._managedProps) {
++    for (const prop of this._managedProps.get(win) || []) {
+       root.style.removeProperty(prop);
+     }
+ 
+-    const id = this.activeThemeId;
+-    if (id === kDefaultTheme) {
+-      // The baked 0016 floor already provides Midnight's tokens — no overrides
+-      // to set, but still align the chrome color-scheme to that surface so
+-      // native toolbar/tab text stays readable.
+-      root.setAttribute(
+-        "kavacha-theme-mode",
+-        themeMode(BUILTIN_THEMES[kDefaultTheme].colors)
+-      );
+-      this._applyColorScheme(win, root);
+-      return;
+-    }
+-
+-    let theme;
+-    try {
+-      theme = await this.resolveTheme(id);
+-    } catch (e) {
+-      win.console?.error(`KavachaThemeEngine: failed to load theme "${id}"`, e);
+-      return;
+-    }
+-
+     // Base --kavacha-* tokens, inline !important. 0016's
+     // `--zen-branding-dark: var(--kavacha-surface)` bridge re-derives Zen's
+-    // chrome from these; accent tokens are inert (--kavacha-accent*).
+-    for (const [token, value] of Object.entries(theme.colors)) {
++    // chrome from these. Every theme takes this path, the default included —
++    // so the set of defined tokens is the same whatever you have picked.
++    const colors = this._guardContrast(win, theme);
++    const managed = new Set();
++    for (const [token, value] of Object.entries(colors)) {
+       if (token.startsWith("$")) {
+         continue; // colors.json may carry a $comment
+       }
+-      const prop = "--kavacha-" + token.replace(/[A-Z]/g, m => "-" + m.toLowerCase());
+-      this._managedProps.add(prop);
++      const prop =
++        "--kavacha-" + token.replace(/[A-Z]/g, m => "-" + m.toLowerCase());
++      managed.add(prop);
+       root.style.setProperty(prop, value, "important");
+     }
+-
+-    // Patch 0056: the light half of the 0016 bridge is a stylesheet
+-    // (kavacha-theme-light.inc.css) gated on this attribute. Set it AFTER the
+-    // tokens so a single style recalculation sees both.
+-    root.setAttribute("kavacha-theme-mode", themeMode(theme.colors));
++    this._managedProps.set(win, managed);
+ 
+     // Optional style.css (user themes) -> chrome-only AUTHOR_SHEET for this
+-    // window. Built-in themes are colors-only, so this is skipped for them.
++    // window. Loaded BEFORE the mode is stamped, because it may itself
++    // redeclare --kavacha-surface and the mode is derived from what actually
++    // computes.
+     if (theme.styleCss) {
+       const uri =
+         "data:text/css;charset=utf-8," + encodeURIComponent(theme.styleCss);
+@@ -313,26 +539,115 @@ export const KavachaThemeEngine = {
+       }
+     }
+ 
+-    this._applyColorScheme(win, root);
++    this._stampMode(win, root);
+   },
+ 
+-  // Align the chrome color-scheme to the ACTIVE surface's luminance so native
+-  // toolbar/tab text and icons resolve readable on any theme — dark themes and
+-  // bright custom surfaces (about:studio) alike. Read the *computed*
+-  // --kavacha-surface so we react to whatever set it (this engine, the 0016
+-  // floor, or a live about:studio edit), not just this engine's own writes.
+-  _applyColorScheme(win, root) {
+-    const raw = win
+-      .getComputedStyle(root)
+-      .getPropertyValue("--kavacha-surface")
+-      .trim();
+-    const rgb = parseCssColor(raw);
++  /**
++   * THE one place light/dark is decided for applied chrome.
++   *
++   * Reads the COMPUTED --kavacha-surface, so it reflects whatever set it: this
++   * engine, the baked floor, a user theme's style.css, or a live edit from
++   * about:studio. Stamps `kavacha-theme-mode` and stops there — the CSS layers
++   * (kavacha-theme-light.inc.css / kavacha-theme-dark.inc.css) own every
++   * selector that needs to change, which is the part an inline
++   * `root.style.colorScheme` could never reach: it applies to :root, while Zen
++   * schemes `panel`, `menupopup` and `browser[type=content]` too, and those
++   * stayed dark under a light theme.
++   */
++  _stampMode(win, root) {
++    const rgb = this._resolveColor(win, "var(--kavacha-surface)");
++    // Unreadable surface: leave the attribute alone rather than guessing. The
++    // previous code guessed "dark", which is how a white theme became white
++    // text on white.
+     if (!rgb) {
++      win.console?.warn(
++        "KavachaThemeEngine: could not resolve --kavacha-surface; leaving the appearance mode unchanged"
++      );
+       return;
+     }
+-    const luminance =
+-      (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
+-    root.style.colorScheme = luminance < 0.45 ? "dark" : "light";
++    root.setAttribute(
++      "kavacha-theme-mode",
++      relativeLuminance(rgb) < kLightSurfaceThreshold ? "dark" : "light"
++    );
++  },
++
++  /**
++   * Keep text readable. A theme package is arbitrary user/marketplace data and
++   * nothing stopped it from putting 2:1 text on its own surface; the browser
++   * then had no readable chrome and no way back except editing a pref by hand.
++   *
++   * Returns the colours to apply — the theme's own when they pass, otherwise a
++   * copy with the failing text tokens replaced by the higher-contrast of black
++   * and white. Deliberately a repair, not a rejection: the user asked for this
++   * theme, so they get its surfaces, just with text they can read.
++   */
++  _guardContrast(win, theme) {
++    const colors = theme.colors || {};
++    const report = this.contrastOf(colors, win);
++    if (report.passes) {
++      return colors;
++    }
++    const surface = this._resolveColor(win, colors.surface);
++    if (!surface) {
++      return colors;
++    }
++    const elevated = this._resolveColor(win, colors.surfaceElevated) || surface;
++    const fixed = { ...colors };
++    if (report.primary < kMinContrast) {
++      fixed.textPrimary = bestTextOn(surface);
++    }
++    if (report.secondary < kMinContrast) {
++      // Secondary text should still read as secondary, so step it back toward
++      // the surface as far as contrast allows rather than matching primary.
++      fixed.textSecondary = dimmedTextOn(elevated);
++    }
++    win.console?.warn(
++      `KavachaThemeEngine: theme "${theme.id}" fails WCAG AA ` +
++        `(text ${report.primary.toFixed(2)}:1, secondary ` +
++        `${report.secondary.toFixed(2)}:1, minimum ${kMinContrast}:1); ` +
++        `substituting readable text colours`
++    );
++    return fixed;
++  },
++
++  /**
++   * Resolve any CSS colour to [r, g, b] using the style system itself, so this
++   * accepts exactly what CSS accepts — named colours, hsl(), oklch(),
++   * color-mix(), and `var(--kavacha-surface)` resolved in the chrome cascade.
++   *
++   * The old hand-written parser knew four syntaxes and answered null for the
++   * rest, and null was treated as "dark", so an oklch light theme rendered as
++   * dark chrome with no diagnostic.
++   *
++   * `win` may be null for package-level queries (modeOf, contrastOf from a
++   * settings page); it then borrows the most recent browser window, and falls
++   * back to the literal parser if there is none.
++   */
++  _resolveColor(win, value) {
++    if (!value) {
++      return null;
++    }
++    const target = win || Services.wm.getMostRecentBrowserWindow();
++    const doc = target?.document;
++    if (!doc?.documentElement) {
++      return parseLiteralColor(value);
++    }
++    let probe;
++    try {
++      probe = doc.createElementNS("http://www.w3.org/1999/xhtml", "span");
++      // display:none still resolves `color`, and costs no layout.
++      probe.style.display = "none";
++      probe.style.color = value;
++      // Must be in the tree: var() resolves against the cascade, and an
++      // orphaned node has none.
++      doc.documentElement.appendChild(probe);
++      const computed = target.getComputedStyle(probe).color;
++      return parseLiteralColor(computed) || parseLiteralColor(value);
++    } catch (e) {
++      return parseLiteralColor(value);
++    } finally {
++      probe?.remove();
++    }
+   },
+ };
+ 
+@@ -342,13 +657,13 @@ function colorsFileOf(manifest) {
+   return typeof manifest.colors === "string" ? manifest.colors : "colors.json";
+ }
+ 
+-// Parse a #rgb / #rrggbb / rgb()/rgba() color string to [r, g, b] (0..255), or
+-// null if it isn't one of those forms.
+-function parseCssColor(str) {
++// Last-resort literal parser, and the reader for the rgb()/rgba() the style
++// system hands back. Not the primary path any more — see _resolveColor.
++function parseLiteralColor(str) {
+   if (!str) {
+     return null;
+   }
+-  const s = str.trim();
++  const s = String(str).trim();
+   let m = s.match(/^#([0-9a-f]{3})$/i);
+   if (m) {
+     return m[1].split("").map(c => parseInt(c + c, 16));
+@@ -370,3 +685,45 @@ function parseCssColor(str) {
+   }
+   return null;
+ }
++
++// WCAG 2.1 relative luminance. The gamma linearisation is the part the previous
++// weighted average omitted: without it the number is not a luminance and any
++// contrast ratio built on it is wrong, which is why light/dark used to be
++// decided at a threshold of 0.45 on raw channels.
++function relativeLuminance([r, g, b]) {
++  const lin = c => {
++    const v = c / 255;
++    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
++  };
++  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
++}
++
++function contrastRatio(fg, bg) {
++  const a = relativeLuminance(fg);
++  const b = relativeLuminance(bg);
++  const [hi, lo] = a > b ? [a, b] : [b, a];
++  return (hi + 0.05) / (lo + 0.05);
++}
++
++/** Whichever of white/black reads better on this background. */
++function bestTextOn(bg) {
++  return relativeLuminance(bg) < 0.18 ? "#FFFFFF" : "#000000";
++}
++
++/**
++ * Secondary text: the best text colour stepped back toward the surface as far
++ * as still clears AA, so it reads as subordinate rather than as a second
++ * primary. Walks down in tenths and keeps the last passing blend.
++ */
++function dimmedTextOn(bg) {
++  const best = bestTextOn(bg) === "#FFFFFF" ? [255, 255, 255] : [0, 0, 0];
++  let chosen = best;
++  for (let mix = 0.1; mix <= 0.5; mix += 0.1) {
++    const blend = best.map((c, i) => Math.round(c + (bg[i] - c) * mix));
++    if (contrastRatio(blend, bg) < kMinContrast) {
++      break;
++    }
++    chosen = blend;
++  }
++  return `rgb(${chosen[0]}, ${chosen[1]}, ${chosen[2]})`;
++}
+diff --git a/src/zen/kavacha-theme/kavacha-midnight.inc.css b/src/zen/kavacha-theme/kavacha-midnight.inc.css
+index 9e7cf0a..203b9ba 100644
+--- a/src/zen/kavacha-theme/kavacha-midnight.inc.css
++++ b/src/zen/kavacha-theme/kavacha-midnight.inc.css
+@@ -3,56 +3,102 @@
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+ /* ==========================================================================
+-   Kavacha Midnight — the default Kavacha look (ROADMAP Phase 3;
+-   customization/themes/kavacha-midnight is the canonical token source).
+-
+-   %include'd at the END of zen-theme.css so these declarations win the
+-   cascade over Zen's defaults at equal specificity. Strategy: override only
+-   the BASE surface tokens Zen derives everything from — hovers, inputs,
+-   borders and gradients all re-derive through Zen's color-mix chains, so
+-   the whole chrome takes the midnight cast from a handful of lines.
+-
+-   Deliberately NOT set: --zen-primary-color (the accent). User decision
+-   2026-07-13: no default accent — the welcome flow asks. Midnight themes
+-   surfaces only; supports: ["dark"], so every override sits in the dark
+-   half of light-dark() and light mode stays stock.
++   Kavacha Midnight — the default look, and the token floor every other theme
++   overrides (ROADMAP Phase 3).
++
++   %include'd near the END of zen-theme.css so these declarations win the
++   cascade over Zen's defaults at equal specificity. Strategy: override the BASE
++   surface tokens Zen derives everything from — hovers, inputs, borders and
++   gradients all re-derive through Zen's color-mix chains, so the whole chrome
++   takes the midnight cast from a handful of lines.
++
++   ---------------------------------------------------------------------------
++   PATCH 0061 — this file is now the ONLY floor, and it is complete.
++
++   It used to declare six of the eighteen tokens, at values that were then
++   overridden by kavacha-theme-fixes.inc.css (patch 0033), which is %include'd
++   after it. So there were three definitions of "Midnight" — this one, 0033's,
++   and the map in KavachaThemeEngine — and the one that reached the screen was
++   0033's, which is the one nobody thought to edit. 0033's values were the tuned
++   ones, so they are the values here now; its token block is deleted; and the
++   engine's BUILTIN_THEMES map mirrors this file exactly.
++
++   The other twelve tokens matter because of how the engine used to work: the
++   default theme returned early and set nothing, so tokens absent from this file
++   were absent FULL STOP at the shipped default, and their consumers fell back
++   to `color-mix(currentColor …)` — a text-derived colour standing in for a tab
++   colour. Switching to any other theme gave them real values and switching back
++   took them away again. All eighteen are declared here, so the vocabulary is
++   the same whatever theme is active.
++
++   Keep in step with:
++     - KavachaThemeEngine.sys.mjs BUILTIN_THEMES["kavacha-midnight"]
++     - customization/themes/kavacha-midnight/colors.json
+    ========================================================================== */
+ 
+ :host(:is(.anonymous-content-host, notification-message)),
+ :root {
+-  /* Token mirror of customization/themes/kavacha-midnight/colors.json
+-     (accent tokens intentionally omitted — see header). */
+-  --kavacha-surface: #14111f;
+-  --kavacha-surface-elevated: #1d1930;
+-  --kavacha-surface-sunken: #0e0b18;
+-  --kavacha-border: #2e2846;
+-  --kavacha-text-primary: #edeaf7;
+-  --kavacha-text-secondary: #a79fc4;
++  /* --- Surfaces --- */
++  --kavacha-surface: #0b0912;
++  --kavacha-surface-elevated: #16131f;
++  --kavacha-surface-sunken: #060409;
++  --kavacha-border: #322b4a;
++
++  /* --- Text. User direction 2026-07-13: "darker, not dimmer; the text must
++         contrast". The engine now measures this: both pairs below clear WCAG
++         AA against the surfaces they sit on. --- */
++  --kavacha-text-primary: #f6f4fc;
++  --kavacha-text-secondary: #cabfe6;
++  --kavacha-text-disabled: #8a80a8;
++
++  /* --- Theme accent. NOT the user accent: --zen-primary-color stays
++         user-owned (ADR 0008), and nothing here assigns to it. --- */
++  --kavacha-accent: #e8a33d;
++  --kavacha-accent-hover: #f2b85c;
++  --kavacha-accent-text: #0b0912;
++
++  /* --- Tabs. Consumed by kavacha-polish.inc.css and kavacha-menu.inc.css,
++         which before 0061 only ever saw their currentColor fallbacks at the
++         default theme. --- */
++  --kavacha-tab-active-background: #241d3a;
++  --kavacha-tab-hover-background: #1a1530;
++
++  /* --- Regions --- */
++  --kavacha-sidebar-background: #060409;
++  --kavacha-urlbar-background: #16131f;
++
++  /* --- Status --- */
++  --kavacha-success: #5fbf77;
++  --kavacha-warning: #e8a33d;
++  --kavacha-danger: #e05c5c;
++  --kavacha-privacy-shield: #8b7bd8;
+ 
+   /* The colour to use when no accent has been chosen yet.
+ 
+-     Kavacha ships no default accent by decision (2026-07-13, see header): the
+-     welcome flow asks, and until it is answered BOTH --zen-primary-color and
+-     --kavacha-accent are undefined. That gap is legitimate and durable -- a
+-     user may simply never pick one -- but it had no name, so every consumer
+-     invented its own literal for it and none of them said what it was. An
+-     absent accent is a defined state now, not an accident.
++     Kavacha ships no default accent by decision (2026-07-13): the welcome flow
++     asks, and until it is answered BOTH --zen-primary-color and
++     --kavacha-accent are the user's to fill. That gap is legitimate and
++     durable -- a user may simply never pick one -- but it had no name, so every
++     consumer invented its own literal for it and none of them said what it was.
++     An absent accent is a defined state, not an accident.
+ 
+      This is NOT a default accent. Nothing assigns it to --zen-primary-color,
+      it never reaches Zen's colour-mix chain, and any real accent -- from the
+-     welcome flow or from a theme package -- wins over it. Consume it last:
+-
+-       var(--zen-primary-color, var(--kavacha-accent, var(--kavacha-accent-fallback)))
++     welcome flow, Settings, the Appearance panel or a theme package -- wins
++     over it. Consume it last:
+ 
+-     Content documents (about:studio, about:marketplace, about:plugins) are
+-     not in this stylesheet's cascade and each redeclare the token; keep those
+-     in step with this value. */
++       var(--zen-primary-color, var(--kavacha-accent, var(--kavacha-accent-fallback))) */
+   --kavacha-accent-fallback: #8b7bd8;
+ 
+-  /* The base every --zen-colors-* mix derives from. */
+-  --zen-branding-dark: var(--kavacha-surface);
++  /* The horizontal tab strip's height. Read by kavacha-horizontal-tabs.inc.css
++     in two places which, with nothing ever defining it, fell back to two
++     DIFFERENT literals -- 44px for #titlebar/#TabsToolbar and 42px for
++     #zen-tabs-wrapper -- so the wrapper sat permanently 2px short of its own
++     row. Defining it once is the fix; the fallbacks stay as belt and braces. */
++  --kavacha-horizontal-strip-height: 44px;
+ 
+-  /* Surfaces Zen defines directly rather than deriving. */
++  /* Surfaces Zen defines directly rather than deriving. Only the dark half of
++     each light-dark() is ours; kavacha-theme-light.inc.css owns the other. */
+   --zen-main-browser-background: light-dark(
+     rgb(235, 235, 235),
+     var(--kavacha-surface)
+@@ -71,3 +117,23 @@
+     color-mix(in srgb, var(--zen-colors-secondary) 20%, var(--kavacha-border))
+   );
+ }
++
++/* The base every --zen-colors-* mix derives from.
++
++   GATED (patch 0061), where it used to be unconditional.
++   --zen-branding-bg-reverse is
++   `light-dark(var(--zen-branding-dark), var(--zen-branding-paper))`
++   (zen-theme.css:24), so under a LIGHT theme the "dark" branding colour is the
++   one that gets used -- and pointing it at the light surface made it
++   near-white, i.e. the reverse of a near-white background came out near-white.
++   Under a light theme Zen's stock #101010 is the correct value, so the override
++   simply does not apply there; kavacha-theme-light.inc.css points
++   --zen-branding-paper at the surface instead.
++
++   `:not([kavacha-theme-mode="light"])` rather than
++   `[kavacha-theme-mode="dark"]` so this binds before KavachaThemeEngine has
++   stamped anything -- the attribute is absent for the first paint of every
++   window, and dark is the default look. */
++:root:not([kavacha-theme-mode="light"]) {
++  --zen-branding-dark: var(--kavacha-surface);
++}

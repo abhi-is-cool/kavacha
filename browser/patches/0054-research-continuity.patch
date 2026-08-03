@@ -1,0 +1,693 @@
+# Kavacha patch 0054 — research continuity: branch lineage, pinned fidelity,
+# compare/discard, and step-through replay (REMAINING_WORK.md §3 "Research
+# continuity", closing all four open items from patch 0020).
+#
+# 1. BRANCH TREE IN THE SWITCHER. Patch 0020 wrote parentSpaceId onto every
+#    branched Space and NOTHING EVER READ IT. "Research / branch / branch" was
+#    three unrelated-looking buttons in the strip. ZenSpaceIcons now stamps a
+#    clamped kavacha-branch-depth and the tooltip names the parent. It is a
+#    marker, not an indent, deliberately: the strip is a fixed-size run of equal
+#    buttons and indenting one breaks its alignment in both orientations. The
+#    depth walk carries a visited set — a hand-edited or corrupted session file
+#    could contain a parent cycle and this runs on every strip render.
+#
+# 2. PINNED FIDELITY. 0019 always captured `pinned` in the snapshot payload and
+#    0020 always ignored it, so every branch came back with the user's pinned
+#    working set demoted into the ordinary strip. Pinning happens AFTER
+#    moveTabToWorkspace: pinning re-parents the tab into the pinned container,
+#    and doing it first leaves the move fighting for the same element.
+#
+# 3. COMPARE / DISCARD. Branching is cheap by design, which is exactly why a
+#    pile of branches becomes unreadable. Compare is read-only and diffs the
+#    LIVE tabs of branch and parent — not the branch-point snapshot — because
+#    the useful question is "how does this differ from what I'd have if I'd
+#    stayed", and that is the parent as it is now. Discard is the only
+#    destructive action in this patch: it confirms, it names the Space, and it
+#    refuses outright on a Space with no parent, so it can never become a
+#    second, softer-sounding way to delete somebody's actual work. Snapshots
+#    survive a discard, so a discarded branch can be branched again.
+#
+# 4. STEP-THROUGH REPLAY. The timeline list answers "when were the moments";
+#    replay answers "what was I looking at THEN", which is the question the
+#    feature exists for and the one a column of timestamps and tab counts
+#    cannot answer. Stepping is READ-ONLY — it reads one snapshot's payload and
+#    lists its tabs. Restore stays non-destructive in both modes: it forks a
+#    branch, so the present is never overwritten. Replay starts at the OLDEST
+#    snapshot so stepping forward runs the way the work actually happened, and
+#    is offered only when there are two moments to step between.
+#
+# Why a patch: all four touch nsZenWorkspaces internals and Zen's popupset.
+#
+# Touches: src/zen/spaces/ZenSpaceManager.mjs, src/zen/spaces/ZenSpaceIcons.mjs,
+#          src/browser/base/content/zen-panels/popups.inc,
+#          src/zen/common/styles/kavacha-spaces.inc.css (new) + zen-theme.css,
+#          src/zen/common/sys/KavachaCommandRegistry.sys.mjs,
+#          locales/en-US/browser/browser/zen-workspaces.ftl,
+#          locales/en-US/browser/browser/zen-command-palette.ftl.
+# Applies on top of 0053.
+diff --git a/locales/en-US/browser/browser/zen-workspaces.ftl b/locales/en-US/browser/browser/zen-workspaces.ftl
+--- a/locales/en-US/browser/browser/zen-workspaces.ftl
++++ b/locales/en-US/browser/browser/zen-workspaces.ftl
+@@ -229,3 +229,39 @@
+ kavacha-recommendations-limit =
+     .label = Run only these in this Space
+ kavacha-recommendations-note = You can change which extensions run in a Space at any time from the Space menu → Workspace Extensions.
++
++# Kavacha patch 0054 — research continuity: replay, branch compare/discard,
++# and branch lineage in the Space strip.
++kavacha-timeline-replay =
++    .label = Step through
++kavacha-timeline-prev =
++    .label = ‹ Earlier
++kavacha-timeline-next =
++    .label = Later ›
++kavacha-timeline-step =
++    .value = { $step } of { $total }
++kavacha-timeline-restore-step =
++    .label = Restore as branch
++kavacha-timeline-exit-replay =
++    .label = Back to list
++
++zen-workspaces-panel-context-compare =
++    .label = Compare with Parent…
++kavacha-compare-title =
++    .value = { $branch } vs { $parent }
++# Applied with document.l10n.setAttributes to XUL <label> elements, which
++# display `value`, not `label`.
++kavacha-compare-only-branch =
++    .value = Only in { $name } ({ $count })
++kavacha-compare-only-parent =
++    .value = Only in { $name } ({ $count })
++kavacha-compare-shared =
++    .value = In both ({ $count })
++kavacha-compare-none =
++    .value = Nothing
++kavacha-compare-discard =
++    .label = Discard this branch…
++kavacha-compare-discard-title = Discard this branch?
++kavacha-compare-discard-body = “{ $name }” and its tabs will be deleted. The Space it was branched from is not touched, and its snapshots stay in the timeline — you can branch from them again.
++kavacha-compare-discard-accept = Discard branch
++kavacha-space-branch-of = Branch of { $parent }
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -70,3 +70,4 @@
+ # Restore Archived Space command (patch 0032)
+ kavacha-action-restore-space = Restore Archived Space
+ kavacha-action-space-recommendations = Recommended Extensions for This Space
++kavacha-action-compare-branch = Compare This Branch with Its Parent
+diff --git a/src/browser/base/content/zen-panels/popups.inc b/src/browser/base/content/zen-panels/popups.inc
+--- a/src/browser/base/content/zen-panels/popups.inc
++++ b/src/browser/base/content/zen-panels/popups.inc
+@@ -55,6 +55,13 @@
+   <menuitem id="context_zenWorkspacesNotes"
+     data-l10n-id="zen-workspaces-panel-context-notes"
+     hide-if-private-browsing="true"/>
++# Kavacha patch 0054 — branch actions. Both are hidden unless the Space
++# actually is a branch (updateWorkspaceActionsMenu decides), because "compare
++# with parent" is meaningless for a Space that has no parent.
++  <menuitem id="context_kavachaCompareBranch"
++    data-l10n-id="zen-workspaces-panel-context-compare"
++    hidden="true"
++    hide-if-private-browsing="true"/>
+   <menuitem id="context_zenArchiveWorkspace"
+     data-l10n-id="zen-workspaces-panel-context-archive"
+     hide-if-private-browsing="true"/>
+@@ -141,14 +148,46 @@
+   </vbox>
+ </panel>
+ 
++# Kavacha patch 0054 adds step-through replay. The list and the replay view are
++# two modes of the same panel: replay walks the snapshots one at a time and
++# shows what that moment CONTAINED, without restoring anything. Restore stays
++# non-destructive (it forks a branch) in both modes.
+ <panel id="kavacha-timeline-panel" type="arrow" orient="vertical">
+   <vbox style="width: 400px; padding: 10px; gap: 8px;">
+     <label id="kavacha-timeline-title" style="font-weight: 600;"/>
+     <label id="kavacha-timeline-empty" data-l10n-id="kavacha-timeline-empty" hidden="true" style="opacity: 0.7;"/>
+     <vbox id="kavacha-timeline-list" style="overflow: auto; max-height: 340px; gap: 4px;"/>
++    <button id="kavacha-timeline-replay" data-l10n-id="kavacha-timeline-replay" hidden="true"/>
++    <vbox id="kavacha-timeline-replay-view" hidden="true" style="gap: 8px;">
++      <hbox align="center" style="gap: 6px;">
++        <button id="kavacha-timeline-prev" data-l10n-id="kavacha-timeline-prev"/>
++        <label id="kavacha-timeline-step" flex="1" style="text-align: center; opacity: 0.8;"/>
++        <button id="kavacha-timeline-next" data-l10n-id="kavacha-timeline-next"/>
++      </hbox>
++      <vbox id="kavacha-timeline-step-tabs" style="overflow: auto; max-height: 260px; gap: 2px;"/>
++      <hbox align="center" style="gap: 6px;">
++        <button id="kavacha-timeline-restore-step" data-l10n-id="kavacha-timeline-restore-step"/>
++        <spacer flex="1"/>
++        <button id="kavacha-timeline-exit-replay" data-l10n-id="kavacha-timeline-exit-replay"/>
++      </hbox>
++    </vbox>
+   </vbox>
+ </panel>
+ 
++# Kavacha patch 0054 — compare a branch with the Space it was forked from, and
++# discard it. Compare is read-only; discard is the only destructive action and
++# it confirms first.
++<panel id="kavacha-compare-panel" type="arrow" orient="vertical">
++  <vbox style="width: 440px; padding: 12px; gap: 10px;">
++    <label id="kavacha-compare-title" style="font-weight: 600;"/>
++    <vbox id="kavacha-compare-body" style="overflow: auto; max-height: 380px; gap: 10px;"/>
++    <hbox align="center" style="gap: 8px;">
++      <button id="kavacha-compare-discard" data-l10n-id="kavacha-compare-discard"/>
++      <spacer flex="1"/>
++    </hbox>
++  </vbox>
++</panel>
++
+ # Kavacha patch 0052 adds the markdown preview. The textarea stays the source
+ # of truth and is what autosaves; the preview is a sibling that is shown in its
+ # place, never an editable rendering — so there is no round-trip from DOM back
+diff --git a/src/zen/common/styles/zen-theme.css b/src/zen/common/styles/zen-theme.css
+--- a/src/zen/common/styles/zen-theme.css
++++ b/src/zen/common/styles/zen-theme.css
+@@ -350,4 +350,5 @@
+ %include kavacha-polish.inc.css
+ %include kavacha-menu.inc.css
+ %include kavacha-notes.inc.css
++%include kavacha-spaces.inc.css
+ %include kavacha-theme-fixes.inc.css
+diff --git a/src/zen/common/styles/kavacha-spaces.inc.css b/src/zen/common/styles/kavacha-spaces.inc.css
+new file mode 100644
+--- /dev/null
++++ b/src/zen/common/styles/kavacha-spaces.inc.css
+@@ -0,0 +1,57 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* ==========================================================================
++   Kavacha branch lineage in the Space strip (patch 0054).
++
++   Patch 0020 wrote parentSpaceId onto branched Spaces and nothing ever read
++   it, so a branch looked exactly like an ordinary Space in the switcher.
++   ZenSpaceIcons now stamps kavacha-branch-depth (1..3, clamped) and this is
++   the only thing that renders it.
++
++   Deliberately a MARKER, not an indent: the strip is a fixed-size row (or
++   column) of equal buttons, and indenting one would break its alignment in
++   both orientations. A short bar on the leading edge, one step dimmer per
++   level, reads as "this hangs off the one before it" without moving anything.
++   ========================================================================== */
++
++#zen-workspaces-button toolbarbutton[kavacha-branch-depth] {
++  position: relative;
++}
++
++#zen-workspaces-button toolbarbutton[kavacha-branch-depth]::before {
++  content: "";
++  position: absolute;
++  inset-inline-start: 1px;
++  inset-block: 30%;
++  width: 2px;
++  border-radius: 1px;
++  background: currentColor;
++  opacity: 0.55;
++  pointer-events: none;
++}
++
++#zen-workspaces-button toolbarbutton[kavacha-branch-depth="2"]::before {
++  opacity: 0.4;
++}
++
++#zen-workspaces-button toolbarbutton[kavacha-branch-depth="3"]::before {
++  opacity: 0.28;
++}
++
++/* Horizontal tabs (Kavacha's shipped default, patch 0010) lay the strip out as
++   a row, so the lineage marker belongs under the button rather than beside it.
++   Gated the way every other Kavacha layer gates on orientation -- the pref,
++   not a root attribute, because tabStyle flows through `zen.tabs.vertical`
++   (see kavacha-layout.inc.css). */
++/* stylelint-disable-next-line media-query-no-invalid */
++@media not -moz-pref("zen.tabs.vertical") {
++  #zen-workspaces-button toolbarbutton[kavacha-branch-depth]::before {
++    inset-inline: 30%;
++    inset-block-start: auto;
++    inset-block-end: 1px;
++    width: auto;
++    height: 2px;
++  }
++}
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -122,6 +122,17 @@
+     isAvailable: kNotPrivate,
+   },
+   {
++    // Patch 0054: only offered on a Space that actually is a branch, since
++    // comparing a root Space with a parent it does not have is not a thing.
++    l10nId: "kavacha-action-compare-branch",
++    command: window => window.gZenWorkspaces.kavachaCompareWithParent(),
++    icon: "chrome://browser/skin/zen-icons/selectable/layers.svg",
++    domain: KavachaCommandDomain.ORGANIZATION,
++    isAvailable: window =>
++      kNotPrivate(window) &&
++      !!window.gZenWorkspaces?.getActiveWorkspaceFromCache?.()?.parentSpaceId,
++  },
++  {
+     // Patch 0053: the recommendations panel opens once when a template Space
+     // is created. Available only where there is something to recommend, so it
+     // does not sit dead in the palette for hand-made Spaces.
+diff --git a/src/zen/spaces/ZenSpaceIcons.mjs b/src/zen/spaces/ZenSpaceIcons.mjs
+--- a/src/zen/spaces/ZenSpaceIcons.mjs
++++ b/src/zen/spaces/ZenSpaceIcons.mjs
+@@ -109,12 +109,41 @@
+     // Kavacha (patch 0051): the Space description (patch 0014) had no reader
+     // anywhere in the browser -- it was captured at creation and never shown.
+     // The strip button's tooltip is where "what is this Space for" belongs.
+-    button.setAttribute(
+-      "tooltiptext",
+-      workspace.description
+-        ? `${workspace.name}\n${workspace.description}`
+-        : workspace.name
+-    );
++    //
++    // Kavacha (patch 0054): the strip is also the Space switcher, and until now
++    // a branch was indistinguishable from an ordinary Space in it -- patch 0020
++    // wrote parentSpaceId onto the space object and nothing ever read it, so
++    // "Research / branch / branch" was three unrelated-looking buttons. The
++    // depth attribute drives a lineage marker in CSS and the tooltip names the
++    // parent, so which Space a branch came from is answerable without opening
++    // anything.
++    const depth = gZenWorkspaces.kavachaBranchDepth?.(workspace) || 0;
++    if (depth) {
++      button.setAttribute("kavacha-branch-depth", String(Math.min(depth, 3)));
++    } else {
++      button.removeAttribute("kavacha-branch-depth");
++    }
++    const lines = [workspace.name];
++    if (workspace.description) {
++      lines.push(workspace.description);
++    }
++    if (depth) {
++      const parent = gZenWorkspaces.getWorkspaceFromId(workspace.parentSpaceId);
++      if (parent) {
++        // Set synchronously from the cached name; the tooltip is rebuilt on
++        // every strip render, so a stale parent name cannot persist.
++        document.l10n
++          .formatValue("kavacha-space-branch-of", { parent: parent.name || "" })
++          .then(text =>
++            button.setAttribute(
++              "tooltiptext",
++              [...lines, text].join("\n")
++            )
++          )
++          .catch(() => {});
++      }
++    }
++    button.setAttribute("tooltiptext", lines.join("\n"));
+     button.setAttribute("zen-workspace-id", workspace.uuid);
+     button.setAttribute("context", "zenWorkspaceMoreActions");
+     const icon = document.createXULElement("label");
+diff --git a/src/zen/spaces/ZenSpaceManager.mjs b/src/zen/spaces/ZenSpaceManager.mjs
+--- a/src/zen/spaces/ZenSpaceManager.mjs
++++ b/src/zen/spaces/ZenSpaceManager.mjs
+@@ -1427,6 +1427,59 @@
+           () => this.#flushWorkspaceNotes(),
+           500
+         );
++      });
++    // Patch 0054: timeline replay + branch compare/discard. All bound once,
++    // reading their target Space back off the panel, so repeated opens cannot
++    // stack handlers.
++    document
++      .getElementById("kavacha-timeline-replay")
++      .addEventListener("command", () =>
++        this.kavachaEnterReplay().catch(e =>
++          console.error("gZenWorkspaces: replay failed", e)
++        )
++      );
++    document
++      .getElementById("kavacha-timeline-prev")
++      .addEventListener("command", () =>
++        this.kavachaReplayStep(this.kavachaReplayIndex + 1).catch(e =>
++          console.error("gZenWorkspaces: replay step failed", e)
++        )
++      );
++    document
++      .getElementById("kavacha-timeline-next")
++      .addEventListener("command", () =>
++        this.kavachaReplayStep(this.kavachaReplayIndex - 1).catch(e =>
++          console.error("gZenWorkspaces: replay step failed", e)
++        )
++      );
++    document
++      .getElementById("kavacha-timeline-restore-step")
++      .addEventListener("command", () =>
++        this.kavachaRestoreReplayStep().catch(e =>
++          console.error("gZenWorkspaces: replay restore failed", e)
++        )
++      );
++    document
++      .getElementById("kavacha-timeline-exit-replay")
++      .addEventListener("command", () => this.kavachaExitReplay());
++    document
++      .getElementById("context_kavachaCompareBranch")
++      .addEventListener("command", () => {
++        this.kavachaCompareWithParent(
++          this.#contextMenuData?.workspaceId
++        ).catch(e => console.error("gZenWorkspaces: compare failed", e));
++      });
++    document
++      .getElementById("kavacha-compare-discard")
++      .addEventListener("command", () => {
++        const panel = document.getElementById("kavacha-compare-panel");
++        const uuid = panel.getAttribute("data-workspace-id");
++        panel.hidePopup();
++        if (uuid) {
++          this.kavachaDiscardBranch(uuid).catch(e =>
++            console.error("gZenWorkspaces: discard branch failed", e)
++          );
++        }
+       });
+     document
+       .getElementById("kavacha-recommendations-limit")
+@@ -1542,6 +1602,20 @@
+       workspaceId: target?.getAttribute("zen-workspace-id"),
+       originalTarget: target,
+     };
++    // Kavacha (patch 0054): "Compare with Parent" only makes sense for a
++    // branch, and a Space that is not one has no parent to compare against.
++    // Decided here rather than by a CSS rule so the menu never shows an item
++    // that would do nothing.
++    const compareItem = document.getElementById("context_kavachaCompareBranch");
++    if (compareItem) {
++      const candidate = this.#contextMenuData?.workspaceId
++        ? this.getWorkspaceFromId(this.#contextMenuData.workspaceId)
++        : this.getActiveWorkspaceFromCache();
++      compareItem.hidden = !(
++        candidate?.parentSpaceId &&
++        this.getWorkspaceFromId(candidate.parentSpaceId)
++      );
++    }
+     const workspaceName = document.getElementById("context_zenEditWorkspace");
+     const themePicker = document.getElementById(
+       "context_zenChangeWorkspaceTheme"
+@@ -4262,6 +4336,20 @@
+         }
+         TabStateCache.update(tab.linkedBrowser.permanentKey, cached);
+         this.moveTabToWorkspace(tab, workspace.uuid);
++        // Patch 0054: pinned fidelity. 0019 always captured `pinned` in the
++        // snapshot payload and 0020 always ignored it, so every branch came
++        // back with the user's pinned tabs demoted into the ordinary strip —
++        // which for anyone who pins their working set is the branch arriving
++        // scrambled. Pin AFTER moveTabToWorkspace: pinning re-parents the tab
++        // into the pinned container, and doing it first leaves the move
++        // fighting for the same element.
++        if (t.pinned) {
++          try {
++            gBrowser.pinTab(tab);
++          } catch (e) {
++            console.error("kavachaBranchSpace: could not re-pin tab", e);
++          }
++        }
+       } catch (e) {
+         console.error("kavachaBranchSpace: tab restore failed", e);
+       }
+@@ -4331,11 +4419,282 @@
+       list.append(row);
+     }
+ 
++    // Patch 0054: replay is only offered when there is more than one moment to
++    // step between; with a single snapshot the list already IS the replay.
++    this.#kavachaTimelineSnapshots = snapshots;
++    this.kavachaExitReplay();
++
+     const anchor = this.workspaceIcons || gURLBar.textbox;
+     panel.openPopup(anchor, "after_start", 0, 0, false, false);
+   }
+ 
+   // ==========================================================================
++  // Kavacha (patch 0054): step-through replay for time travel.
++  //
++  // Patch 0020 shipped restore-as-branch and deferred replay. The list answers
++  // "when were the moments"; replay answers "what was I looking at THEN",
++  // which is the question the feature exists for and the one a column of
++  // timestamps and tab counts cannot answer. Walking a step is READ-ONLY — it
++  // reads one snapshot's payload and shows its tabs. Nothing is restored until
++  // Restore is pressed, and restore stays non-destructive: it forks a branch
++  // exactly as the list does, so the present is never overwritten.
++  // ==========================================================================
++  #kavachaTimelineSnapshots = [];
++  #kavachaReplayIndex = -1;
++
++  /** Which snapshot replay is showing, in listSnapshots' newest-first order. */
++  get kavachaReplayIndex() {
++    return this.#kavachaReplayIndex;
++  }
++
++  kavachaExitReplay() {
++    this.#kavachaReplayIndex = -1;
++    document.getElementById("kavacha-timeline-replay-view").hidden = true;
++    document.getElementById("kavacha-timeline-list").hidden = false;
++    document.getElementById("kavacha-timeline-replay").hidden =
++      this.#kavachaTimelineSnapshots.length < 2;
++  }
++
++  async kavachaEnterReplay() {
++    if (this.#kavachaTimelineSnapshots.length < 2) {
++      return;
++    }
++    document.getElementById("kavacha-timeline-list").hidden = true;
++    document.getElementById("kavacha-timeline-replay").hidden = true;
++    document.getElementById("kavacha-timeline-replay-view").hidden = false;
++    // Snapshots arrive newest-first; replay starts at the OLDEST so that
++    // stepping forward runs the way the work actually happened.
++    await this.kavachaReplayStep(this.#kavachaTimelineSnapshots.length - 1);
++  }
++
++  /** Show snapshot `index` (newest-first indexing, matching listSnapshots). */
++  async kavachaReplayStep(index) {
++    const snapshots = this.#kavachaTimelineSnapshots;
++    if (!snapshots.length) {
++      return;
++    }
++    const clamped = Math.min(Math.max(index, 0), snapshots.length - 1);
++    this.#kavachaReplayIndex = clamped;
++
++    // Oldest is step 1, so "3 of 7" reads forwards even though the array is
++    // newest-first.
++    document.l10n.setAttributes(
++      document.getElementById("kavacha-timeline-step"),
++      "kavacha-timeline-step",
++      { step: snapshots.length - clamped, total: snapshots.length }
++    );
++    document.getElementById("kavacha-timeline-prev").disabled =
++      clamped >= snapshots.length - 1;
++    document.getElementById("kavacha-timeline-next").disabled = clamped <= 0;
++
++    const list = document.getElementById("kavacha-timeline-step-tabs");
++    list.textContent = "";
++    const { KavachaSpaceHistory } = ChromeUtils.importESModule(
++      "resource:///modules/KavachaSpaceHistory.sys.mjs"
++    );
++    let snapshot = null;
++    try {
++      snapshot = await KavachaSpaceHistory.getSnapshot(snapshots[clamped].id);
++    } catch (e) {
++      console.error("kavachaReplayStep: could not read snapshot", e);
++    }
++    if (this.#kavachaReplayIndex !== clamped) {
++      return; // a faster click superseded this step
++    }
++    for (const tab of snapshot?.payload?.tabs || []) {
++      const row = document.createXULElement("label");
++      row.setAttribute("crop", "end");
++      row.style.opacity = tab.pinned ? "1" : "0.85";
++      row.value = this.#kavachaPrettyUrl(tab.url);
++      if (tab.pinned) {
++        row.style.fontWeight = "600";
++      }
++      row.setAttribute("tooltiptext", tab.url || "");
++      list.append(row);
++    }
++  }
++
++  #kavachaPrettyUrl(url) {
++    try {
++      const u = new URL(url);
++      return u.host + (u.pathname === "/" ? "" : u.pathname);
++    } catch (e) {
++      return url || "";
++    }
++  }
++
++  async kavachaRestoreReplayStep() {
++    const snapshot = this.#kavachaTimelineSnapshots[this.#kavachaReplayIndex];
++    if (!snapshot) {
++      return;
++    }
++    document.getElementById("kavacha-timeline-panel").hidePopup();
++    await this.kavachaBranchSpace(snapshot.id);
++  }
++
++  // ==========================================================================
++  // Kavacha (patch 0054): compare a branch with the Space it came from, and
++  // discard it.
++  //
++  // Branching is cheap by design, which is exactly why a pile of branches
++  // becomes unreadable: the two questions 0020 left open were "what is
++  // actually different here" and "how do I get rid of the ones that led
++  // nowhere". Compare is read-only and works on the LIVE tabs of both Spaces,
++  // not the branch-point snapshot — the useful comparison is with the parent
++  // as it is NOW, since that is what the branch is an alternative to. Discard
++  // is the only destructive action here and it confirms, naming the Space.
++  // ==========================================================================
++  #kavachaTabUrls(workspaceUuid) {
++    const out = new Map();
++    for (const tab of gBrowser.tabs) {
++      if (
++        tab.getAttribute("zen-workspace-id") !== workspaceUuid ||
++        tab.hasAttribute("zen-empty-tab") ||
++        tab.closing
++      ) {
++        continue;
++      }
++      const url = tab.linkedBrowser?.currentURI?.spec || "";
++      if (!url || url === "about:blank") {
++        continue;
++      }
++      if (!out.has(url)) {
++        out.set(url, tab.label || this.#kavachaPrettyUrl(url));
++      }
++    }
++    return out;
++  }
++
++  async kavachaCompareWithParent(workspaceId = null) {
++    if (this.privateWindowOrDisabled) {
++      return;
++    }
++    const branch = workspaceId
++      ? this.getWorkspaceFromId(workspaceId)
++      : this.getActiveWorkspaceFromCache();
++    const parent = branch?.parentSpaceId
++      ? this.getWorkspaceFromId(branch.parentSpaceId)
++      : null;
++    if (!branch || !parent) {
++      return;
++    }
++
++    const mine = this.#kavachaTabUrls(branch.uuid);
++    const theirs = this.#kavachaTabUrls(parent.uuid);
++    const onlyMine = [...mine].filter(([url]) => !theirs.has(url));
++    const onlyTheirs = [...theirs].filter(([url]) => !mine.has(url));
++    const shared = [...mine].filter(([url]) => theirs.has(url));
++
++    const panel = document.getElementById("kavacha-compare-panel");
++    document.l10n.setAttributes(
++      document.getElementById("kavacha-compare-title"),
++      "kavacha-compare-title",
++      { branch: branch.name || "", parent: parent.name || "" }
++    );
++    panel.setAttribute("data-workspace-id", branch.uuid);
++
++    const body = document.getElementById("kavacha-compare-body");
++    body.textContent = "";
++    const sections = [
++      ["kavacha-compare-only-branch", onlyMine, { name: branch.name || "" }],
++      ["kavacha-compare-only-parent", onlyTheirs, { name: parent.name || "" }],
++      ["kavacha-compare-shared", shared, { name: "" }],
++    ];
++    for (const [headerId, entries, args] of sections) {
++      const header = document.createXULElement("label");
++      header.style.fontWeight = "600";
++      header.style.opacity = "0.8";
++      document.l10n.setAttributes(header, headerId, {
++        ...args,
++        count: entries.length,
++      });
++      body.append(header);
++      if (!entries.length) {
++        const none = document.createXULElement("label");
++        none.style.opacity = "0.6";
++        document.l10n.setAttributes(none, "kavacha-compare-none");
++        body.append(none);
++        continue;
++      }
++      for (const [url, title] of entries) {
++        const row = document.createXULElement("label");
++        row.setAttribute("crop", "end");
++        row.style.opacity = "0.85";
++        row.value = title || this.#kavachaPrettyUrl(url);
++        row.setAttribute("tooltiptext", url);
++        body.append(row);
++      }
++    }
++
++    const anchor = this.workspaceIcons || gURLBar.textbox;
++    panel.openPopup(anchor, "after_start", 0, 0, false, false);
++  }
++
++  async kavachaDiscardBranch(workspaceId) {
++    const branch = this.getWorkspaceFromId(workspaceId);
++    // Only a branch may be discarded through this path. A Space with no parent
++    // is somebody's actual work and has its own Delete Space item with its own
++    // confirmation; this must never become a second, softer-sounding way to
++    // delete one.
++    if (!branch?.parentSpaceId) {
++      return;
++    }
++    const [title, accept] = await document.l10n.formatValues([
++      { id: "kavacha-compare-discard-title" },
++      { id: "kavacha-compare-discard-accept" },
++    ]);
++    const body = await document.l10n.formatValue(
++      "kavacha-compare-discard-body",
++      { name: branch.name || "" }
++    );
++    const flags =
++      Services.prompt.BUTTON_TITLE_IS_STRING * Services.prompt.BUTTON_POS_0 +
++      Services.prompt.BUTTON_TITLE_CANCEL * Services.prompt.BUTTON_POS_1;
++    if (
++      Services.prompt.confirmEx(
++        window,
++        title,
++        body,
++        flags,
++        accept,
++        null,
++        null,
++        null,
++        {}
++      ) !== 0
++    ) {
++      return;
++    }
++    if (this.isWorkspaceActive(branch)) {
++      const parent = this.getWorkspaceFromId(branch.parentSpaceId);
++      if (parent) {
++        await this.changeWorkspace(parent);
++      }
++    }
++    await this.removeWorkspace(branch.uuid);
++  }
++
++  /**
++   * How many branch hops this Space is from a root. 0 for an ordinary Space.
++   * Walks parentSpaceId with a visited set: a corrupted or hand-edited session
++   * file could contain a cycle, and this runs on every strip render.
++   */
++  kavachaBranchDepth(workspace) {
++    let depth = 0;
++    let current = workspace;
++    const seen = new Set();
++    while (current?.parentSpaceId && !seen.has(current.uuid)) {
++      seen.add(current.uuid);
++      current = this.getWorkspaceFromId(current.parentSpaceId);
++      if (!current) {
++        break;
++      }
++      depth++;
++    }
++    return depth;
++  }
++
++  // ==========================================================================
+   // Kavacha (patch 0052): markdown preview for workspace notes.
+   //
+   // The textarea stays the single source of truth — it is what autosaves, and

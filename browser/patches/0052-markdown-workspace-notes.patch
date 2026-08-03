@@ -1,0 +1,618 @@
+# Kavacha patch 0052 — markdown rendering in workspace notes
+# (REMAINING_WORK.md §3 "Workspaces / identity").
+#
+# Patch 0008 shipped notes as a plain autosaving textarea. People write notes
+# in markdown whether or not anything renders it, so the choice was never
+# "markdown or not" — it was "rendered or left as punctuation".
+#
+# WHAT: a Preview toggle in the notes panel header. The textarea remains the
+# single source of truth and the thing that autosaves; the preview is a sibling
+# shown in its place, never an editable rendering, so there is no DOM-back-to-
+# markdown round trip that could rewrite what the user typed. The toggle resets
+# to edit on close: this is a notes FIELD, and reopening into a read-only view
+# because of a toggle flipped days ago reads as the textarea having vanished.
+#
+# SECURITY, which is why the renderer is a new module rather than three lines
+# of innerHTML: the notes panel is CHROME, not a content document. Assigning
+# note text to innerHTML would make "I pasted a snippet into my notes" script
+# execution with system privileges. KavachaMarkdown therefore only ever calls
+# createElement/createTextNode — there is no HTML parse step at all, so there
+# is no sanitiser to get wrong, and raw HTML in a note renders as the literal
+# characters typed (which is also the right behaviour for a notes field).
+# Link hrefs are separately restricted to http/https/mailto, so
+# `[x](javascript:…)` cannot become a clickable javascript: URI; it stays text
+# rather than being silently dropped, because the user should see what they
+# wrote. Recursion is depth-capped (blockquotes 8, inlines 12): the input is a
+# field anyone can paste into, and `"> ".repeat(2000)` is otherwise 2000 levels
+# of recursion and 2000 levels of DOM for one pasted line — found by testing,
+# not by review.
+#
+# The renderer is a pure function of (markdown, document) and touches no
+# globals, specifically so it can be unit-tested outside a browser. 36 cases
+# cover the grammar, the two security invariants and the pathological inputs.
+#
+# Why a patch: the panel lives in Zen's popupset, the toggle handler is a
+# method on nsZenWorkspaces, and the module needs a moz.build entry to resolve
+# as resource:///modules/.
+#
+# Touches: src/zen/common/sys/KavachaMarkdown.sys.mjs (new),
+#          src/zen/common/moz.build (register it),
+#          src/zen/common/styles/kavacha-notes.inc.css (new) + zen-theme.css,
+#          src/browser/base/content/zen-panels/popups.inc (toggle + preview),
+#          src/zen/spaces/ZenSpaceManager.mjs (wiring),
+#          locales/en-US/browser/browser/zen-workspaces.ftl (strings).
+# Applies on top of 0051.
+diff --git a/locales/en-US/browser/browser/zen-workspaces.ftl b/locales/en-US/browser/browser/zen-workspaces.ftl
+--- a/locales/en-US/browser/browser/zen-workspaces.ftl
++++ b/locales/en-US/browser/browser/zen-workspaces.ftl
+@@ -211,3 +211,9 @@
+     .label = Edit Description…
+ kavacha-space-description-title = Space description
+ kavacha-space-description-prompt = What is “{ $name }” for? Shown when you hover the Space in the strip. Leave blank to remove it.
++
++# Kavacha patch 0052 — markdown preview for workspace notes.
++kavacha-notes-preview =
++    .label = Preview
++    .tooltiptext = Render this note as markdown
++kavacha-notes-preview-empty = Nothing to preview yet.
+diff --git a/src/browser/base/content/zen-panels/popups.inc b/src/browser/base/content/zen-panels/popups.inc
+--- a/src/browser/base/content/zen-panels/popups.inc
++++ b/src/browser/base/content/zen-panels/popups.inc
+@@ -129,11 +129,21 @@
+   </vbox>
+ </panel>
+ 
++# Kavacha patch 0052 adds the markdown preview. The textarea stays the source
++# of truth and is what autosaves; the preview is a sibling that is shown in its
++# place, never an editable rendering — so there is no round-trip from DOM back
++# to markdown that could lose the user's text.
+ <panel id="kavacha-notes-panel" type="arrow" orient="vertical">
+   <vbox style="width: 360px; padding: 10px; gap: 8px;">
+-    <label id="kavacha-notes-title" style="font-weight: 600;"/>
++    <hbox align="center">
++      <label id="kavacha-notes-title" style="font-weight: 600;" flex="1"/>
++      <button id="kavacha-notes-preview-toggle"
++        data-l10n-id="kavacha-notes-preview"
++        type="checkbox"/>
++    </hbox>
+     <html:textarea id="kavacha-notes-textarea" rows="14"
+       data-l10n-id="kavacha-notes-textarea"
+       style="width: 100%; min-height: 220px; resize: vertical; font: inherit; box-sizing: border-box;"/>
++    <html:div id="kavacha-notes-preview" hidden="true"/>
+   </vbox>
+ </panel>
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -5,6 +5,7 @@
+ EXTRA_JS_MODULES += [
+   "sys/KavachaCommandRegistry.sys.mjs",
+   "sys/KavachaLayoutEngine.sys.mjs",
++  "sys/KavachaMarkdown.sys.mjs",
+   "sys/KavachaMarketplace.sys.mjs",
+   "sys/KavachaMenu.sys.mjs",
+   "sys/KavachaNewTab.sys.mjs",
+diff --git a/src/zen/common/styles/zen-theme.css b/src/zen/common/styles/zen-theme.css
+--- a/src/zen/common/styles/zen-theme.css
++++ b/src/zen/common/styles/zen-theme.css
+@@ -349,4 +349,5 @@
+ %include kavacha-layout.inc.css
+ %include kavacha-polish.inc.css
+ %include kavacha-menu.inc.css
++%include kavacha-notes.inc.css
+ %include kavacha-theme-fixes.inc.css
+diff --git a/src/zen/common/styles/kavacha-notes.inc.css b/src/zen/common/styles/kavacha-notes.inc.css
+new file mode 100644
+--- /dev/null
++++ b/src/zen/common/styles/kavacha-notes.inc.css
+@@ -0,0 +1,126 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* ==========================================================================
++   Kavacha workspace-notes markdown preview (patch 0052).
++
++   %include'd into zen-theme.css, so this is CHROME css -- the notes panel
++   lives in the browser window, not in a content document, which is also why
++   the renderer (KavachaMarkdown) builds nodes instead of parsing HTML.
++
++   Sizing is deliberately matched to the textarea it replaces (min-height
++   220px, same box) so toggling Preview does not resize the panel under the
++   pointer.
++   ========================================================================== */
++
++#kavacha-notes-preview {
++  min-height: 220px;
++  max-height: 420px;
++  overflow-y: auto;
++  padding: 8px 10px;
++  box-sizing: border-box;
++  border-radius: 8px;
++  background: var(--input-bgcolor);
++  font: inherit;
++  line-height: 1.5;
++  /* Long unbroken URLs in a note must not widen the panel. */
++  overflow-wrap: anywhere;
++}
++
++#kavacha-notes-preview > :first-child {
++  margin-top: 0;
++}
++
++#kavacha-notes-preview > :last-child {
++  margin-bottom: 0;
++}
++
++#kavacha-notes-preview :is(h1, h2, h3, h4, h5, h6) {
++  margin: 0.8em 0 0.35em;
++  line-height: 1.25;
++  font-weight: 650;
++}
++
++#kavacha-notes-preview h1 {
++  font-size: 1.35em;
++}
++
++#kavacha-notes-preview h2 {
++  font-size: 1.2em;
++}
++
++#kavacha-notes-preview h3 {
++  font-size: 1.08em;
++}
++
++#kavacha-notes-preview :is(h4, h5, h6) {
++  font-size: 1em;
++  opacity: 0.85;
++}
++
++#kavacha-notes-preview p {
++  margin: 0 0 0.6em;
++}
++
++#kavacha-notes-preview :is(ul, ol) {
++  margin: 0 0 0.6em;
++  padding-inline-start: 1.4em;
++}
++
++#kavacha-notes-preview li {
++  margin: 0.15em 0;
++}
++
++#kavacha-notes-preview blockquote {
++  margin: 0 0 0.6em;
++  padding-inline-start: 10px;
++  border-inline-start: 2px solid var(--zen-colors-border, currentColor);
++  opacity: 0.85;
++}
++
++#kavacha-notes-preview :is(pre, code) {
++  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
++  font-size: 0.9em;
++}
++
++#kavacha-notes-preview code {
++  padding: 1px 4px;
++  border-radius: 4px;
++  background: color-mix(in srgb, currentColor 12%, transparent);
++}
++
++#kavacha-notes-preview pre {
++  margin: 0 0 0.6em;
++  padding: 8px 10px;
++  border-radius: 6px;
++  background: color-mix(in srgb, currentColor 10%, transparent);
++  /* Code must scroll, not stretch the panel. */
++  overflow-x: auto;
++  white-space: pre;
++}
++
++#kavacha-notes-preview pre code {
++  padding: 0;
++  background: none;
++}
++
++#kavacha-notes-preview hr {
++  border: none;
++  border-top: 1px solid var(--zen-colors-border, currentColor);
++  margin: 0.8em 0;
++}
++
++#kavacha-notes-preview a {
++  color: var(
++    --zen-primary-color,
++    var(--kavacha-accent, var(--kavacha-accent-fallback))
++  );
++  text-decoration: underline;
++}
++
++/* An empty note in preview mode would otherwise be an unexplained blank box. */
++#kavacha-notes-preview:empty::before {
++  content: attr(data-empty-label);
++  opacity: 0.6;
++}
+diff --git a/src/zen/common/sys/KavachaMarkdown.sys.mjs b/src/zen/common/sys/KavachaMarkdown.sys.mjs
+new file mode 100644
+--- /dev/null
++++ b/src/zen/common/sys/KavachaMarkdown.sys.mjs
+@@ -0,0 +1,302 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha markdown renderer (ROADMAP Phase 2 follow-up: "Markdown rendering in
++// workspace notes").
++//
++// A deliberately small CommonMark SUBSET, rendered by BUILDING DOM NODES —
++// never by assigning a string to innerHTML. That is the whole security design
++// and it is not negotiable: workspace notes are chrome-privileged content
++// (the notes panel lives in the browser window, not in a content document), so
++// a single innerHTML on user text would turn "I pasted a snippet into my
++// notes" into script execution with system privileges. Because this renderer
++// only ever calls createElement/createTextNode there is no HTML parse step at
++// all and so no sanitiser to get wrong — raw HTML in a note renders as the
++// literal characters the user typed, which is also the honest behaviour for a
++// notes field.
++//
++// Link hrefs are additionally scheme-checked (http/https/mailto only), so a
++// `[click](javascript:...)` note cannot produce a clickable javascript: URI.
++// Anything else renders as plain text rather than being silently dropped —
++// the user should see what they wrote.
++//
++// Supported: ATX headings, fenced and indented code, blockquotes, unordered
++// and ordered lists, thematic breaks, paragraphs, and inline code / strong /
++// emphasis / links. Everything else is text.
++//
++// The renderer is a pure function of (markdown, document): it touches no
++// globals, which is what lets it be unit-tested outside a browser.
++
++const kSafeLinkSchemes = new Set(["http:", "https:", "mailto:"]);
++
++// Both renderers recurse: blockquotes nest blocks, emphasis nests inlines. The
++// input is a text field the user can paste anything into, and `"> ".repeat(n)`
++// is n levels of recursion and n levels of DOM for one pasted line. Past a
++// handful of levels the nesting is not meaningful to a reader anyway, so cap
++// it and render the remainder flat rather than growing the stack.
++const kMaxBlockDepth = 8;
++const kMaxInlineDepth = 12;
++
++/** True if `href` is a scheme we are willing to make clickable. */
++function isSafeHref(href) {
++  try {
++    return kSafeLinkSchemes.has(
++      new URL(href, "https://invalid.invalid/").protocol
++    );
++  } catch (e) {
++    return false;
++  }
++}
++
++// ---------------------------------------------------------------- inline ---
++
++// Inline grammar, tried in order at each position. Kept as an ordered table so
++// the precedence is readable: code spans win over emphasis (so `*` inside
++// backticks stays literal), and `**` must be tried before `*`.
++const INLINE_RULES = [
++  { re: /^`([^`\n]+)`/, tag: "code", raw: true },
++  { re: /^\*\*([^*\n]+)\*\*/, tag: "strong" },
++  { re: /^__([^_\n]+)__/, tag: "strong" },
++  { re: /^\*([^*\n]+)\*/, tag: "em" },
++  { re: /^_([^_\n]+)_/, tag: "em" },
++];
++
++const LINK_RE = /^\[([^\]\n]*)\]\(([^)\s]+)\)/;
++
++/**
++ * Append the inline rendering of `text` to `parent`.
++ *
++ * @param {string} text One logical line (or joined paragraph) of markdown.
++ * @param {Node} parent Node to append into.
++ * @param {Document} doc Owner document.
++ * @param {number} depth Current nesting depth; at the cap everything left is
++ *   emitted as literal text instead of recursing.
++ */
++function renderInline(text, parent, doc, depth = 0) {
++  if (depth >= kMaxInlineDepth) {
++    if (text) {
++      parent.appendChild(doc.createTextNode(text));
++    }
++    return;
++  }
++  let rest = text;
++  let literal = "";
++
++  const flush = () => {
++    if (literal) {
++      parent.appendChild(doc.createTextNode(literal));
++      literal = "";
++    }
++  };
++
++  while (rest) {
++    const link = LINK_RE.exec(rest);
++    if (link && isSafeHref(link[2])) {
++      flush();
++      const a = doc.createElement("a");
++      a.setAttribute("href", link[2]);
++      // Notes are chrome UI: a note's link must not be able to reach its
++      // opener, and this panel is not a browsing context we want replaced.
++      a.setAttribute("target", "_blank");
++      a.setAttribute("rel", "noopener noreferrer");
++      renderInline(link[1], a, doc, depth + 1);
++      parent.appendChild(a);
++      rest = rest.slice(link[0].length);
++      continue;
++    }
++
++    let matched = false;
++    for (const rule of INLINE_RULES) {
++      const m = rule.re.exec(rest);
++      if (!m) {
++        continue;
++      }
++      flush();
++      const el = doc.createElement(rule.tag);
++      if (rule.raw) {
++        el.appendChild(doc.createTextNode(m[1]));
++      } else {
++        renderInline(m[1], el, doc, depth + 1);
++      }
++      parent.appendChild(el);
++      rest = rest.slice(m[0].length);
++      matched = true;
++      break;
++    }
++    if (matched) {
++      continue;
++    }
++
++    // No rule applied here: take exactly one character as literal text and
++    // advance. Consuming one character is what guarantees termination — every
++    // branch of this loop shortens `rest`.
++    literal += rest[0];
++    rest = rest.slice(1);
++  }
++  flush();
++}
++
++// ----------------------------------------------------------------- block ---
++
++const HEADING_RE = /^(#{1,6})\s+(.*)$/;
++const UL_RE = /^[-*+]\s+(.*)$/;
++const OL_RE = /^(\d+)[.)]\s+(.*)$/;
++const HR_RE = /^\s*([-*_])(?:\s*\1){2,}\s*$/;
++const FENCE_RE = /^\s*(```|~~~)\s*(\S*)\s*$/;
++const QUOTE_RE = /^>\s?(.*)$/;
++const INDENTED_RE = /^(?: {4}|\t)/;
++
++export const KavachaMarkdown = {
++  /**
++   * Render markdown to a DocumentFragment of chrome DOM nodes.
++   *
++   * @param {string} markdown Source text.
++   * @param {Document} doc Document used to create the nodes.
++   * @returns {DocumentFragment} Newly built nodes; never reuses `doc`'s tree.
++   */
++  render(markdown, doc, depth = 0) {
++    const frag = doc.createDocumentFragment();
++    const lines = String(markdown ?? "")
++      .replace(/\r\n?/g, "\n")
++      .split("\n");
++    let i = 0;
++
++    while (i < lines.length) {
++      const line = lines[i];
++
++      if (!line.trim()) {
++        i++;
++        continue;
++      }
++
++      const fence = FENCE_RE.exec(line);
++      if (fence) {
++        const marker = fence[1];
++        const body = [];
++        i++;
++        while (i < lines.length) {
++          const closing = FENCE_RE.exec(lines[i]);
++          if (closing && closing[1] === marker) {
++            i++;
++            break;
++          }
++          body.push(lines[i]);
++          i++;
++        }
++        frag.appendChild(this._codeBlock(body.join("\n"), fence[2], doc));
++        continue;
++      }
++
++      if (HR_RE.test(line)) {
++        frag.appendChild(doc.createElement("hr"));
++        i++;
++        continue;
++      }
++
++      const heading = HEADING_RE.exec(line);
++      if (heading) {
++        const h = doc.createElement("h" + heading[1].length);
++        renderInline(heading[2].trim(), h, doc);
++        frag.appendChild(h);
++        i++;
++        continue;
++      }
++
++      if (QUOTE_RE.test(line)) {
++        const body = [];
++        while (i < lines.length && QUOTE_RE.test(lines[i])) {
++          body.push(QUOTE_RE.exec(lines[i])[1]);
++          i++;
++        }
++        const quote = doc.createElement("blockquote");
++        if (depth + 1 >= kMaxBlockDepth) {
++          // At the cap: keep the quote element, drop the nesting.
++          const flat = doc.createElement("p");
++          renderInline(body.join(" "), flat, doc);
++          quote.appendChild(flat);
++        } else {
++          quote.appendChild(this.render(body.join("\n"), doc, depth + 1));
++        }
++        frag.appendChild(quote);
++        continue;
++      }
++
++      if (UL_RE.test(line) || OL_RE.test(line)) {
++        const ordered = !UL_RE.test(line);
++        const list = doc.createElement(ordered ? "ol" : "ul");
++        while (i < lines.length) {
++          const m = ordered ? OL_RE.exec(lines[i]) : UL_RE.exec(lines[i]);
++          if (!m) {
++            break;
++          }
++          const li = doc.createElement("li");
++          renderInline(ordered ? m[2] : m[1], li, doc);
++          list.appendChild(li);
++          i++;
++        }
++        frag.appendChild(list);
++        continue;
++      }
++
++      // Indented code: four spaces or a tab, run until the indent stops.
++      if (INDENTED_RE.test(line)) {
++        const body = [];
++        while (i < lines.length && INDENTED_RE.test(lines[i])) {
++          body.push(lines[i].replace(INDENTED_RE, ""));
++          i++;
++        }
++        frag.appendChild(this._codeBlock(body.join("\n"), "", doc));
++        continue;
++      }
++
++      // Paragraph: consume until a blank line or the start of another block.
++      const para = [];
++      while (
++        i < lines.length &&
++        lines[i].trim() &&
++        !this._startsBlock(lines[i])
++      ) {
++        para.push(lines[i].trim());
++        i++;
++      }
++      if (!para.length) {
++        // Defensive: _startsBlock claimed this line begins a block, but every
++        // branch above declined it. Emit it as a paragraph and advance rather
++        // than spinning forever.
++        para.push(lines[i].trim());
++        i++;
++      }
++      const p = doc.createElement("p");
++      renderInline(para.join(" "), p, doc);
++      frag.appendChild(p);
++    }
++
++    return frag;
++  },
++
++  _codeBlock(text, language, doc) {
++    const pre = doc.createElement("pre");
++    const code = doc.createElement("code");
++    if (language) {
++      code.setAttribute("data-language", language);
++    }
++    code.appendChild(doc.createTextNode(text));
++    pre.appendChild(code);
++    return pre;
++  },
++
++  // Whether a line begins a new block, and so must not be swallowed into the
++  // paragraph currently being accumulated.
++  _startsBlock(line) {
++    return (
++      HEADING_RE.test(line) ||
++      HR_RE.test(line) ||
++      FENCE_RE.test(line) ||
++      QUOTE_RE.test(line) ||
++      UL_RE.test(line) ||
++      OL_RE.test(line) ||
++      INDENTED_RE.test(line)
++    );
++  },
++};
+diff --git a/src/zen/spaces/ZenSpaceManager.mjs b/src/zen/spaces/ZenSpaceManager.mjs
+--- a/src/zen/spaces/ZenSpaceManager.mjs
++++ b/src/zen/spaces/ZenSpaceManager.mjs
+@@ -1376,10 +1376,19 @@
+         );
+       });
+     document
++      .getElementById("kavacha-notes-preview-toggle")
++      .addEventListener("command", event =>
++        this.kavachaSetNotesPreview(event.target.checked)
++      );
++    document
+       .getElementById("kavacha-notes-panel")
+       .addEventListener("popuphidden", () => {
+         clearTimeout(this.#notesSaveTimer);
+         this.#flushWorkspaceNotes();
++        // Always reopen in edit mode: the panel is a notes FIELD, and landing
++        // in a read-only view because of a toggle flipped days ago reads as
++        // the textarea having vanished.
++        this.kavachaSetNotesPreview(false);
+       });
+ 
+     document
+@@ -4103,6 +4112,53 @@
+ 
+     const anchor = this.workspaceIcons || gURLBar.textbox;
+     panel.openPopup(anchor, "after_start", 0, 0, false, false);
++  }
++
++  // ==========================================================================
++  // Kavacha (patch 0052): markdown preview for workspace notes.
++  //
++  // The textarea stays the single source of truth — it is what autosaves, and
++  // the preview is a sibling shown in its place, never an editable rendering.
++  // There is therefore no DOM-back-to-markdown round trip that could quietly
++  // rewrite what the user typed.
++  //
++  // Rendering goes through KavachaMarkdown, which builds nodes rather than
++  // parsing HTML. That matters here specifically: this panel is chrome, so
++  // innerHTML on note text would be script execution with system privileges.
++  // ==========================================================================
++  kavachaSetNotesPreview(on) {
++    const textarea = document.getElementById("kavacha-notes-textarea");
++    const preview = document.getElementById("kavacha-notes-preview");
++    const toggle = document.getElementById("kavacha-notes-preview-toggle");
++    if (!textarea || !preview) {
++      return;
++    }
++    toggle.checked = !!on;
++    textarea.hidden = !!on;
++    preview.hidden = !on;
++    if (!on) {
++      // Drop the rendered nodes rather than leaving a stale copy of the note
++      // hidden in the DOM.
++      preview.textContent = "";
++      textarea.focus();
++      return;
++    }
++    preview.textContent = "";
++    document.l10n
++      .formatValue("kavacha-notes-preview-empty")
++      .then(label => preview.setAttribute("data-empty-label", label))
++      .catch(() => {});
++    try {
++      const { KavachaMarkdown } = ChromeUtils.importESModule(
++        "resource:///modules/KavachaMarkdown.sys.mjs"
++      );
++      preview.appendChild(KavachaMarkdown.render(textarea.value, document));
++    } catch (e) {
++      console.error("gZenWorkspaces: could not render note preview", e);
++      // Fall back to the raw text rather than an empty box — the note is the
++      // user's data and must never appear to have been lost.
++      preview.appendChild(document.createTextNode(textarea.value));
++    }
+   }
+ 
+   #flushWorkspaceNotes() {

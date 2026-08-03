@@ -1,0 +1,396 @@
+# Kavacha patch 0053 — extension recommendations in workspace templates
+# (REMAINING_WORK.md §3: "deferred at 0006 until the marketplace could install
+# them; the marketplace now exists").
+#
+# THE PREMISE WAS WRONG, and saying so is most of this patch. The marketplace
+# (0028, ADR 0010) installs Kavacha COMPONENTS — themes, layouts, bundles —
+# not WebExtensions. It was never going to be the installer for uBlock Origin,
+# and waiting for it to become one would have deferred this forever. The right
+# installer already ships and is Firefox's own.
+#
+# WHAT: each template carries a short `recommendedExtensions` list, and a panel
+# offers it once the Space exists. Nothing is installed automatically, silently,
+# or as a side effect of creating a Space: "Get extension" opens the
+# addons.mozilla.org LISTING in a tab — not an .xpi — so the user sees the
+# permissions, reviews and source, and the install runs through AMO's and
+# Firefox's own prompts. Already-installed recommendations show as such rather
+# than as a button that would do nothing.
+#
+# One composite action is offered: "Run only these in this Space" writes patch
+# 0004's per-Space allowlist from the recommendations that are actually
+# installed. It is disabled until at least one is, because an allowlist of
+# nothing would silently disable every extension in that Space.
+#
+# EDITORIAL NOTE: recommending an extension is an endorsement, and this is the
+# first place Kavacha makes one. The list is deliberately short and everything
+# on it is open-source, widely audited, and consistent with what Kavacha
+# already does by default. It is a product decision as much as a technical one
+# and should be reviewed as such — the mechanism is the durable part.
+#
+# The command is available only where a Space actually has recommendations, so
+# it does not sit dead in the palette for hand-made Spaces (workspace.template
+# was already stored by 0006, so no new field is needed).
+#
+# Why a patch: the template table and the panel handler are both inside
+# nsZenWorkspaces, and the panel itself lives in Zen's popupset.
+#
+# Touches: src/zen/spaces/ZenSpaceManager.mjs (table + panel + allowlist),
+#          src/browser/base/content/zen-panels/popups.inc (panel),
+#          src/zen/common/sys/KavachaCommandRegistry.sys.mjs (palette command),
+#          locales/en-US/browser/browser/zen-workspaces.ftl,
+#          locales/en-US/browser/browser/zen-command-palette.ftl.
+# Applies on top of 0052.
+diff --git a/locales/en-US/browser/browser/zen-workspaces.ftl b/locales/en-US/browser/browser/zen-workspaces.ftl
+--- a/locales/en-US/browser/browser/zen-workspaces.ftl
++++ b/locales/en-US/browser/browser/zen-workspaces.ftl
+@@ -217,3 +217,15 @@
+     .label = Preview
+     .tooltiptext = Render this note as markdown
+ kavacha-notes-preview-empty = Nothing to preview yet.
++
++# Kavacha patch 0053 — recommended extensions for a template Space.
++kavacha-recommendations-title =
++    .value = Recommended for { $name }
++kavacha-recommendations-intro = Suggestions that fit this template. Nothing is installed for you — each opens its listing so you can read the permissions first.
++# Read with formatValues and applied with setAttribute("label", ...), so these
++# are value-only messages, not .label attribute messages.
++kavacha-recommendations-get = Get extension
++kavacha-recommendations-installed = Already installed
++kavacha-recommendations-limit =
++    .label = Run only these in this Space
++kavacha-recommendations-note = You can change which extensions run in a Space at any time from the Space menu → Workspace Extensions.
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -69,3 +69,4 @@
+ 
+ # Restore Archived Space command (patch 0032)
+ kavacha-action-restore-space = Restore Archived Space
++kavacha-action-space-recommendations = Recommended Extensions for This Space
+diff --git a/src/browser/base/content/zen-panels/popups.inc b/src/browser/base/content/zen-panels/popups.inc
+--- a/src/browser/base/content/zen-panels/popups.inc
++++ b/src/browser/base/content/zen-panels/popups.inc
+@@ -121,6 +121,26 @@
+   </vbox>
+ </panel>
+ 
++# Kavacha patch 0053 — recommended extensions for a template Space. Nothing
++# here installs anything: "Get extension" opens the addons.mozilla.org listing
++# in a tab so the install goes through Firefox's own permission prompt.
++<panel id="kavacha-recommendations-panel" type="arrow" orient="vertical">
++  <vbox style="width: 420px; padding: 12px; gap: 10px;">
++    <label id="kavacha-recommendations-title" style="font-weight: 600;"/>
++    <description id="kavacha-recommendations-intro"
++      data-l10n-id="kavacha-recommendations-intro"
++      style="opacity: 0.75;"/>
++    <vbox id="kavacha-recommendations-list" style="gap: 10px;"/>
++    <hbox align="center" style="gap: 8px;">
++      <button id="kavacha-recommendations-limit"
++        data-l10n-id="kavacha-recommendations-limit"/>
++    </hbox>
++    <description id="kavacha-recommendations-note"
++      data-l10n-id="kavacha-recommendations-note"
++      style="opacity: 0.65;"/>
++  </vbox>
++</panel>
++
+ <panel id="kavacha-timeline-panel" type="arrow" orient="vertical">
+   <vbox style="width: 400px; padding: 10px; gap: 8px;">
+     <label id="kavacha-timeline-title" style="font-weight: 600;"/>
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -120,6 +120,18 @@
+     icon: "chrome://browser/skin/zen-icons/duplicate-tab.svg",
+     domain: KavachaCommandDomain.ORGANIZATION,
+     isAvailable: kNotPrivate,
++  },
++  {
++    // Patch 0053: the recommendations panel opens once when a template Space
++    // is created. Available only where there is something to recommend, so it
++    // does not sit dead in the palette for hand-made Spaces.
++    l10nId: "kavacha-action-space-recommendations",
++    command: window => window.gZenWorkspaces.kavachaShowRecommendedExtensions(),
++    icon: "chrome://browser/skin/zen-icons/selectable/extension-puzzle.svg",
++    domain: KavachaCommandDomain.ORGANIZATION,
++    isAvailable: window =>
++      kNotPrivate(window) &&
++      !!window.gZenWorkspaces?.kavachaHasRecommendations?.(),
+   },
+   {
+     l10nId: "kavacha-action-archive-space",
+diff --git a/src/zen/spaces/ZenSpaceManager.mjs b/src/zen/spaces/ZenSpaceManager.mjs
+--- a/src/zen/spaces/ZenSpaceManager.mjs
++++ b/src/zen/spaces/ZenSpaceManager.mjs
+@@ -78,9 +78,20 @@
+ 
+ // Kavacha: workspace templates — a template is a pre-filled space object plus
+ // a dedicated Firefox container, composing the Phase 2 identity features
+-// (container isolation + theme + search engine + settings). Extensions stay
+-// at "all" until the marketplace can install recommended sets.
++// (container isolation + theme + search engine + settings).
++//
++// `recommendedExtensions` (patch 0053) closes 0006's deferral. It is a
++// RECOMMENDATION, not an install list: nothing here is installed
++// automatically, silently, or as a side effect of creating a Space. Each entry
++// is offered in a panel and "Get extension" opens its addons.mozilla.org
++// listing in a tab, so the actual install goes through Firefox's own
++// permission prompt, exactly as it would if the user had found it themselves.
++// Recommending an extension is an endorsement, so the list is deliberately
++// short, and everything on it is open-source, widely audited, and consistent
++// with what Kavacha already does by default.
++//
+ // Container icons/colors must come from ContextualIdentityService's sets.
++const KAVACHA_AMO = "https://addons.mozilla.org/firefox/addon/";
+ const KAVACHA_SPACE_TEMPLATES = [
+   {
+     id: "student",
+@@ -89,6 +100,20 @@
+     container: { name: "Student", icon: "briefcase", color: "blue" },
+     themeColor: [59, 130, 246],
+     settings: { blockAutoplay: true, blockNotificationPrompts: true },
++    recommendedExtensions: [
++      {
++        id: "zotero@chnm.gmu.edu",
++        name: "Zotero Connector",
++        slug: "zotero-connector",
++        why: "Save a paper, its citation and its PDF from the page you are reading.",
++      },
++      {
++        id: "uBlock0@raymondhill.net",
++        name: "uBlock Origin",
++        slug: "ublock-origin",
++        why: "Content blocking on top of Kavacha's tracking protection.",
++      },
++    ],
+   },
+   {
+     id: "developer",
+@@ -97,6 +122,20 @@
+     container: { name: "Developer", icon: "circle", color: "green" },
+     themeColor: [34, 197, 94],
+     settings: { searchSuggestions: false },
++    recommendedExtensions: [
++      {
++        id: "uBlock0@raymondhill.net",
++        name: "uBlock Origin",
++        slug: "ublock-origin",
++        why: "Content blocking on top of Kavacha's tracking protection.",
++      },
++      {
++        id: "@react-devtools",
++        name: "React Developer Tools",
++        slug: "react-devtools",
++        why: "Component tree and props inspector in the developer tools.",
++      },
++    ],
+   },
+   {
+     id: "privacy",
+@@ -110,6 +149,20 @@
+       searchSuggestions: false,
+       blockNotificationPrompts: true,
+     },
++    recommendedExtensions: [
++      {
++        id: "uBlock0@raymondhill.net",
++        name: "uBlock Origin",
++        slug: "ublock-origin",
++        why: "Content blocking on top of Kavacha's tracking protection.",
++      },
++      {
++        id: "{74145f27-f039-47ce-a470-a662b129930a}",
++        name: "ClearURLs",
++        slug: "clearurls",
++        why: "Strips tracking parameters from links before they are followed.",
++      },
++    ],
+   },
+ ];
+ 
+@@ -1373,7 +1426,21 @@
+         this.#notesSaveTimer = setTimeout(
+           () => this.#flushWorkspaceNotes(),
+           500
++        );
++      });
++    document
++      .getElementById("kavacha-recommendations-limit")
++      .addEventListener("command", () => {
++        const panel = document.getElementById(
++          "kavacha-recommendations-panel"
+         );
++        const uuid = panel.getAttribute("data-workspace-id");
++        panel.hidePopup();
++        if (uuid) {
++          this.kavachaLimitSpaceToRecommended(uuid).catch(e =>
++            console.error("gZenWorkspaces: could not limit space extensions", e)
++          );
++        }
+       });
+     document
+       .getElementById("kavacha-notes-preview-toggle")
+@@ -3872,9 +3939,163 @@
+           this.saveWorkspace(workspace);
+         },
+       }
++    ).then(workspace => {
++      // Patch 0053: offer the template's recommended extensions once the Space
++      // exists. Deliberately AFTER creation and non-blocking — a failure to
++      // show a recommendation panel must never fail creating a Space.
++      if (workspace && template.recommendedExtensions?.length) {
++        this.kavachaShowRecommendedExtensions(workspace.uuid).catch(e =>
++          console.error("gZenWorkspaces: recommendations panel failed", e)
++        );
++      }
++      return workspace;
++    });
++  }
++
++  // ==========================================================================
++  // Kavacha (patch 0053): recommended extensions for a template Space.
++  // Patch 0006 deferred this with "Extensions stay at 'all' until the
++  // marketplace can install recommended sets" — but the marketplace installs
++  // Kavacha COMPONENTS (themes, layouts, bundles; ADR 0010), not
++  // WebExtensions, so it was never going to be the installer. The right
++  // installer already exists and is Firefox's: this panel recommends, and
++  // "Get extension" opens the addons.mozilla.org listing in a tab so the
++  // install runs through AMO's and Firefox's own permission prompts.
++  //
++  // Nothing is installed automatically, silently, or as a side effect of
++  // creating a Space. Recommending an extension is an endorsement and
++  // installing one on someone's behalf is not ours to do.
++  // ==========================================================================
++  #templateFor(workspace) {
++    return workspace?.template
++      ? KAVACHA_SPACE_TEMPLATES.find(t => t.id === workspace.template)
++      : null;
++  }
++
++  /** True when this Space came from a template that recommends extensions. */
++  kavachaHasRecommendations(workspaceId = null) {
++    const workspace = workspaceId
++      ? this.getWorkspaceFromId(workspaceId)
++      : this.getActiveWorkspaceFromCache();
++    return !!this.#templateFor(workspace)?.recommendedExtensions?.length;
++  }
++
++  async kavachaShowRecommendedExtensions(workspaceId = null) {
++    if (this.privateWindowOrDisabled) {
++      return;
++    }
++    const workspace = workspaceId
++      ? this.getWorkspaceFromId(workspaceId)
++      : this.getActiveWorkspaceFromCache();
++    const template = this.#templateFor(workspace);
++    const recommendations = template?.recommendedExtensions;
++    if (!workspace || !recommendations?.length) {
++      return;
++    }
++
++    // Which are already present? getAddonsByIDs resolves null per unknown id.
++    let installed = [];
++    try {
++      installed = await lazy.AddonManager.getAddonsByIDs(
++        recommendations.map(r => r.id)
++      );
++    } catch (e) {
++      console.error("gZenWorkspaces: could not query installed addons", e);
++      installed = recommendations.map(() => null);
++    }
++
++    const panel = document.getElementById("kavacha-recommendations-panel");
++    document.l10n.setAttributes(
++      document.getElementById("kavacha-recommendations-title"),
++      "kavacha-recommendations-title",
++      { name: workspace.name || "" }
+     );
++    panel.setAttribute("data-workspace-id", workspace.uuid);
++
++    const list = document.getElementById("kavacha-recommendations-list");
++    list.textContent = "";
++    const [getLabel, haveLabel] = await document.l10n.formatValues([
++      { id: "kavacha-recommendations-get" },
++      { id: "kavacha-recommendations-installed" },
++    ]);
++
++    let anyInstalled = false;
++    recommendations.forEach((rec, i) => {
++      const present = !!installed[i];
++      anyInstalled ||= present;
++
++      const row = document.createXULElement("hbox");
++      row.setAttribute("align", "start");
++      row.style.gap = "10px";
++
++      const copy = document.createXULElement("vbox");
++      copy.setAttribute("flex", "1");
++      const name = document.createXULElement("label");
++      name.style.fontWeight = "600";
++      name.value = rec.name;
++      const why = document.createXULElement("description");
++      why.style.opacity = "0.75";
++      why.textContent = rec.why;
++      copy.append(name, why);
++
++      const action = document.createXULElement("button");
++      if (present) {
++        action.setAttribute("label", haveLabel);
++        action.setAttribute("disabled", "true");
++      } else {
++        action.setAttribute("label", getLabel);
++        action.addEventListener("command", () => {
++          panel.hidePopup();
++          // The AMO listing, not a direct .xpi: the install must go through
++          // Firefox's permission prompt, and the user should see the
++          // reviews, permissions and source before deciding.
++          window.openTrustedLinkIn(KAVACHA_AMO + rec.slug + "/", "tab");
++        });
++      }
++
++      row.append(copy, action);
++      list.append(row);
++    });
++
++    // "Use only these here" writes the per-Space allowlist (patch 0004) from
++    // the recommendations that are actually installed. Meaningless — and so
++    // disabled — until at least one of them is.
++    // The button's listener is bound once in addPopupListeners and reads the
++    // Space back off the panel, so repeated opens cannot stack handlers.
++    const limit = document.getElementById("kavacha-recommendations-limit");
++    limit.disabled = !anyInstalled;
++
++    const anchor = this.workspaceIcons || gURLBar.textbox;
++    panel.openPopup(anchor, "after_start", 0, 0, false, false);
+   }
+ 
++  async kavachaLimitSpaceToRecommended(workspaceId) {
++    const workspace = this.getWorkspaceFromId(workspaceId);
++    const recommendations =
++      this.#templateFor(workspace)?.recommendedExtensions || [];
++    if (!workspace || !recommendations.length) {
++      return;
++    }
++    let installed = [];
++    try {
++      installed = await lazy.AddonManager.getAddonsByIDs(
++        recommendations.map(r => r.id)
++      );
++    } catch (e) {
++      console.error("gZenWorkspaces: could not query installed addons", e);
++      return;
++    }
++    const ids = installed.filter(Boolean).map(a => a.id);
++    if (!ids.length) {
++      return;
++    }
++    workspace.extensions = ids;
++    this.saveWorkspace(workspace);
++    if (this.isWorkspaceActive(workspace)) {
++      await this.applyWorkspaceExtensions(workspace);
++    }
++  }
++
+   // ==========================================================================
+   // Kavacha: workspace notes (PLATFORM_PLAN.md MVP item). Notes live in a
+   // profile-local JSONFile (kavacha-notes.json), keyed by workspace uuid —

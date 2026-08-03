@@ -1,0 +1,583 @@
+# Kavacha patch 0055 — search and palette follow-ups (REMAINING_WORK.md §3
+# "Search & palette", closing all three items).
+#
+# 1. UNIVERSAL SEARCH SHORTCUT. Patch 0012 shipped universal search reachable
+#    only through the command palette — press a shortcut, get a list, find
+#    "Search Everything", press enter, then finally type. It has its own
+#    command element and a rebindable binding now, listed in
+#    about:preferences with every other shortcut. It ships UNBOUND on purpose:
+#    every accel combination worth having is already taken by Firefox or Zen,
+#    and silently stealing one from a user who upgrades is worse than making
+#    them choose. This is a KBS versioner migration (19 -> 20), which is how
+#    Zen adds shortcuts to existing profiles.
+#
+# 2. WORKSPACE FILTER TOGGLE. Patch 0012 put a workspaceId on every result it
+#    could attribute and shipped the badge, leaving the filter as a follow-up.
+#    The toggle is captured at OPEN, not per query, so switching Spaces
+#    mid-search cannot silently change what "this Space" meant, and it resets
+#    on close because scope is a per-search decision, not a setting — a sticky
+#    filter would make the next search quietly miss things. Results with no
+#    Space (bookmarks, downloads) are dropped rather than guessed at: inventing
+#    an attribution would make the filter lie.
+#
+# 3. GROUPED PALETTE RENDERER. Patch 0027 stamped a `group` label on every
+#    Kavacha command and nothing rendered it. Two things were missing, and the
+#    non-obvious one is ordering: a header only means something if the rows of
+#    its group are ADJACENT, and the results learner sorts by usage, which
+#    interleaves domains freely. So the learner still ranks, but the
+#    highest-ranked member of a domain decides where that whole domain sits and
+#    the learner's order is kept within it. Rows with no domain — Zen's own
+#    actions — keep their exact position; reordering upstream's results is not
+#    this patch's business. The header is stamped onto the FIRST ROW of each
+#    run rather than emitted as a result of its own, because a header row would
+#    be selectable and would break arrow-key navigation. Clustering keys on the
+#    domain, not the localized label: two domains could translate to the same
+#    string, and deciding structure by comparing display text is how that class
+#    of bug gets in.
+#
+# 4. PER-SPACE CONTEXT ENTRIES. Snapshot / branch / timeline existed only as
+#    palette commands hard-wired to the ACTIVE Space, so there was no way to
+#    act on a Space you could see but were not in. Branching a non-active Space
+#    needs a snapshot of it first (kavachaBranchSpace's live path can only
+#    snapshot the current window), which is what kavachaBranchSpaceFrom does.
+#
+# Why a patch: the shortcut needs a Zen command element, a zen-sets dispatch
+# case and a KBS migration; the renderer is inside Zen's UrlbarProvider; the
+# menu items live in Zen's popupset.
+#
+# Touches: src/browser/base/content/zen-commands.inc.xhtml, src/zen/common/zen-sets.js,
+#          src/zen/kbs/ZenKeyboardShortcuts.mjs,
+#          src/zen/kavacha-search/KavachaUniversalSearch.mjs + kavacha-search.css,
+#          src/zen/urlbar/ZenUBGlobalActions.sys.mjs,
+#          src/zen/urlbar/ZenUBActionsProvider.sys.mjs,
+#          src/zen/common/styles/kavacha-spaces.inc.css,
+#          src/browser/base/content/zen-panels/popups.inc,
+#          src/zen/spaces/ZenSpaceManager.mjs,
+#          locales/en-US/browser/browser/zen-workspaces.ftl,
+#          locales/en-US/browser/browser/preferences/zen-preferences.ftl.
+# Applies on top of 0054.
+diff --git a/locales/en-US/browser/browser/zen-workspaces.ftl b/locales/en-US/browser/browser/zen-workspaces.ftl
+--- a/locales/en-US/browser/browser/zen-workspaces.ftl
++++ b/locales/en-US/browser/browser/zen-workspaces.ftl
+@@ -265,3 +265,12 @@
+ kavacha-compare-discard-body = “{ $name }” and its tabs will be deleted. The Space it was branched from is not touched, and its snapshots stay in the timeline — you can branch from them again.
+ kavacha-compare-discard-accept = Discard branch
+ kavacha-space-branch-of = Branch of { $parent }
++
++# Kavacha patch 0055 — scope universal search to the active Space.
++kavacha-search-scope-label = Only { $name }
++zen-workspaces-panel-context-snapshot =
++    .label = Snapshot This Space
++zen-workspaces-panel-context-branch =
++    .label = Branch This Space
++zen-workspaces-panel-context-timeline =
++    .label = Space Timeline…
+diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+--- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
++++ b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+@@ -326,6 +326,8 @@
+ zen-workspace-shortcut-backward = Backward Workspace
+ zen-workspace-shortcut-create = Create New Workspace
+ zen-sidebar-shortcut-toggle = Toggle Sidebar's Width
++# Kavacha patch 0055 — universal search shortcut (ships unbound).
++kavacha-universal-search-shortcut = Search Everything
+ zen-pinned-tab-shortcut-reset = Reset Pinned Tab to Pinned URL
+ zen-split-view-shortcut-grid = Toggle Split View Grid
+ zen-split-view-shortcut-vertical = Toggle Split View Vertical
+diff --git a/src/browser/base/content/zen-commands.inc.xhtml b/src/browser/base/content/zen-commands.inc.xhtml
+--- a/src/browser/base/content/zen-commands.inc.xhtml
++++ b/src/browser/base/content/zen-commands.inc.xhtml
+@@ -53,6 +53,11 @@
+ 
+   <command id="cmd_zenToggleSidebar" />
+ 
++  <!-- Kavacha patch 0055: universal search needs a command element of its own
++       so it can carry a user-rebindable keyboard shortcut, the way every other
++       Zen action does. -->
++  <command id="cmd_kavachaUniversalSearch" />
++
+   <command id="cmd_zenCopyCurrentURL" />
+   <command id="cmd_zenCopyCurrentURLMarkdown" />
+ 
+diff --git a/src/browser/base/content/zen-panels/popups.inc b/src/browser/base/content/zen-panels/popups.inc
+--- a/src/browser/base/content/zen-panels/popups.inc
++++ b/src/browser/base/content/zen-panels/popups.inc
+@@ -55,6 +55,19 @@
+   <menuitem id="context_zenWorkspacesNotes"
+     data-l10n-id="zen-workspaces-panel-context-notes"
+     hide-if-private-browsing="true"/>
++# Kavacha patch 0055 — snapshot / branch / timeline per Space. They existed
++# only as palette commands that always acted on the ACTIVE Space, so there was
++# no way to snapshot or branch a Space you were looking at but not in. From
++# this menu they act on the Space that was right-clicked.
++  <menuitem id="context_kavachaSnapshotSpace"
++    data-l10n-id="zen-workspaces-panel-context-snapshot"
++    hide-if-private-browsing="true"/>
++  <menuitem id="context_kavachaBranchSpace"
++    data-l10n-id="zen-workspaces-panel-context-branch"
++    hide-if-private-browsing="true"/>
++  <menuitem id="context_kavachaSpaceTimeline"
++    data-l10n-id="zen-workspaces-panel-context-timeline"
++    hide-if-private-browsing="true"/>
+ # Kavacha patch 0054 — branch actions. Both are hidden unless the Space
+ # actually is a branch (updateWorkspaceActionsMenu decides), because "compare
+ # with parent" is meaningless for a Space that has no parent.
+@@ -124,6 +137,13 @@
+     <html:input id="kavacha-search-input" type="text"
+       data-l10n-id="kavacha-search-input"/>
+     <html:div id="kavacha-search-hint" data-l10n-id="kavacha-search-hint"/>
++# Kavacha patch 0055 — scope toggle. Universal search already carried a
++# workspaceId on every result it could attribute (patch 0012 shipped the badge
++# and left the filter as a follow-up); this is the control that uses it.
++    <html:label id="kavacha-search-scope">
++      <html:input id="kavacha-search-scope-toggle" type="checkbox"/>
++      <html:span data-l10n-id="kavacha-search-scope-label"/>
++    </html:label>
+     <html:div id="kavacha-search-results" empty="true"/>
+   </vbox>
+ </panel>
+diff --git a/src/zen/common/zen-sets.js b/src/zen/common/zen-sets.js
+--- a/src/zen/common/zen-sets.js
++++ b/src/zen/common/zen-sets.js
+@@ -109,6 +109,12 @@
+           case "cmd_zenOpenWorkspaceCreation":
+             gZenWorkspaces.openWorkspaceCreation(event);
+             break;
++          // Kavacha patch 0055: universal search (patch 0012) was reachable
++          // only through the command palette, i.e. by pressing one shortcut to
++          // get to a list to find another search. It has its own binding now.
++          case "cmd_kavachaUniversalSearch":
++            gKavachaUniversalSearch.open();
++            break;
+           case "cmd_zenOpenFolderCreation":
+             gZenFolders.createFolder([], {
+               renameFolder: true,
+diff --git a/src/zen/kbs/ZenKeyboardShortcuts.mjs b/src/zen/kbs/ZenKeyboardShortcuts.mjs
+--- a/src/zen/kbs/ZenKeyboardShortcuts.mjs
++++ b/src/zen/kbs/ZenKeyboardShortcuts.mjs
+@@ -848,7 +848,7 @@
+ }
+ 
+ class nsZenKeyboardShortcutsVersioner {
+-  static LATEST_KBS_VERSION = 19;
++  static LATEST_KBS_VERSION = 20;
+ 
+   constructor() {}
+ 
+@@ -1256,6 +1256,27 @@
+       }
+     }
+ 
++
++    if (version < 20) {
++      // Migrate from version 19 to 20.
++      // Kavacha patch 0055: add the Search Everything shortcut. Shipped
++      // UNBOUND on purpose -- every accel combination worth having is already
++      // taken by Firefox or Zen, and silently stealing one from a user who
++      // upgrades is worse than making them choose. It appears in
++      // about:preferences with the other shortcuts, ready to be assigned.
++      data.push(
++        new KeyShortcut(
++          "kavacha-universal-search",
++          "",
++          "",
++          ZEN_OTHER_SHORTCUTS_GROUP,
++          nsKeyShortcutModifiers.fromObject({}),
++          "cmd_kavachaUniversalSearch",
++          "kavacha-universal-search-shortcut"
++        )
++      );
++    }
++
+     return data;
+   }
+ }
+diff --git a/src/zen/kavacha-search/KavachaUniversalSearch.mjs b/src/zen/kavacha-search/KavachaUniversalSearch.mjs
+--- a/src/zen/kavacha-search/KavachaUniversalSearch.mjs
++++ b/src/zen/kavacha-search/KavachaUniversalSearch.mjs
+@@ -30,6 +30,12 @@
+   #queryToken = 0;
+   #debounceTimer = null;
+   #groupLabels = null;
++  // Patch 0055: restrict results to the Space that is active when the panel
++  // opens. Held per-panel rather than per-query so it survives typing, and
++  // captured at open() so switching Spaces mid-search cannot silently change
++  // what "this Space" meant.
++  #scopeToggle = null;
++  #scopeWorkspaceId = null;
+ 
+   init() {
+     window.windowUtils.loadSheetUsingURIString(
+@@ -50,6 +56,13 @@
+         }, 120);
+       });
+       this.#input.addEventListener("keydown", e => this.#onKeyDown(e));
++      this.#scopeToggle = document.getElementById(
++        "kavacha-search-scope-toggle"
++      );
++      this.#scopeToggle.addEventListener("change", () => {
++        clearTimeout(this.#debounceTimer);
++        this.#runQuery(this.#input.value.trim());
++      });
+       this.#list.addEventListener("click", e => {
+         const row = e.target.closest(".kavacha-search-row");
+         if (row) {
+@@ -58,6 +71,9 @@
+       });
+       this.#panel.addEventListener("popuphidden", () => {
+         this.#input.value = "";
++        // The scope is a per-search decision, not a setting. Leaving it on
++        // would make the next search silently miss things.
++        this.#scopeToggle.checked = false;
+         this.#renderEmpty();
+       });
+     }
+@@ -72,7 +88,24 @@
+         ids.map(id => ({ id: `kavacha-search-group-${id}` }))
+       );
+       this.#groupLabels = Object.fromEntries(ids.map((id, i) => [id, values[i]]));
++    }
++    this.#scopeWorkspaceId = gZenWorkspaces?.privateWindowOrDisabled
++      ? null
++      : gZenWorkspaces?.activeWorkspace || null;
++    const scopeName = this.#scopeWorkspaceId
++      ? gZenWorkspaces.getWorkspaceFromId(this.#scopeWorkspaceId)?.name
++      : null;
++    // With no Space to scope to, the toggle would be a control that does
++    // nothing. Hide it rather than show a dead checkbox.
++    document.getElementById("kavacha-search-scope").hidden = !scopeName;
++    if (scopeName) {
++      document.l10n.setAttributes(
++        this.#scopeToggle.nextElementSibling,
++        "kavacha-search-scope-label",
++        { name: scopeName }
++      );
+     }
++
+     const width = Math.min(680, window.innerWidth * 0.7);
+     panel.style.setProperty("--kavacha-search-width", `${width}px`);
+     panel.openPopupAtScreen(
+@@ -286,6 +319,15 @@
+         }
+         this.#results.push(r);
+       }
++    }
++    if (this.#scopeToggle?.checked && this.#scopeWorkspaceId) {
++      // Only results Kavacha can actually attribute to a Space survive. A
++      // bookmark or download has no Space, and guessing one for it would make
++      // the filter lie -- dropping them is the honest reading of "only this
++      // Space".
++      this.#results = this.#results.filter(
++        r => r.workspaceId === this.#scopeWorkspaceId
++      );
+     }
+     this.#selectedIndex = this.#results.length ? 0 : -1;
+     this.#render();
+diff --git a/src/zen/kavacha-search/kavacha-search.css b/src/zen/kavacha-search/kavacha-search.css
+--- a/src/zen/kavacha-search/kavacha-search.css
++++ b/src/zen/kavacha-search/kavacha-search.css
+@@ -96,3 +96,29 @@
+   font-size: 0.9em;
+   text-align: right;
+ }
++
++/* ==========================================================================
++   Kavacha patch 0055 — "Only <Space>" scope toggle.
++
++   Sits between the hint and the results so it reads as a qualifier on the
++   query rather than as a result row.
++   ========================================================================== */
++#kavacha-search-scope {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  padding: 0 18px 10px;
++  font-size: 12px;
++  opacity: 0.8;
++  cursor: pointer;
++  user-select: none;
++}
++
++#kavacha-search-scope[hidden] {
++  display: none;
++}
++
++#kavacha-search-scope-toggle {
++  accent-color: var(--zen-primary-color, currentColor);
++  margin: 0;
++}
+diff --git a/src/zen/urlbar/ZenUBGlobalActions.sys.mjs b/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
+--- a/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
++++ b/src/zen/urlbar/ZenUBGlobalActions.sys.mjs
+@@ -292,6 +292,12 @@
+         : null;
+       return labelId ? lazy.l10n.formatValueSync(labelId) : undefined;
+     },
++    // Patch 0055: the renderer clusters by domain and stamps the header on the
++    // first row of each run, so it needs the domain ITSELF, not just the
++    // formatted label — two domains could in principle localize to the same
++    // string, and comparing display text to decide structure is how that class
++    // of bug gets in.
++    domain: action.domain,
+   };
+ }
+ 
+diff --git a/src/zen/urlbar/ZenUBActionsProvider.sys.mjs b/src/zen/urlbar/ZenUBActionsProvider.sys.mjs
+--- a/src/zen/urlbar/ZenUBActionsProvider.sys.mjs
++++ b/src/zen/urlbar/ZenUBActionsProvider.sys.mjs
+@@ -389,6 +389,11 @@
+             action.command
+           ),
+         keywords: action.label.split(" "),
++        // Patch 0055: the domain drives clustering, the label is what the
++        // header prints. `group` was already produced by patch 0027 and never
++        // reached the payload.
++        zenDomain: action.domain || "",
++        group: action.group || "",
+         ...action.extraPayload,
+       });
+ 
+@@ -416,16 +421,73 @@
+       finalResults.push(result);
+     }
+     let i = 0;
+-    zenUrlbarResultsLearner
+-      .sortCommandsByPriority(finalResults)
+-      .forEach(result => {
+-        if (isPrefixed && !isWorkspaceSearch && i === 0 && query.length > 1) {
+-          result.heuristic = true;
+-          delete result.suggestedIndex;
+-        }
+-        addCallback(this, result);
+-        i++;
+-      });
++    const ordered = this.#groupByDomain(
++      zenUrlbarResultsLearner.sortCommandsByPriority(finalResults)
++    );
++    ordered.forEach(result => {
++      if (isPrefixed && !isWorkspaceSearch && i === 0 && query.length > 1) {
++        result.heuristic = true;
++        delete result.suggestedIndex;
++      }
++      addCallback(this, result);
++      i++;
++    });
++  }
++
++  /**
++   * Kavacha patch 0055 — the grouped palette renderer.
++   *
++   * Patch 0027 stamped a `group` label on every Kavacha command's payload and
++   * nothing rendered it, so the palette stayed one undifferentiated list. Two
++   * things were needed and this is the first: the rows of a group have to be
++   * ADJACENT before a header on the first of them means anything. The learner
++   * sorts by how often a command is used, which interleaves domains freely.
++   *
++   * So: keep the learner's ordering as the ranking signal, but let the
++   * highest-ranked member of each domain decide where that whole domain sits,
++   * and keep the learner's order within it. Rows that carry no domain (Zen's
++   * own actions, and the heuristic row when one is promoted) keep their exact
++   * position — reordering upstream's results is not this patch's business.
++   *
++   * The header is stamped on the first row of each run rather than emitted as
++   * a separate result, because a header row would be selectable and would
++   * break arrow-key navigation.
++   *
++   * @param {UrlbarResult[]} results Learner-ordered results.
++   * @returns {UrlbarResult[]} The same results, domain-clustered.
++   */
++  #groupByDomain(results) {
++    const runs = new Map();
++    const out = [];
++    for (const result of results) {
++      const domain = result.payload?.zenDomain;
++      if (!domain) {
++        out.push(result);
++        continue;
++      }
++      if (!runs.has(domain)) {
++        // Reserve this domain's slot at the position of its best-ranked
++        // member; later members are appended into the same slot.
++        const slot = [];
++        runs.set(domain, slot);
++        out.push(slot);
++      }
++      runs.get(domain).push(result);
++    }
++    const flat = out.flat();
++    let lastDomain = null;
++    for (const result of flat) {
++      const domain = result.payload?.zenDomain;
++      if (domain && domain !== lastDomain) {
++        result.payload.groupHeader = result.payload.group || "";
++      } else if (result.payload) {
++        // A result object can be reused across queries; a stale header would
++        // print a section title in the middle of a run.
++        result.payload.groupHeader = "";
++      }
++      lastDomain = domain || null;
++    }
++    return flat;
+   }
+ 
+   /**
+@@ -463,6 +525,10 @@
+       shortcutContent: {
+         textContent: result.payload.shortcutContent || "",
+       },
++      groupHeader: {
++        textContent: result.payload.groupHeader || "",
++        attributes: { hidden: !result.payload.groupHeader },
++      },
+       prettyName: {
+         attributes: {
+           hidden: !result.payload.prettyName,
+@@ -493,7 +559,17 @@
+         selectable: true,
+       },
+       children: [
++        // Patch 0055: the group header. First child so it can be given
++        // flex-basis: 100% and order: -1 in CSS, putting it on its own line
++        // above the row's contents; hidden (and so laid out at zero size) on
++        // every row that is not the first of its group.
+         {
++          name: "groupHeader",
++          tag: "span",
++          classList: ["kavacha-palette-group"],
++          attributes: { hidden: true },
++        },
++        {
+           name: "icon",
+           tag: "img",
+           classList: ["urlbarView-favicon"],
+diff --git a/src/zen/spaces/ZenSpaceManager.mjs b/src/zen/spaces/ZenSpaceManager.mjs
+--- a/src/zen/spaces/ZenSpaceManager.mjs
++++ b/src/zen/spaces/ZenSpaceManager.mjs
+@@ -1426,6 +1426,34 @@
+         this.#notesSaveTimer = setTimeout(
+           () => this.#flushWorkspaceNotes(),
+           500
++        );
++      });
++    // Patch 0055: snapshot / branch / timeline for the Space that was
++    // right-clicked. All three existed only as palette commands acting on the
++    // ACTIVE Space, so there was no way to snapshot or branch a Space you
++    // could see but were not in.
++    document
++      .getElementById("context_kavachaSnapshotSpace")
++      .addEventListener("command", () => {
++        const uuid = this.#contextMenuData?.workspaceId || this.activeWorkspace;
++        ChromeUtils.importESModule(
++          "resource:///modules/KavachaSpaceHistory.sys.mjs"
++        )
++          .KavachaSpaceHistory.snapshotSpace(window, uuid, "manual")
++          .catch(e => console.error("gZenWorkspaces: snapshot failed", e));
++      });
++    document
++      .getElementById("context_kavachaBranchSpace")
++      .addEventListener("command", () => {
++        this.kavachaBranchSpaceFrom(this.#contextMenuData?.workspaceId).catch(
++          e => console.error("gZenWorkspaces: branch failed", e)
++        );
++      });
++    document
++      .getElementById("context_kavachaSpaceTimeline")
++      .addEventListener("command", () => {
++        this.kavachaOpenSpaceTimeline(this.#contextMenuData?.workspaceId).catch(
++          e => console.error("gZenWorkspaces: timeline failed", e)
+         );
+       });
+     // Patch 0054: timeline replay + branch compare/discard. All bound once,
+@@ -4244,6 +4272,38 @@
+   // given snapshot id), create a child space carrying parent metadata, and
+   // rebuild the snapshot's tabs in it from their SessionStore state.
+   // ==========================================================================
++  /**
++   * Kavacha (patch 0055): branch a NAMED Space rather than the active one.
++   * kavachaBranchSpace's no-snapshot path is hard-wired to this.activeWorkspace
++   * (it has to be — it snapshots the live window), so branching a Space you can
++   * see but are not in means snapshotting it first and branching that snapshot.
++   *
++   * @param {string|null} workspaceId Space to branch; null = the active one.
++   * @returns {Promise<object|null>} The new branch Space, or null.
++   */
++  async kavachaBranchSpaceFrom(workspaceId = null) {
++    if (!workspaceId || workspaceId === this.activeWorkspace) {
++      return this.kavachaBranchSpace();
++    }
++    const { KavachaSpaceHistory } = ChromeUtils.importESModule(
++      "resource:///modules/KavachaSpaceHistory.sys.mjs"
++    );
++    // A null id means the snapshot was deduped away because nothing changed —
++    // in which case the latest stored snapshot already IS this Space's current
++    // state, which is exactly what we want to branch from.
++    const fresh = await KavachaSpaceHistory.snapshotSpace(
++      window,
++      workspaceId,
++      "branch"
++    );
++    const id =
++      fresh ?? (await KavachaSpaceHistory.listSnapshots(workspaceId))[0]?.id;
++    if (id == null) {
++      return null; // nothing worth branching (an empty Space)
++    }
++    return this.kavachaBranchSpace(id);
++  }
++
+   async kavachaBranchSpace(snapshotId = null) {
+     if (this.privateWindowOrDisabled) {
+       return null;
+@@ -4368,11 +4428,15 @@
+   // (kavachaBranchSpace), so the current line of work is never overwritten.
+   // Step-through replay is a follow-up.
+   // ==========================================================================
+-  async kavachaOpenSpaceTimeline() {
++  async kavachaOpenSpaceTimeline(workspaceId = null) {
+     if (this.privateWindowOrDisabled) {
+       return;
+     }
+-    const workspace = this.getActiveWorkspaceFromCache();
++    // Patch 0055: the timeline can now be opened for the Space that was
++    // right-clicked, not only the active one.
++    const workspace = workspaceId
++      ? this.getWorkspaceFromId(workspaceId)
++      : this.getActiveWorkspaceFromCache();
+     if (!workspace) {
+       return;
+     }
+diff --git a/src/zen/common/styles/kavacha-spaces.inc.css b/src/zen/common/styles/kavacha-spaces.inc.css
+--- a/src/zen/common/styles/kavacha-spaces.inc.css
++++ b/src/zen/common/styles/kavacha-spaces.inc.css
+@@ -55,3 +55,32 @@
+     height: 2px;
+   }
+ }
++
++/* ==========================================================================
++   Kavacha grouped palette results (patch 0055).
++
++   The header is a child of the row, not a row of its own: a header row would
++   be selectable and would break arrow-key navigation through the palette.
++   Making the row's inner box wrap and giving the header a full-basis line
++   puts it above the row's contents without taking it out of the row.
++
++   Scoped to zen-actions dynamic rows so no other urlbar result is affected.
++   ========================================================================== */
++.urlbarView-row[dynamicType="zen-actions"] .urlbarView-row-inner {
++  flex-wrap: wrap;
++}
++
++.kavacha-palette-group {
++  order: -1;
++  flex: 0 0 100%;
++  font-size: 0.72em;
++  font-weight: 700;
++  letter-spacing: 0.06em;
++  text-transform: uppercase;
++  opacity: 0.6;
++  margin-block: 2px 4px;
++}
++
++.kavacha-palette-group[hidden] {
++  display: none;
++}

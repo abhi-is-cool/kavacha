@@ -1,0 +1,293 @@
+# Kavacha patch 0058 — Arc-style tabs as a layout-engine capability
+# (REMAINING_WORK.md §3 "Customization": "Arc-style tabs — not yet a
+# layout-engine capability, which is why the Studio defers it").
+#
+# THE INSIGHT THAT MAKES THIS SMALL: Arc is not a third ORIENTATION. It is the
+# vertical layout with a different presentation. Zen's tab code has exactly one
+# axis of freedom here — the `zen.tabs.vertical` pref — and trying to add a
+# third value to a boolean is why this looked like a large change. So tabStyle
+# gains "arc" as a third value, the engine sets the SAME pref for it as for
+# "vertical", and it additionally stamps kavacha-tab-style on the chrome root
+# for a CSS layer to bind to. Splitting "which way do tabs run" from "how do
+# they look" is what lets a presentation be added without teaching Zen's tab
+# code a new mode — and it is the mechanism a fourth style would reuse.
+#
+# ONE SUBTLETY WORTH THE COMMENT: _normalize() seeded tabStyle from the live
+# pref, which was correct while the two were in bijection. With "arc" they are
+# not — the pref cannot tell arc from vertical — so the seed had to become a
+# FALLBACK that the document's own value overrides, or every read would
+# normalize "arc" back to "vertical" and the setting would appear not to stick.
+#
+# WHAT ARC MEANS HERE, concretely and not more: tabs as separated cards with
+# real gaps rather than rows in a continuous list; the active card raised
+# rather than highlighted; the favicon in a fixed leading column so titles
+# align (variable icon widths are most of what makes an unstyled vertical strip
+# look ragged); per-tab controls quiet until hover, but restored on keyboard
+# focus so they do not become pointer-only; and the page in an inset floating
+# frame. The layer also zeroes patch 0056's selected-tab accent rail, which on
+# an already-raised card would be a second, redundant marker.
+#
+# Everything is gated on the attribute, so at the shipped horizontal default —
+# and at plain vertical — this file is inert, the same discipline
+# kavacha-layout.inc.css follows.
+#
+# The Studio's sidebar card was gated on tabStyle === "vertical" and now tests
+# for "not horizontal": arc is a vertical layout and keeps those controls, and
+# the inverted test is what stops a future fourth style from silently losing
+# them too.
+#
+# NOTE: customization/layout-engine/layout.schema.json (repo-level, not part of
+# this patch) is updated alongside for both the new tabStyle value and patch
+# 0057's `widgets` field.
+#
+# Touches: src/zen/common/sys/KavachaLayoutEngine.sys.mjs,
+#          src/zen/common/styles/kavacha-arc-tabs.inc.css (new) + zen-theme.css,
+#          src/zen/kavacha-studio/studio.html, src/zen/kavacha-studio/studio.js.
+# Applies on top of 0057.
+diff --git a/src/zen/common/sys/KavachaLayoutEngine.sys.mjs b/src/zen/common/sys/KavachaLayoutEngine.sys.mjs
+--- a/src/zen/common/sys/KavachaLayoutEngine.sys.mjs
++++ b/src/zen/common/sys/KavachaLayoutEngine.sys.mjs
+@@ -21,6 +21,14 @@
+ //   tabStyle        -> the `zen.tabs.vertical` pref (Zen + patch 0010 already
+ //                      react live: CSS @media -moz-pref + gZenVerticalTabsManager).
+ //                      The engine only flips the pref; it never moves DOM.
++//                      Patch 0058 adds "arc": a THIRD value, not a third
++//                      orientation. Arc is vertical tabs with a different
++//                      presentation, so it sets the same pref as "vertical"
++//                      and additionally stamps kavacha-tab-style on the root
++//                      for kavacha-arc-tabs.inc.css to bind to. Splitting
++//                      "which way do tabs run" from "how do they look" is what
++//                      lets a presentation be added without teaching Zen's tab
++//                      code a new mode.
+ //   density/sidebar -> attributes on document.documentElement, consumed by the
+ //   /toolbar           kavacha-layout.inc.css layer (a no-op at the defaults).
+ //   sidebarWidth    -> the --kavacha-sidebar-width custom property.
+@@ -60,7 +68,7 @@
+ };
+ 
+ const kSidebars = ["left", "right", "hidden"];
+-const kTabStyles = ["vertical", "horizontal"];
++const kTabStyles = ["vertical", "horizontal", "arc"];
+ const kDensities = ["compact", "normal", "comfortable"];
+ const kToolbarPositions = ["top", "bottom"];
+ 
+@@ -109,6 +117,9 @@
+   _normalize(doc) {
+     const out = { ...DEFAULT_LAYOUT, toolbar: { ...DEFAULT_LAYOUT.toolbar } };
+     // Seed tabStyle from the live pref so we never fight the shipped look.
++    // This is only a FALLBACK: the document's own value wins below when it has
++    // one. It has to, or "arc" would be normalized back to "vertical" on every
++    // read — the pref cannot distinguish the two (patch 0058).
+     out.tabStyle = Services.prefs.getBoolPref(kVerticalPref, true)
+       ? "vertical"
+       : "horizontal";
+@@ -199,10 +210,14 @@
+ 
+     // tabStyle -> the pref Zen + patch 0010 already react to. Only touch the
+     // pref when it actually differs, so we don't spuriously notify observers.
+-    const wantVertical = layout.tabStyle === "vertical";
++    // "arc" is a vertical layout, so anything that is not explicitly
++    // horizontal wants the vertical strip.
++    const wantVertical = layout.tabStyle !== "horizontal";
+     if (Services.prefs.getBoolPref(kVerticalPref, true) !== wantVertical) {
+       Services.prefs.setBoolPref(kVerticalPref, wantVertical);
+     }
++    // ...and the presentation, which the pref cannot express.
++    root.setAttribute("kavacha-tab-style", layout.tabStyle);
+ 
+     // density / sidebar / toolbar -> root attributes for kavacha-layout.inc.css.
+     root.setAttribute("kavacha-density", layout.density);
+diff --git a/src/zen/common/styles/kavacha-arc-tabs.inc.css b/src/zen/common/styles/kavacha-arc-tabs.inc.css
+new file mode 100644
+--- /dev/null
++++ b/src/zen/common/styles/kavacha-arc-tabs.inc.css
+@@ -0,0 +1,141 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* ==========================================================================
++   Arc-style tabs (patch 0058).
++
++   REMAINING_WORK recorded this as "not yet a layout-engine capability, which
++   is why the Studio defers it". This is that capability. Arc is not a third
++   ORIENTATION -- it is vertical tabs with a different presentation, which is
++   why KavachaLayoutEngine sets the same `zen.tabs.vertical` pref for it and
++   additionally stamps kavacha-tab-style="arc" on the root for this layer to
++   bind to. Splitting "which way do tabs run" from "how do they look" is what
++   lets a presentation be added without teaching Zen's tab code a new mode.
++
++   Everything here is gated on that attribute, so at Kavacha's shipped
++   horizontal default -- and at plain vertical -- this file is inert, the same
++   discipline kavacha-layout.inc.css follows.
++
++   What "Arc-style" concretely means here, and nothing beyond it:
++     - tabs are separated CARDS with real gaps, not rows in a continuous list;
++     - the active card is a raised surface rather than a highlight;
++     - the favicon sits in a fixed leading column so titles align;
++     - per-tab controls stay out of the way until the row is hovered;
++     - the content area is inset with a rounded, floating frame.
++   ========================================================================== */
++
++:root[kavacha-tab-style="arc"] {
++  --kavacha-arc-gap: 3px;
++  --kavacha-arc-radius: 10px;
++  --kavacha-arc-inset: 8px;
++}
++
++/* --- Tabs as cards ------------------------------------------------------ */
++
++:root[kavacha-tab-style="arc"] #tabbrowser-tabs .tabbrowser-tab {
++  margin-block: var(--kavacha-arc-gap);
++  margin-inline: 6px;
++}
++
++:root[kavacha-tab-style="arc"]
++  #tabbrowser-tabs
++  .tabbrowser-tab
++  > .tab-stack
++  > .tab-background {
++  border-radius: var(--kavacha-arc-radius);
++  border: 1px solid transparent;
++  /* Patch 0056 puts an accent rail on the selected tab. In Arc the card
++     itself carries the emphasis, so the rail would be a second, redundant
++     marker on an already-raised surface. */
++  box-shadow: none;
++}
++
++:root[kavacha-tab-style="arc"]
++  #tabbrowser-tabs
++  .tabbrowser-tab[selected]
++  > .tab-stack
++  > .tab-background {
++  background: var(--kavacha-surface-elevated, var(--zen-colors-tertiary));
++  border-color: color-mix(
++    in srgb,
++    var(--kavacha-border, currentColor) 70%,
++    transparent
++  );
++  box-shadow: 0 1px 3px rgb(0 0 0 / 22%);
++}
++
++:root[kavacha-tab-style="arc"]
++  #tabbrowser-tabs
++  .tabbrowser-tab:not([selected]):hover
++  > .tab-stack
++  > .tab-background {
++  background: color-mix(in srgb, currentColor 8%, transparent);
++}
++
++/* --- Aligned favicon column --------------------------------------------- */
++
++:root[kavacha-tab-style="arc"] #tabbrowser-tabs .tab-icon-stack {
++  /* A fixed column rather than intrinsic width: with variable icon sizes the
++     titles start at different x positions down the strip, which is most of
++     what makes an unstyled vertical strip look ragged. */
++  min-width: 20px;
++  justify-content: center;
++}
++
++:root[kavacha-tab-style="arc"] #tabbrowser-tabs .tab-label {
++  margin-inline-start: 2px;
++}
++
++/* --- Quiet per-tab controls --------------------------------------------- */
++
++:root[kavacha-tab-style="arc"]
++  #tabbrowser-tabs
++  .tabbrowser-tab
++  .tab-close-button {
++  opacity: 0;
++  transition: opacity 120ms ease;
++}
++
++:root[kavacha-tab-style="arc"]
++  #tabbrowser-tabs
++  .tabbrowser-tab:is(:hover, [selected])
++  .tab-close-button,
++/* A control that only appears on hover must still appear on keyboard focus,
++   or it becomes unreachable without a pointer. */
++:root[kavacha-tab-style="arc"]
++  #tabbrowser-tabs
++  .tabbrowser-tab
++  .tab-close-button:focus-visible {
++  opacity: 1;
++}
++
++@media (prefers-reduced-motion: reduce) {
++  :root[kavacha-tab-style="arc"]
++    #tabbrowser-tabs
++    .tabbrowser-tab
++    .tab-close-button {
++    transition: none;
++  }
++}
++
++/* --- Floating content frame --------------------------------------------- */
++
++:root[kavacha-tab-style="arc"] #zen-appcontent-wrapper {
++  margin: var(--kavacha-arc-inset);
++  margin-inline-start: 0;
++  border-radius: var(--kavacha-arc-radius);
++  overflow: hidden;
++  box-shadow: 0 2px 10px rgb(0 0 0 / 18%);
++}
++
++:root[kavacha-tab-style="arc"][kavacha-sidebar="right"] #zen-appcontent-wrapper {
++  margin-inline-start: var(--kavacha-arc-inset);
++  margin-inline-end: 0;
++}
++
++/* The sidebar is the window background in Arc, not a panel sitting on it. */
++:root[kavacha-tab-style="arc"] #navigator-toolbox {
++  background: transparent;
++  border-inline-end: none;
++}
+diff --git a/src/zen/common/styles/zen-theme.css b/src/zen/common/styles/zen-theme.css
+--- a/src/zen/common/styles/zen-theme.css
++++ b/src/zen/common/styles/zen-theme.css
+@@ -348,6 +348,7 @@
+ %include kavacha-theme-light.inc.css
+ 
+ %include kavacha-layout.inc.css
++%include kavacha-arc-tabs.inc.css
+ %include kavacha-polish.inc.css
+ %include kavacha-menu.inc.css
+ %include kavacha-notes.inc.css
+diff --git a/src/zen/kavacha-studio/studio.html b/src/zen/kavacha-studio/studio.html
+--- a/src/zen/kavacha-studio/studio.html
++++ b/src/zen/kavacha-studio/studio.html
+@@ -69,11 +69,13 @@
+           <h2>Tabs</h2>
+           <p class="studio-hint">
+             Horizontal is Kavacha's default. Vertical brings back a sidebar
+-            strip.
++            strip. Arc is that sidebar with tabs as separated cards and the
++            page in a floating frame &mdash; same layout, different look.
+           </p>
+           <div class="segmented" role="radiogroup" aria-label="Tab layout" data-control="tabStyle">
+             <button role="radio" data-value="horizontal">Horizontal</button>
+             <button role="radio" data-value="vertical">Vertical</button>
++            <button role="radio" data-value="arc">Arc</button>
+           </div>
+         </div>
+ 
+diff --git a/src/zen/kavacha-studio/studio.js b/src/zen/kavacha-studio/studio.js
+--- a/src/zen/kavacha-studio/studio.js
++++ b/src/zen/kavacha-studio/studio.js
+@@ -85,9 +85,13 @@
+ 
+     qs("[data-control='toolbarVisible']").checked = layout.toolbar.visible;
+ 
+-    // The sidebar card is meaningless in horizontal mode.
++    // The sidebar card is meaningless in horizontal mode. Arc is a vertical
++    // layout with a different presentation (patch 0058), so it keeps the
++    // sidebar controls -- testing for "not horizontal" rather than for
++    // "vertical" is what stops a future fourth style from silently losing
++    // them too.
+     qs(".studio-card[data-requires='vertical']").hidden =
+-      layout.tabStyle !== "vertical";
++      layout.tabStyle === "horizontal";
+   },
+ 
+   async commit(patch) {

@@ -1,0 +1,971 @@
+# Kavacha patch 0056 — customization follow-ups (REMAINING_WORK.md §3
+# "Customization": light themes, CSS syntax highlighting, active-tab emphasis
+# and tab-strip spacing, first-launch coach mark).
+#
+# 1. LIGHT THEMES. ADR 0008 recorded the real obstacle: patch 0016 bridges
+#    Kavacha into Zen with `--zen-branding-dark: var(--kavacha-surface)` plus a
+#    column of `light-dark(stock-light, var(--kavacha-*))`, so overriding the
+#    base tokens only ever fills the DARK half — a bright surface produced
+#    dark-derived chrome with light text on it. The fix is NOT to duplicate
+#    that mapping in JS. The engine derives a mode from the theme's own surface
+#    luminance and stamps kavacha-theme-mode on the chrome root;
+#    kavacha-theme-light.inc.css owns the light half, mirroring what 0016 does
+#    for the dark half. CSS keeps the mapping, the engine keeps the decision,
+#    and because the mode is DERIVED rather than declared, user and marketplace
+#    theme packages get light support without declaring anything — and a
+#    package that claimed "light" while shipping a near-black surface cannot
+#    produce unreadable chrome. The threshold is the same 0.45 the engine
+#    already used to pick color-scheme, kept identical so the two cannot
+#    disagree. One built-in light theme ships as the proof.
+#
+# 2. CSS SYNTAX HIGHLIGHTING. A textarea cannot render styled text, so the
+#    textarea stays the real editing surface — caret, selection, undo, IME,
+#    spellcheck and screen-reader support all remain native — and is made
+#    transparent over a scroll-synced <pre> that paints the colours. Nothing
+#    about editing is reimplemented, so nothing about editing can regress. The
+#    tokens are built with createElement/createTextNode: about:studio runs with
+#    the SYSTEM PRINCIPAL, so assigning the user's CSS to innerHTML would be
+#    script execution with chrome privileges. Above 60k characters the
+#    highlighting drops to plain text rather than building a span per token on
+#    every keystroke — the editor is the textarea, so that is a degradation,
+#    not a failure.
+#
+# 3. ACTIVE-TAB EMPHASIS + SPACING. At the shipped horizontal density the
+#    selected tab differed from its neighbours by a few percent of luminance,
+#    which on a laptop panel at an angle is genuinely ambiguous. Emphasis now
+#    runs on three independent channels — surface, label weight, and an accent
+#    rail — so it survives any one being washed out. The rail is an inset
+#    box-shadow, not a border, so it costs no layout and cannot shift the strip
+#    as selection moves.
+#
+# 4. FIRST-LAUNCH COACH MARK. Patch 0030 added the menu button precisely
+#    because every feature was Cmd+K-only — but an unexplained gear leaves a
+#    user who never presses it exactly where they were. Shown ONCE per profile,
+#    non-modal, noautofocus, closing on its own: it is an explanation, and
+#    interrupting someone to explain a button they have not asked about is
+#    worse than the button being unexplained. The pref flips BEFORE the panel
+#    is shown, so a crash between the two cannot resurrect it, and never in a
+#    private window, which is not anyone's first launch.
+#
+# ALSO FIXED, found by auditing every zen-icons/selectable reference against
+# the jar manifest rather than by looking at the UI: eleven palette and menu
+# entries pointed at selectable/clock.svg and selectable/window.svg, neither of
+# which exists in the icon set or the jar. They have rendered as missing images
+# since patches 0013/0022/0023/0025/0028/0029. Re-pointed at time.svg, layers.svg
+# and shapes.svg, all of which are packaged. The audit is now clean.
+#
+# Why a patch: the theme bridge, the Studio page, the tab strip and the menu
+# button are all Zen/Kavacha chrome sources with no pref or overlay equivalent.
+#
+# Touches: src/zen/common/sys/KavachaThemeEngine.sys.mjs,
+#          src/zen/common/styles/kavacha-theme-light.inc.css (new) + zen-theme.css,
+#          src/zen/kavacha-studio/{studio.html,studio.js,studio.css},
+#          src/zen/common/styles/kavacha-polish.inc.css,
+#          src/zen/common/sys/KavachaMenu.sys.mjs + kavacha-menu.inc.css,
+#          src/zen/common/sys/{KavachaCommandRegistry,KavachaMarketplace,
+#            KavachaPluginManager,KavachaSDK}.sys.mjs (icon fixes),
+#          locales/en-US/browser/browser/zen-command-palette.ftl.
+# Applies on top of 0055.
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -71,3 +71,6 @@
+ kavacha-action-restore-space = Restore Archived Space
+ kavacha-action-space-recommendations = Recommended Extensions for This Space
+ kavacha-action-compare-branch = Compare This Branch with Its Parent
++# Kavacha patch 0056 — first-launch coach mark on the menu button.
++kavacha-coachmark-title = Everything is here
++kavacha-coachmark-body = Spaces, themes, layout, privacy and the rest of Kavacha live behind this button. Cmd+K opens the same list.
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -180,7 +180,7 @@
+       ChromeUtils.importESModule(
+         "resource:///modules/KavachaTabMemory.sys.mjs"
+       ).KavachaTabMemory.sleepBackgroundTabsNow(),
+-    icon: "chrome://browser/skin/zen-icons/selectable/clock.svg",
++    icon: "chrome://browser/skin/zen-icons/selectable/time.svg",
+     domain: KavachaCommandDomain.PRODUCTIVITY,
+   },
+ 
+@@ -193,7 +193,7 @@
+       const on = Services.prefs.getBoolPref("zen.urlbar.replace-newtab", true);
+       Services.prefs.setBoolPref("zen.urlbar.replace-newtab", !on);
+     },
+-    icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++    icon: "chrome://browser/skin/zen-icons/selectable/layers.svg",
+     domain: KavachaCommandDomain.APPEARANCE,
+   },
+   {
+@@ -207,7 +207,7 @@
+         tabStyle: layout.tabStyle === "vertical" ? "horizontal" : "vertical",
+       });
+     },
+-    icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++    icon: "chrome://browser/skin/zen-icons/selectable/layers.svg",
+     domain: KavachaCommandDomain.APPEARANCE,
+   },
+   {
+@@ -221,7 +221,7 @@
+       const next = order[(order.indexOf(layout.sidebar) + 1) % order.length];
+       await e.setLayout({ sidebar: next });
+     },
+-    icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++    icon: "chrome://browser/skin/zen-icons/selectable/layers.svg",
+     domain: KavachaCommandDomain.APPEARANCE,
+   },
+   {
+@@ -235,7 +235,7 @@
+       const next = order[(order.indexOf(layout.density) + 1) % order.length];
+       await e.setLayout({ density: next });
+     },
+-    icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++    icon: "chrome://browser/skin/zen-icons/selectable/layers.svg",
+     domain: KavachaCommandDomain.APPEARANCE,
+   },
+   {
+@@ -244,7 +244,7 @@
+       ChromeUtils.importESModule(
+         "resource:///modules/KavachaLayoutEngine.sys.mjs"
+       ).KavachaLayoutEngine.reloadFromFile(),
+-    icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++    icon: "chrome://browser/skin/zen-icons/selectable/layers.svg",
+     domain: KavachaCommandDomain.APPEARANCE,
+   },
+   {
+@@ -260,7 +260,7 @@
+       const i = ids.indexOf(e.activeThemeId);
+       await e.setActiveTheme(ids[(i + 1) % ids.length]);
+     },
+-    icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++    icon: "chrome://browser/skin/zen-icons/selectable/layers.svg",
+     domain: KavachaCommandDomain.APPEARANCE,
+   },
+   {
+@@ -268,7 +268,7 @@
+     // about:studio is a privileged chrome page (ADR 0009); reuse an existing
+     // tab if one is already open rather than piling up duplicates.
+     command: window => window.switchToTabHavingURI("about:studio", true),
+-    icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++    icon: "chrome://browser/skin/zen-icons/selectable/layers.svg",
+     domain: KavachaCommandDomain.APPEARANCE,
+   },
+   {
+@@ -280,7 +280,7 @@
+       ChromeUtils.importESModule(
+         "resource:///modules/KavachaUserCSS.sys.mjs"
+       ).KavachaUserCSS.toggleSafeMode(),
+-    icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++    icon: "chrome://browser/skin/zen-icons/selectable/layers.svg",
+     domain: KavachaCommandDomain.APPEARANCE,
+   },
+ 
+diff --git a/src/zen/common/sys/KavachaMenu.sys.mjs b/src/zen/common/sys/KavachaMenu.sys.mjs
+--- a/src/zen/common/sys/KavachaMenu.sys.mjs
++++ b/src/zen/common/sys/KavachaMenu.sys.mjs
+@@ -32,6 +32,10 @@
+ 
+ const lazy = {};
+ 
++ChromeUtils.defineESModuleGetters(lazy, {
++  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
++});
++
+ // Same Fluent surface the palette uses (ZenUBGlobalActions): a sync-capable
+ // Localization over the command-palette strings. Built-in command labels and
+ // the domain headers resolve through it; runtime commands carry a literal
+@@ -42,6 +46,20 @@
+ 
+ const kSettingsIcon = "chrome://browser/skin/zen-icons/settings.svg";
+ 
++// Patch 0056: the first-launch coach mark. Patch 0030 added the button
++// precisely because "every Kavacha feature was reachable ONLY through Cmd+K"
++// — but a gear icon among other toolbar icons is not self-explanatory either,
++// and a user who does not press it is in the same position as before.
++//
++// Shown ONCE, ever, per profile: the pref flips the moment it is shown, not
++// when it is dismissed, so a crash between the two cannot resurrect it. No
++// default is declared anywhere — the `false` fallback IS the default, which
++// means a profile that has never seen it and a profile whose pref file was
++// lost behave the same, and the pref can be flipped back by hand to see it
++// again.
++const kCoachMarkPref = "kavacha.menu.coachmark-shown";
++const kCoachMarkDelayMs = 2500;
++
+ function _label(id, fallback) {
+   try {
+     return lazy.l10n.formatValueSync(id) || fallback;
+@@ -73,8 +91,84 @@
+     }
+     this._injectPanel(win);
+     this._injectButton(win);
++    this._maybeShowCoachMark(win);
++  },
++
++  /**
++   * Point at the menu button once, on the first window of the first launch
++   * that has never seen it.
++   *
++   * Deliberately NOT modal and not a popup that steals focus: it is an
++   * explanation, and interrupting someone to explain a button they have not
++   * asked about is worse than the button being unexplained. It closes on its
++   * own, on any click, and on opening the menu.
++   */
++  _maybeShowCoachMark(win) {
++    if (Services.prefs.getBoolPref(kCoachMarkPref, false)) {
++      return;
++    }
++    if (lazy.PrivateBrowsingUtils.isWindowPrivate(win)) {
++      // A private window is not somebody's first launch, and marking the
++      // coach mark as shown from one would burn it silently.
++      return;
++    }
++    // The button is injected with a retry loop against a toolbar cluster that
++    // is built asynchronously, so anchoring immediately would anchor to
++    // nothing. Waiting also means the mark appears after the window has
++    // settled rather than during startup jitter.
++    win.setTimeout(() => {
++      const doc = win.document;
++      const button = doc?.getElementById("kavacha-menu-button");
++      if (win.closed || !button || !button.isConnected) {
++        return;
++      }
++      // Flip the pref BEFORE showing: if anything below throws, or the browser
++      // is killed while the mark is up, the user is not shown it forever.
++      Services.prefs.setBoolPref(kCoachMarkPref, true);
++      try {
++        this._showCoachMark(win, button);
++      } catch (e) {
++        win.console?.error("KavachaMenu: coach mark failed", e);
++      }
++    }, kCoachMarkDelayMs);
+   },
+ 
++  _showCoachMark(win, button) {
++    const doc = win.document;
++    const popupSet = doc.getElementById("mainPopupSet");
++    if (!popupSet || doc.getElementById("kavacha-coachmark")) {
++      return;
++    }
++    const frag = win.MozXULElement.parseXULToFragment(`
++      <panel id="kavacha-coachmark"
++        type="arrow"
++        orient="vertical"
++        noautofocus="true"
++        role="alert" />
++    `);
++    popupSet.appendChild(frag);
++    const panel = doc.getElementById("kavacha-coachmark");
++
++    const box = doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
++    box.className = "kavacha-coachmark-body";
++    const title = doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
++    title.className = "kavacha-coachmark-title";
++    title.textContent = _label("kavacha-coachmark-title", "Everything is here");
++    const text = doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
++    text.className = "kavacha-coachmark-text";
++    text.textContent = _label(
++      "kavacha-coachmark-body",
++      "Spaces, themes, layout, privacy and the rest of Kavacha live behind this button. Cmd+K opens the same list."
++    );
++    box.append(title, text);
++    panel.appendChild(box);
++
++    panel.addEventListener("popuphidden", () => panel.remove(), { once: true });
++    // noautofocus keeps the caret where it is; the mark is an aside, not a
++    // step in a flow.
++    panel.openPopup(button, "bottomright topright", 0, 6, false, false);
++  },
++
+   // Leftmost/most-prominent button in the top-right cluster. The button belongs
+   // in the customization-target hbox (falls back to the toolbar itself, then
+   // the nav-bar). That cluster is built asynchronously during window setup, so
+diff --git a/src/zen/common/sys/KavachaThemeEngine.sys.mjs b/src/zen/common/sys/KavachaThemeEngine.sys.mjs
+--- a/src/zen/common/sys/KavachaThemeEngine.sys.mjs
++++ b/src/zen/common/sys/KavachaThemeEngine.sys.mjs
+@@ -36,9 +36,22 @@
+ // Built-in packages. kavacha-midnight mirrors
+ // customization/themes/kavacha-midnight/colors.json; kavacha-forest mirrors
+ // customization/themes/kavacha-forest/colors.json (a second, deep-evergreen
+-// dark theme bundled so switching is demonstrable). Both are dark: overriding
+-// base --kavacha-* tokens fills only the dark half of light-dark() (ADR 0008
+-// known limitation), so light themes are a follow-up.
++// dark theme bundled so switching is demonstrable).
++//
++// LIGHT THEMES (patch 0056). ADR 0008 recorded the limitation: patch 0016
++// bridges Kavacha's tokens into Zen through `--zen-branding-dark:
++// var(--kavacha-surface)` and a column of `light-dark(stock-light,
++// var(--kavacha-*))`, so overriding the base tokens only ever filled the DARK
++// half. A bright surface therefore produced dark-derived chrome with light
++// text on it — which is why light themes were deferred rather than shipped
++// broken.
++//
++// The fix is not to duplicate that mapping in JS. The engine derives a MODE
++// from the theme's own surface luminance and stamps it on the chrome root as
++// `kavacha-theme-mode`; kavacha-theme-light.inc.css owns the light half of the
++// bridge, mirroring what 0016 does for the dark half. CSS keeps the mapping,
++// the engine keeps the decision, and the derivation means user and marketplace
++// theme packages get light support without declaring anything.
+ const BUILTIN_THEMES = {
+   "kavacha-midnight": {
+     name: "Kavacha Midnight",
+@@ -86,8 +99,51 @@
+       privacyShield: "#6FB58F",
+     },
+   },
++  // The first light theme, and the proof the light half of the bridge works.
++  // Surface luminance ~0.94, so the engine derives mode "light" from the
++  // colours themselves rather than from any declared field.
++  "kavacha-daylight": {
++    name: "Kavacha Daylight",
++    colors: {
++      surface: "#F7F6FB",
++      surfaceElevated: "#FFFFFF",
++      surfaceSunken: "#ECEAF4",
++      border: "#D6D2E4",
++      textPrimary: "#1B1830",
++      textSecondary: "#57527A",
++      textDisabled: "#928DAD",
++      accent: "#5B4BC4",
++      accentHover: "#4A3BB0",
++      accentText: "#FFFFFF",
++      tabActiveBackground: "#FFFFFF",
++      tabHoverBackground: "#EFEDF8",
++      sidebarBackground: "#ECEAF4",
++      urlbarBackground: "#FFFFFF",
++      success: "#2F8F52",
++      warning: "#B5730F",
++      danger: "#C03A3A",
++      privacyShield: "#5B4BC4",
++    },
++  },
+ };
+ 
++// Mode is DERIVED, never declared: a package that says "light" while shipping
++// a near-black surface would produce unreadable chrome, and the surface is the
++// thing the whole bridge is built on. 0.45 is the same threshold
++// _applyColorScheme already used to pick the chrome color-scheme, kept
++// identical so the two can never disagree.
++const kLightSurfaceThreshold = 0.45;
++
++function themeMode(colors) {
++  const rgb = parseCssColor(colors?.surface || "");
++  if (!rgb) {
++    return "dark";
++  }
++  const luminance =
++    (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
++  return luminance < kLightSurfaceThreshold ? "dark" : "light";
++}
++
+ export const KavachaThemeEngine = {
+   _initialized: false,
+   // Custom-property names this engine has set on chrome roots, so a switch can
+@@ -211,6 +267,10 @@
+       // The baked 0016 floor already provides Midnight's tokens — no overrides
+       // to set, but still align the chrome color-scheme to that surface so
+       // native toolbar/tab text stays readable.
++      root.setAttribute(
++        "kavacha-theme-mode",
++        themeMode(BUILTIN_THEMES[kDefaultTheme].colors)
++      );
+       this._applyColorScheme(win, root);
+       return;
+     }
+@@ -235,6 +295,11 @@
+       root.style.setProperty(prop, value, "important");
+     }
+ 
++    // Patch 0056: the light half of the 0016 bridge is a stylesheet
++    // (kavacha-theme-light.inc.css) gated on this attribute. Set it AFTER the
++    // tokens so a single style recalculation sees both.
++    root.setAttribute("kavacha-theme-mode", themeMode(theme.colors));
++
+     // Optional style.css (user themes) -> chrome-only AUTHOR_SHEET for this
+     // window. Built-in themes are colors-only, so this is skipped for them.
+     if (theme.styleCss) {
+diff --git a/src/zen/common/styles/kavacha-polish.inc.css b/src/zen/common/styles/kavacha-polish.inc.css
+--- a/src/zen/common/styles/kavacha-polish.inc.css
++++ b/src/zen/common/styles/kavacha-polish.inc.css
+@@ -160,3 +160,58 @@
+     }
+   }
+ }
++
++/* ==========================================================================
++   Active-tab emphasis and tab-strip spacing (patch 0056).
++
++   The open item was "active-tab emphasis and tab-strip spacing polish". The
++   concrete problem: at Kavacha's shipped horizontal density the selected tab
++   was distinguished only by a slightly different background, which against
++   the Midnight surface is a few percent of luminance -- on a laptop panel at
++   an angle it is genuinely hard to tell which tab you are on. Emphasis is
++   added on THREE independent channels so it survives any one of them being
++   washed out: surface, a weight bump on the label, and an accent rail.
++
++   The rail is drawn with an inset box-shadow rather than a border so it costs
++   no layout and cannot shift the strip when selection moves.
++   ========================================================================== */
++
++#tabbrowser-tabs .tabbrowser-tab[selected] > .tab-stack > .tab-background {
++  box-shadow: inset 0 -2px 0 0
++    var(--zen-primary-color, var(--kavacha-accent, var(--kavacha-accent-fallback)));
++}
++
++/* In vertical mode the strip runs down the side, so the rail belongs on the
++   leading edge instead of underneath. */
++/* stylelint-disable-next-line media-query-no-invalid */
++@media -moz-pref("zen.tabs.vertical") {
++  #tabbrowser-tabs .tabbrowser-tab[selected] > .tab-stack > .tab-background {
++    box-shadow: inset 2px 0 0 0
++      var(--zen-primary-color, var(--kavacha-accent, var(--kavacha-accent-fallback)));
++  }
++}
++
++#tabbrowser-tabs .tabbrowser-tab[selected] .tab-label {
++  font-weight: 600;
++}
++
++/* Unselected tabs step back so the selected one steps forward; done with
++   opacity on the label rather than a colour so it follows any theme. */
++#tabbrowser-tabs .tabbrowser-tab:not([selected]) .tab-label {
++  opacity: 0.72;
++}
++
++#tabbrowser-tabs .tabbrowser-tab:not([selected]):hover .tab-label {
++  opacity: 1;
++}
++
++/* Spacing: tabs were flush against each other, which reads as one long bar
++   rather than as separate tabs. A small gap plus a rounded background makes
++   the boundaries legible without changing tab width enough to fit fewer. */
++#tabbrowser-tabs .tabbrowser-tab {
++  margin-inline: 1px;
++}
++
++#tabbrowser-tabs .tabbrowser-tab > .tab-stack > .tab-background {
++  border-radius: 8px;
++}
+diff --git a/src/zen/common/styles/kavacha-theme-light.inc.css b/src/zen/common/styles/kavacha-theme-light.inc.css
+new file mode 100644
+--- /dev/null
++++ b/src/zen/common/styles/kavacha-theme-light.inc.css
+@@ -0,0 +1,94 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* ==========================================================================
++   Kavacha light themes — the light half of the 0016 bridge (patch 0056).
++
++   Patch 0016 wired Kavacha's tokens into Zen with
++   `--zen-branding-dark: var(--kavacha-surface)` plus a column of
++   `light-dark(stock-light, var(--kavacha-*))`. Every one of those maps a
++   Kavacha token onto the DARK side only, which is exactly why ADR 0008
++   recorded "light themes are a follow-up": a bright surface produced
++   dark-derived chrome with light text sitting on it.
++
++   This file is the mirror image, and nothing more. It binds only when
++   KavachaThemeEngine has stamped kavacha-theme-mode="light" on the chrome
++   root, which the engine DERIVES from the active theme's own surface
++   luminance -- so at Kavacha's shipped dark default this whole layer is inert,
++   exactly as kavacha-layout.inc.css is at the default layout.
++
++   Ordering: %include'd AFTER kavacha-midnight.inc.css so these declarations
++   win at equal specificity, which is the same reason 0016 sits at the end of
++   zen-theme.css.
++   ========================================================================== */
++
++:root[kavacha-theme-mode="light"] {
++  /* The base every --zen-colors-* mix derives from. 0016 points the dark
++     branding colour at the surface; a light theme has to point the paper one
++     there instead, or every mix keeps deriving from Zen's stock #e2e2e2. */
++  --zen-branding-paper: var(--kavacha-surface);
++
++  /* Surfaces Zen defines directly rather than deriving. Mirrors the block in
++     kavacha-midnight.inc.css, light side. Both halves of each light-dark()
++     are filled: the pair must agree, because color-scheme is itself derived
++     from the surface and the two must not be able to disagree. */
++  --zen-main-browser-background: light-dark(
++    var(--kavacha-surface),
++    var(--kavacha-surface)
++  );
++  --zen-dialog-background: light-dark(
++    var(--kavacha-surface-elevated),
++    var(--kavacha-surface-elevated)
++  );
++  --zen-urlbar-background: light-dark(
++    color-mix(
++      in srgb,
++      var(--zen-primary-color) 3%,
++      var(--kavacha-surface-elevated) 97%
++    ),
++    color-mix(
++      in srgb,
++      var(--zen-primary-color) 4%,
++      var(--kavacha-surface-elevated) 96%
++    )
++  );
++  --zen-colors-border: light-dark(
++    color-mix(in srgb, var(--zen-colors-secondary) 50%, var(--kavacha-border)),
++    color-mix(in srgb, var(--zen-colors-secondary) 20%, var(--kavacha-border))
++  );
++
++  /* Zen's stock light values for these are tuned for near-white paper; a
++     tinted light surface needs them derived from the theme instead, or the
++     input and toolbar chrome float unattached above the background. */
++  --input-bgcolor: color-mix(
++    in srgb,
++    var(--kavacha-text-primary) 6%,
++    transparent
++  ) !important;
++  --toolbar-background-color: color-mix(
++    in srgb,
++    var(--kavacha-surface-elevated) 70%,
++    transparent
++  );
++  --zen-toolbar-element-bg: color-mix(
++    in srgb,
++    var(--kavacha-text-primary) 8%,
++    transparent
++  );
++  --zen-toolbar-element-bg-hover: color-mix(
++    in srgb,
++    var(--kavacha-text-primary) 12%,
++    transparent
++  );
++
++  /* These two carry hard-coded dark values that no color-scheme change
++     reaches, so the tab strip keeps a dark seam on an otherwise light
++     window until they are re-pointed at the theme. */
++  --tabstrip-inner-border: color-mix(
++    in srgb,
++    var(--kavacha-border) 60%,
++    transparent
++  );
++  --zen-themed-toolbar-bg-transparent: var(--kavacha-surface);
++}
+diff --git a/src/zen/common/styles/zen-theme.css b/src/zen/common/styles/zen-theme.css
+--- a/src/zen/common/styles/zen-theme.css
++++ b/src/zen/common/styles/zen-theme.css
+@@ -345,6 +345,7 @@
+ %include zen-buttons.css
+ 
+ %include ../../kavacha-theme/kavacha-midnight.inc.css
++%include kavacha-theme-light.inc.css
+ 
+ %include kavacha-layout.inc.css
+ %include kavacha-polish.inc.css
+diff --git a/src/zen/kavacha-studio/studio.html b/src/zen/kavacha-studio/studio.html
+--- a/src/zen/kavacha-studio/studio.html
++++ b/src/zen/kavacha-studio/studio.html
+@@ -177,14 +177,23 @@
+               <span>Safe mode (disable all custom CSS)</span>
+             </label>
+           </div>
+-          <textarea
+-            id="css-editor"
+-            class="css-editor"
+-            spellcheck="false"
+-            autocomplete="off"
+-            wrap="off"
+-            placeholder="/* e.g. hide the forward button */&#10;#forward-button { display: none !important; }"
+-          ></textarea>
++          <!-- Patch 0056: syntax highlighting. The textarea stays the real,
++               fully native editing surface (caret, selection, undo, IME, a11y)
++               and is simply made transparent; the highlighted copy is a <pre>
++               painted behind it in the same box with the same typography, and
++               kept scroll-synced. Nothing about editing is reimplemented, so
++               nothing about editing can regress. -->
++          <div class="css-editor-wrap">
++            <pre class="css-highlight" id="css-highlight" aria-hidden="true"><code id="css-highlight-code"></code></pre>
++            <textarea
++              id="css-editor"
++              class="css-editor"
++              spellcheck="false"
++              autocomplete="off"
++              wrap="off"
++              placeholder="/* e.g. hide the forward button */&#10;#forward-button { display: none !important; }"
++            ></textarea>
++          </div>
+           <div class="studio-actions editor-actions">
+             <button id="apply-css" class="studio-button primary">Apply</button>
+             <button id="revert-css" class="studio-button ghost">
+diff --git a/src/zen/kavacha-studio/studio.js b/src/zen/kavacha-studio/studio.js
+--- a/src/zen/kavacha-studio/studio.js
++++ b/src/zen/kavacha-studio/studio.js
+@@ -220,8 +220,120 @@
+     return "(no custom CSS)";
+   }
+   return line.length > 60 ? line.slice(0, 57) + "…" : line;
++}
++
++// ---- CSS syntax highlighting (patch 0056) ---------------------------------
++//
++// A textarea cannot render styled text, so the standard shape applies: the
++// textarea stays the real editing surface — caret, selection, undo, IME,
++// spellcheck, screen-reader support all remain native — and is made
++// transparent; a <pre> behind it in the same box, with byte-identical
++// typography, paints the colours and is kept scroll-synced. Nothing about
++// editing is reimplemented, so nothing about editing can regress.
++//
++// Tokens are built with createElement/createTextNode, never innerHTML.
++// about:studio runs with the system principal (KavachaAboutStudio), so
++// assigning the user's CSS text to innerHTML would be script execution with
++// chrome privileges — the same rule KavachaMarkdown follows for notes.
++
++// Ordered scanner. Every alternative is anchored and consumes at least one
++// character, which is what guarantees the loop terminates on any input.
++const CSS_TOKENS = [
++  { type: "comment", re: /^\/\*[\s\S]*?(?:\*\/|$)/ },
++  { type: "string", re: /^"(?:[^"\\\n]|\\.)*"?/ },
++  { type: "string", re: /^'(?:[^'\\\n]|\\.)*'?/ },
++  { type: "atrule", re: /^@[-\w]+/ },
++  { type: "number", re: /^-?\d*\.?\d+[a-z%]*/i },
++  { type: "color", re: /^#[0-9a-f]{3,8}\b/i },
++  { type: "punct", re: /^[{}();:,]/ },
++  { type: "important", re: /^!\s*important\b/i },
++  { type: "word", re: /^[-\w]+/ },
++  { type: "other", re: /^[\s\S]/ },
++];
++
++// Cheap guard: a very large sheet would otherwise build one span per token on
++// every keystroke. Past this the editor keeps working, unhighlighted — the
++// editing surface is the textarea, so plain text is a degradation, not a
++// failure.
++const kMaxHighlightChars = 60000;
++
++function highlightCss(text, container) {
++  container.textContent = "";
++  if (text.length > kMaxHighlightChars) {
++    container.appendChild(document.createTextNode(text));
++    return;
++  }
++  let rest = text;
++  // Tracks whether a `word` is a property (before the colon of a declaration)
++  // or part of a selector, which is the only context CSS colouring really
++  // needs and the difference a reader actually looks for.
++  let inBlock = false;
++  let afterColon = false;
++  const flushable = [];
++
++  while (rest) {
++    let matched = null;
++    for (const rule of CSS_TOKENS) {
++      const m = rule.re.exec(rest);
++      if (m && m[0]) {
++        matched = { type: rule.type, text: m[0] };
++        break;
++      }
++    }
++    // CSS_TOKENS ends with a catch-all single character, so `matched` is
++    // always set; the guard is here so a future edit to that table cannot
++    // turn this into an infinite loop.
++    if (!matched) {
++      matched = { type: "other", text: rest[0] };
++    }
++    let cls = matched.type;
++    if (matched.type === "punct") {
++      if (matched.text === "{") {
++        inBlock = true;
++        afterColon = false;
++      } else if (matched.text === "}") {
++        inBlock = false;
++        afterColon = false;
++      } else if (matched.text === ":") {
++        afterColon = inBlock;
++      } else if (matched.text === ";") {
++        afterColon = false;
++      }
++    } else if (matched.type === "word") {
++      cls = inBlock ? (afterColon ? "value" : "property") : "selector";
++    }
++    flushable.push({ cls, text: matched.text });
++    rest = rest.slice(matched.text.length);
++  }
++
++  // Merge adjacent same-class runs before building nodes: a selector like
++  // `#a .b > .c` is a dozen tokens and one visual run.
++  let current = null;
++  for (const token of flushable) {
++    if (current && current.cls === token.cls) {
++      current.text += token.text;
++      continue;
++    }
++    if (current) {
++      container.appendChild(cssTokenNode(current));
++    }
++    current = { ...token };
++  }
++  if (current) {
++    container.appendChild(cssTokenNode(current));
++  }
+ }
+ 
++function cssTokenNode(token) {
++  if (token.cls === "other") {
++    return document.createTextNode(token.text);
++  }
++  const span = document.createElement("span");
++  span.className = `tok-${token.cls}`;
++  span.textContent = token.text;
++  return span;
++}
++
+ const Advanced = {
+   // True while the editor holds edits the user hasn't Applied. A pref-doorbell
+   // re-render must not clobber those, so render() leaves the textarea alone
+@@ -232,6 +344,7 @@
+     if (!this._dirty) {
+       qs("#css-editor").value = await KavachaUserCSS.getCSS();
+     }
++    this._paint();
+     qs("[data-control='safeMode']").checked = KavachaUserCSS.isSafeMode;
+     await this._renderHistory();
+     this._status();
+@@ -305,16 +418,41 @@
+     this._status("Restored.");
+   },
+ 
++  // Repaint the highlight layer and keep it aligned with the textarea.
++  _paint() {
++    const editor = qs("#css-editor");
++    const code = qs("#css-highlight-code");
++    if (!editor || !code) {
++      return;
++    }
++    // A trailing newline collapses in a <pre> but not in a textarea, so the
++    // last line would drift by one line height without this.
++    highlightCss(editor.value + "\n", code);
++    this._syncScroll();
++  },
++
++  _syncScroll() {
++    const editor = qs("#css-editor");
++    const pre = qs("#css-highlight");
++    if (editor && pre) {
++      pre.scrollTop = editor.scrollTop;
++      pre.scrollLeft = editor.scrollLeft;
++    }
++  },
++
+   init() {
+     const editor = qs("#css-editor");
+     editor.addEventListener("input", () => {
+       this._dirty = true;
++      this._paint();
+       this._status();
+     });
++    editor.addEventListener("scroll", () => this._syncScroll());
+     qs("#apply-css").addEventListener("click", () => this._apply());
+     qs("#revert-css").addEventListener("click", async () => {
+       this._dirty = false;
+       editor.value = await KavachaUserCSS.getCSS();
++      this._paint();
+       this._status("Reverted to last applied.");
+     });
+     qs("[data-control='safeMode']").addEventListener("change", event =>
+diff --git a/src/zen/kavacha-studio/studio.css b/src/zen/kavacha-studio/studio.css
+--- a/src/zen/kavacha-studio/studio.css
++++ b/src/zen/kavacha-studio/studio.css
+@@ -312,28 +312,120 @@
+   flex-shrink: 0;
+ }
+ 
+-.css-editor {
++/* --- CSS editor + syntax highlighting (patch 0056) ------------------------
++   The textarea is the real editing surface and stays on top, transparent; the
++   <pre> behind it paints the colours. EVERY typography and box property below
++   is shared between the two -- font, size, line-height, tab-size, padding,
++   border width, white-space -- because any difference between them shows up
++   directly as text drifting out from under the caret. */
++.css-editor-wrap {
++  position: relative;
++  margin-top: 4px;
++  min-height: 260px;
++  display: grid;
++}
++
++.css-editor,
++.css-highlight {
++  grid-area: 1 / 1;
+   width: 100%;
+   min-height: 260px;
+-  margin-top: 4px;
++  margin: 0;
+   padding: 14px 16px;
+   border-radius: 10px;
+-  border: 1px solid var(--studio-border);
+-  background: var(--studio-sunken);
+-  color: var(--studio-text);
++  border: 1px solid transparent;
+   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+   font-size: 13px;
+   line-height: 1.55;
+-  resize: vertical;
+   tab-size: 2;
+   white-space: pre;
++  overflow: auto;
++  box-sizing: border-box;
++}
++
++.css-editor {
++  position: relative;
++  z-index: 1;
++  border-color: var(--studio-border);
++  background: transparent;
++  /* The text itself is painted by the layer underneath; only the caret and
++     the selection come from the textarea. */
++  color: transparent;
++  caret-color: var(--studio-text);
++  resize: vertical;
++}
++
++.css-editor::selection {
++  /* A transparent-text selection would be invisible, so tint the box. */
++  background: color-mix(in srgb, var(--studio-accent) 35%, transparent);
++}
++
++.css-editor::placeholder {
++  color: var(--studio-text-dim);
++}
++
++.css-highlight {
++  background: var(--studio-sunken);
++  color: var(--studio-text);
++  /* Never intercept a click: the textarea above owns all interaction. */
++  pointer-events: none;
++  /* Scrolled programmatically in lockstep with the textarea. */
++  overflow: hidden;
+ }
+ 
++.css-highlight code {
++  font: inherit;
++  white-space: inherit;
++}
++
+ .css-editor:focus {
+   outline: 2px solid var(--studio-accent);
+   outline-offset: -1px;
+ }
+ 
++/* Token colours. Chosen for contrast against --studio-sunken rather than for
++   resemblance to any particular editor theme. */
++.css-highlight .tok-comment {
++  color: var(--studio-text-dim);
++  font-style: italic;
++}
++
++.css-highlight .tok-selector {
++  color: var(--studio-text);
++  font-weight: 600;
++}
++
++.css-highlight .tok-property {
++  color: #7fb6ff;
++}
++
++.css-highlight .tok-value {
++  color: #9be3a8;
++}
++
++.css-highlight .tok-string {
++  color: #e8c07d;
++}
++
++.css-highlight .tok-number,
++.css-highlight .tok-color {
++  color: #e8a33d;
++}
++
++.css-highlight .tok-atrule {
++  color: #c792ea;
++  font-weight: 600;
++}
++
++.css-highlight .tok-important {
++  color: #e06c75;
++  font-weight: 600;
++}
++
++.css-highlight .tok-punct {
++  color: var(--studio-text-dim);
++}
++
+ .editor-actions {
+   display: flex;
+   align-items: center;
+diff --git a/src/zen/common/sys/KavachaPluginManager.sys.mjs b/src/zen/common/sys/KavachaPluginManager.sys.mjs
+--- a/src/zen/common/sys/KavachaPluginManager.sys.mjs
++++ b/src/zen/common/sys/KavachaPluginManager.sys.mjs
+@@ -84,7 +84,7 @@
+         l10nId: "kavacha-plugins-open",
+         rawLabel: "Manage Plugins",
+         command: window => window.switchToTabHavingURI("about:plugins", true),
+-        icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++        icon: "chrome://browser/skin/zen-icons/selectable/shapes.svg",
+         domain: KavachaCommandDomain.AUTOMATION,
+       },
+       { source: "kavacha-plugin-manager" }
+diff --git a/src/zen/common/sys/KavachaMarketplace.sys.mjs b/src/zen/common/sys/KavachaMarketplace.sys.mjs
+--- a/src/zen/common/sys/KavachaMarketplace.sys.mjs
++++ b/src/zen/common/sys/KavachaMarketplace.sys.mjs
+@@ -389,7 +389,7 @@
+         l10nId,
+         rawLabel: "Apply: " + component.name,
+         command: () => this.apply(component.id),
+-        icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++        icon: "chrome://browser/skin/zen-icons/selectable/shapes.svg",
+         domain: KavachaCommandDomain.APPEARANCE,
+       },
+       { source }
+@@ -412,7 +412,7 @@
+         rawLabel: "Open Marketplace",
+         command: window =>
+           window.switchToTabHavingURI("about:marketplace", true),
+-        icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++        icon: "chrome://browser/skin/zen-icons/selectable/shapes.svg",
+         domain: KavachaCommandDomain.NAVIGATION,
+       },
+       { source: "kavacha-marketplace" }
+diff --git a/src/zen/common/sys/KavachaSDK.sys.mjs b/src/zen/common/sys/KavachaSDK.sys.mjs
+--- a/src/zen/common/sys/KavachaSDK.sys.mjs
++++ b/src/zen/common/sys/KavachaSDK.sys.mjs
+@@ -180,7 +180,7 @@
+               l10nId: `kavacha-plugin-${id}-${_slug(label)}`,
+               rawLabel: label,
+               command: () => run(context),
+-              icon: "chrome://browser/skin/zen-icons/selectable/window.svg",
++              icon: "chrome://browser/skin/zen-icons/selectable/shapes.svg",
+               domain: KavachaCommandDomain.AUTOMATION,
+               capability: KavachaCommandCapability.COMMANDS,
+             },
+diff --git a/src/zen/common/styles/kavacha-menu.inc.css b/src/zen/common/styles/kavacha-menu.inc.css
+--- a/src/zen/common/styles/kavacha-menu.inc.css
++++ b/src/zen/common/styles/kavacha-menu.inc.css
+@@ -107,3 +107,25 @@
+   overflow-y: auto;
+   overflow-x: hidden;
+ }
++
++/* ==========================================================================
++   First-launch coach mark (patch 0056). Shown once per profile, pointing at
++   the menu button. Sized so it reads as an aside, not a dialog.
++   ========================================================================== */
++#kavacha-coachmark .kavacha-coachmark-body {
++  max-width: 280px;
++  padding: 12px 14px;
++  display: flex;
++  flex-direction: column;
++  gap: 4px;
++}
++
++#kavacha-coachmark .kavacha-coachmark-title {
++  font-weight: 650;
++}
++
++#kavacha-coachmark .kavacha-coachmark-text {
++  opacity: 0.8;
++  font-size: 0.92em;
++  line-height: 1.45;
++}

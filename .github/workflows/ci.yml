@@ -250,6 +250,12 @@ jobs:
     # (Windows is experimental and continue-on-error already).
     if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_build))
     runs-on: ubuntu-latest
+    # Serialize publishes: a manual full_build dispatch can overlap the 08:00
+    # scheduled run (builds take hours). Two interleaved publish jobs can each
+    # read/modify/write the same release and drop the other's assets.
+    concurrency:
+      group: kavacha-nightly-publish
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
@@ -290,31 +296,52 @@ jobs:
           mkdir -p prev
           gh release download nightly --dir prev --pattern '*' --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
           shopt -s nullglob
+          : > carried.txt
           for f in prev/*; do
             base="$(basename "$f")"
             if [ ! -e "out/$base" ]; then
-              echo "carrying forward stale asset: $base"
+              echo "::warning::carrying forward stale asset: $base (this platform's build failed this run)"
               cp "$f" "out/$base"
+              echo "$base" >> carried.txt
             fi
           done
           ls -la out
 
+      # Upsert, never delete-and-recreate: the old flow ran `gh release delete`
+      # before `gh release create`, so a failed create (transient API error)
+      # destroyed the release AND every carried-forward last-good binary with
+      # no recovery path. Move the tag, then update the release in place.
+      # Carried-forward assets are named in the notes so a stale binary can't
+      # masquerade as today's build.
       - name: Publish rolling prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          NOTES="Automated Kavacha nightly from commit ${GITHUB_SHA:0:7} ($(date -u +%Y-%m-%d)).
+          CARRIED=""
+          if [ -s carried.txt ]; then
+            CARRIED="
+
+          WARNING - the following assets are carried forward from an earlier nightly because this run's build for that platform failed; they do NOT contain this commit's changes:
+          $(sed 's/^/- /' carried.txt)"
+          fi
+          NOTES="Automated Kavacha nightly from commit ${GITHUB_SHA:0:7} ($(date -u +%Y-%m-%d)).${CARRIED}
 
           Unsigned development builds — macOS: right-click the app and choose Open the first time, or run: xattr -dr com.apple.quarantine /Applications/Kavacha.app
 
           Not audited yet; see the roadmap for release gates."
-          gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
-          gh release create nightly out/* \
-            --prerelease \
-            --target "$GITHUB_SHA" \
-            --title "Kavacha Nightly ($(date -u +%Y-%m-%d))" \
-            --notes "$NOTES"
+          TITLE="Kavacha Nightly ($(date -u +%Y-%m-%d))"
+          git tag -f nightly "$GITHUB_SHA"
+          git push -f origin nightly
+          if gh release view nightly >/dev/null 2>&1; then
+            gh release upload nightly out/* --clobber
+            gh release edit nightly --prerelease --title "$TITLE" --notes "$NOTES"
+          else
+            gh release create nightly out/* \
+              --prerelease \
+              --title "$TITLE" \
+              --notes "$NOTES"
+          fi
 
   # TODO (before Developer Preview): code signing + notarization, reproducible-build
   # verification, dependency audit gates (cargo audit / npm audit), network-silence

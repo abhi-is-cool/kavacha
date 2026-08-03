@@ -61,6 +61,16 @@ check_prereqs() {
 fetch_upstream() {
     if [ -d "$UPSTREAM_DIR/.git" ]; then
         log "Upstream already cloned at browser/zen-upstream."
+        # The pin is only enforced at first clone and by `update`; an existing
+        # clone left on another commit (an old pin, or the tip a pre-fix
+        # `update` reset to) would silently build off-pin while CI validates
+        # at the pin. Hard-stop instead of auto-resetting: the tree carries
+        # uncommitted applied patches we must not clobber here.
+        local head
+        head="$(git -C "$UPSTREAM_DIR" rev-parse HEAD)"
+        if [ "$head" != "$UPSTREAM_COMMIT" ]; then
+            fail "browser/zen-upstream is at ${head:0:12}, not the pinned ${UPSTREAM_COMMIT:0:12}. Run: ./build/bootstrap.sh update"
+        fi
     else
         log "Cloning Zen Browser..."
         git clone "$UPSTREAM_REPO" "$UPSTREAM_DIR"
@@ -225,8 +235,14 @@ case "${1:-setup}" in
         git -C "$UPSTREAM_DIR" checkout -- .
         git -C "$UPSTREAM_DIR" clean -fd src/ 2>/dev/null || true
         OLD_FF="$(python3 -c "import json; print(json.load(open('$UPSTREAM_DIR/surfer.json'))['version']['version'])")"
-        git -C "$UPSTREAM_DIR" fetch --depth 10 origin dev
-        git -C "$UPSTREAM_DIR" reset --hard FETCH_HEAD
+        # Update means "re-sync the working tree to the PIN", not "chase Zen's
+        # tip": patches are authored against UPSTREAM_COMMIT and CI validates
+        # against it, so resetting to the moving dev tip (what this used to
+        # do) desyncs every local build from CI until patches happen to rot.
+        # To actually take a newer Zen: bump UPSTREAM_COMMIT deliberately,
+        # re-validate the patch series, then run update.
+        git -C "$UPSTREAM_DIR" fetch origin "$UPSTREAM_COMMIT"
+        git -C "$UPSTREAM_DIR" reset --hard "$UPSTREAM_COMMIT"
         NEW_FF="$(python3 -c "import json; print(json.load(open('$UPSTREAM_DIR/surfer.json'))['version']['version'])")"
         apply_patches
         log "Refreshing upstream dependencies..."

@@ -488,12 +488,16 @@ stack, build/CI, and docs). Outcome:
   real protection was off and its fix changed nothing. Now reads and writes the actual
   tracking-protection prefs. Verified: after disabling the real pref the check reads OFF
   even with the category still "strict", and the fix restores real protection.
+- **Sixth fix wave (Marionette-verified), patch 0074 — session cookies:** "Session only"
+  set ACCESS_SESSION (which only downgrades cookies set after the rule), so a site's
+  already-stored cookies survived quit despite the promise. It now also clears the site's
+  stored cookies via removeCookiesFromExactHost, and the copy matches. Verified: the
+  SESSION rule purges with the exact host, Keep/Block do not.
 - **Still open from the audit (not yet fixed):**
   sideloaded theme/marketplace manifests aren't schema-validated (ADR 0010 says they
   are); the widget
   host's register/unregister lifecycle is dead code (uninstalling a widget leaves it
-  forever; emptying the dashboard resurrects all built-ins); "Session only" cookie
-  rules don't purge already-stored cookies; several docs are stale (ARCHITECTURE.md
+  forever; emptying the dashboard resurrects all built-ins); several docs are stale (ARCHITECTURE.md
   still describes container-per-workspace; VERIFICATION.md rows for 0059–0065 describe
   verifications of a tree the committed patches couldn't produce; REMAINING_WORK.md's
   "Phases 1–4 complete" contradicts the open update-service blocker). Full per-finding

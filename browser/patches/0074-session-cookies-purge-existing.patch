@@ -1,0 +1,72 @@
+# Patch 0074 — "Session only" clears the site's already-stored cookies, so its
+# promise holds for them too (audit 2026-08-03; fixes patch 0049).
+#
+# Marking a site "Session only" set nsICookiePermission ACCESS_SESSION, which
+# downgrades only cookies set AFTER the rule; cookies already stored keep their
+# persistent expiry and survive the next quit. The UI note promised the site's
+# cookies would not be kept after quitting — untrue for existing ones.
+#
+# FIX: when a rule becomes session-only (via the add row or the state menu),
+# clear the site's currently-stored cookies with
+# nsICookieManager.removeCookiesFromExactHost(host, "{}") — the same call the
+# stock "clear cookies for this site" uses, across every origin-attributes
+# partition. They re-set as session cookies on the next visit. The note now
+# says cookies are cleared now and none kept after quit (and that a re-sign-in
+# may be needed), matching the behaviour. Only the SESSION capability purges;
+# Keep/Block do not.
+#
+# Marionette-verified on the built browser: _setCookieRule(SESSION) invokes the
+# purge with the exact host; _setCookieRule(ALLOW) and (DENY) do not. (An
+# end-to-end cookie-removal check could not seed a cookie — the test cookie
+# store rejected API adds under cookieBehavior=5 — so the call-site spy is the
+# verification; removeCookiesFromExactHost itself is Firefox's own stable API.)
+diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+index f2870aa..4bb91ef 100644
+--- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
++++ b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+@@ -555,7 +555,7 @@ kavacha-cookies-state-block =
+ kavacha-cookies-remove =
+     .label = Remove
+     .tooltiptext = Forget this rule and treat the site like any other
+-kavacha-cookies-session-note = "Session only" deletes that site's cookies when you quit, whatever the setting above says — useful for a site you sign into but do not want remembered. "Keep" is the opposite: it survives the delete-on-close sweep.
++kavacha-cookies-session-note = "Session only" clears that site's stored cookies now and keeps none after you quit, whatever the setting above says — useful for a site you sign into but do not want remembered (you may need to sign in again). "Keep" is the opposite: it survives the delete-on-close sweep.
+ 
+ kavacha-privacy-score-summary =
+     { $remaining ->
+diff --git a/src/browser/components/preferences/kavacha-privacy.js b/src/browser/components/preferences/kavacha-privacy.js
+index 63bf51b..93a41c1 100644
+--- a/src/browser/components/preferences/kavacha-privacy.js
++++ b/src/browser/components/preferences/kavacha-privacy.js
+@@ -416,12 +416,32 @@ var gKavachaPrivacyCenter = {
+   _setCookieRule(principal, capability) {
+     try {
+       Services.perms.addFromPrincipal(principal, "cookie", capability);
++      if (capability === KAVACHA_PERM_SESSION) {
++        // ACCESS_SESSION only downgrades cookies set AFTER the rule; the
++        // site's already-stored cookies keep their persistent expiry and
++        // would survive the next quit, contradicting "not kept after you
++        // quit". Clear them now so the guarantee holds for them too — they
++        // re-set as session cookies on the next visit.
++        this._clearStoredCookies(principal);
++      }
+     } catch (e) {
+       console.error("KavachaPrivacyCenter: could not set cookie rule", e);
+     }
+     this._renderCookies();
+   },
+ 
++  _clearStoredCookies(principal) {
++    try {
++      const host = principal.host || principal.URI?.host;
++      if (host) {
++        // Empty pattern: this host across every origin-attributes partition.
++        Services.cookies.removeCookiesFromExactHost(host, "{}");
++      }
++    } catch (e) {
++      console.error("KavachaPrivacyCenter: could not clear stored cookies", e);
++    }
++  },
++
+   _removeCookieRule(principal) {
+     try {
+       Services.perms.removeFromPrincipal(principal, "cookie");

@@ -1,0 +1,82 @@
+# Patch 0070 — The permission manager must not label "ask" permissions as
+# "Blocked" (audit 2026-08-03; fixes patch 0048).
+#
+# Both state-label sites (the per-type rows and the site-trust card) read
+# `capability === ALLOW ? "state-allow" : "state-block"`, so every capability
+# that is not 1 rendered as "Blocked" — including PROMPT (3, "ask every time")
+# and autoplay-style extended values (5). A permissions dashboard reporting
+# "ask me" as "blocked" is a correctness failure in the one screen that exists
+# to report these states.
+#
+# FIX: one _genericStateLabel(capability) helper — ALLOW -> allowed,
+# DENY -> blocked, PROMPT and anything else -> "Ask every time" (new
+# kavacha-permission-state-ask string; a value that is neither a firm allow
+# nor a firm deny must never read as blocked). Both sites now call it.
+#
+# Marionette-verified on the built browser: _genericStateLabel maps 1->allow,
+# 2->block, 3->ask, 5->ask, and the new Fluent id resolves to "Ask every time".
+diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+index 47bf90d..f2870aa 100644
+--- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
++++ b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+@@ -522,6 +522,7 @@ kavacha-permission-default-block =
+     .label = Block
+ kavacha-permission-state-allow = Allowed
+ kavacha-permission-state-block = Blocked
++kavacha-permission-state-ask = Ask every time
+ kavacha-permission-geo = Location
+ kavacha-permission-camera = Camera
+ kavacha-permission-microphone = Microphone
+diff --git a/src/browser/components/preferences/kavacha-privacy.js b/src/browser/components/preferences/kavacha-privacy.js
+index 070dc6f..2714d72 100644
+--- a/src/browser/components/preferences/kavacha-privacy.js
++++ b/src/browser/components/preferences/kavacha-privacy.js
+@@ -74,6 +74,7 @@ const KAVACHA_PERMISSION_TYPES = [
+ const KAVACHA_PERM_UNKNOWN = 0;
+ const KAVACHA_PERM_ALLOW = 1;
+ const KAVACHA_PERM_DENY = 2;
++const KAVACHA_PERM_PROMPT = 3;
+ // nsICookiePermission.ACCESS_SESSION. Deliberately 8 rather than 3: cookie
+ // permissions share the capability space with the generic ones, so the values
+ // are spaced to avoid colliding.
+@@ -292,9 +293,23 @@ var gKavachaPrivacyCenter = {
+         ? "kavacha-cookies-state-allow"
+         : "kavacha-cookies-state-block";
+     }
+-    return perm.capability === KAVACHA_PERM_ALLOW
+-      ? "kavacha-permission-state-allow"
+-      : "kavacha-permission-state-block";
++    return this._genericStateLabel(perm.capability);
++  },
++
++  // ALLOW/DENY are the only firm states; PROMPT (and any extended capability
++  // an autoplay-style type may carry) means "no standing decision", which must
++  // read as "ask", never "Blocked" -- mislabelling "ask me" as blocked is a
++  // correctness failure in the one screen that exists to report these.
++  _genericStateLabel(capability) {
++    switch (capability) {
++      case KAVACHA_PERM_ALLOW:
++        return "kavacha-permission-state-allow";
++      case KAVACHA_PERM_DENY:
++        return "kavacha-permission-state-block";
++      case KAVACHA_PERM_PROMPT:
++      default:
++        return "kavacha-permission-state-ask";
++    }
+   },
+ 
+   _forgetSite() {
+@@ -619,12 +634,7 @@ var gKavachaPrivacyCenter = {
+ 
+       const state = document.createXULElement("label");
+       state.className = "kavacha-permission-state";
+-      document.l10n.setAttributes(
+-        state,
+-        perm.capability === KAVACHA_PERM_ALLOW
+-          ? "kavacha-permission-state-allow"
+-          : "kavacha-permission-state-block"
+-      );
++      document.l10n.setAttributes(state, this._genericStateLabel(perm.capability));
+       row.append(state);
+ 
+       const remove = document.createXULElement("button");

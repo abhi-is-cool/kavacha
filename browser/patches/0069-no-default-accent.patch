@@ -1,0 +1,73 @@
+# Patch 0069 — Restore "no default accent" (audit 2026-08-03; corrects patch
+# 0061's baked Midnight accent).
+#
+# The roadmap records: "Kavacha gold accent by default — reverted 2026-07-13
+# (user decision: no default accent — picking a color is the user's)." Patch
+# 0061, fixing a real bug (the default theme left 12 of 18 tokens undefined),
+# re-baked --kavacha-accent: #e8a33d at the Midnight floor and in the engine's
+# BUILTIN_THEMES entry. #e8a33d is exactly the reverted gold, so a fresh
+# install shipped a gold accent again — on focus rings, card borders and menu
+# accents — with no user choice.
+#
+# The file even contradicted itself: its own lines 76-91 describe the intended
+# state ("an absent accent is a defined state ... consumers fall to
+# --kavacha-accent-fallback"), which the sibling `--kavacha-accent: #e8a33d`
+# three lines up made unreachable.
+#
+# FIX: Midnight (the shipped default) defines no accent tokens. Verified that
+# ALL 18 --kavacha-accent CONSUMERS use var(--kavacha-accent,
+# var(--kavacha-accent-fallback)) — none fall to currentColor — so an
+# undefined accent lands on the neutral fallback #8b7bd8, exactly the
+# pre-0061 state, not text-colour. 0061's other 11 token completions (tabs,
+# regions, status) are kept; only accent/accentHover/accentText go, and the
+# latter two have zero consumers. --zen-primary-color stays user-owned as
+# before. A selected theme (Forest/Daylight) MAY still carry an accent —
+# choosing it is a user act — only the DEFAULT must not impose one.
+#
+# Marionette-verified on the built browser: at the Midnight default,
+# getComputedStyle(root)["--kavacha-accent"] == "" and a probe painting
+# var(--kavacha-accent, var(--kavacha-accent-fallback)) resolves to
+# rgb(139,123,216) (#8b7bd8), not rgb(232,163,61) (#e8a33d).
+diff --git a/src/zen/common/sys/KavachaThemeEngine.sys.mjs b/src/zen/common/sys/KavachaThemeEngine.sys.mjs
+index a692093..ccef380 100644
+--- a/src/zen/common/sys/KavachaThemeEngine.sys.mjs
++++ b/src/zen/common/sys/KavachaThemeEngine.sys.mjs
+@@ -158,9 +158,11 @@ const BUILTIN_THEMES = {
+       textPrimary: "#F6F4FC",
+       textSecondary: "#CABFE6",
+       textDisabled: "#8A80A8",
+-      accent: "#E8A33D",
+-      accentHover: "#F2B85C",
+-      accentText: "#0B0912",
++      // No accent tokens: Kavacha's default look ships no accent (user
++      // decision 2026-07-13). Leaving accent/accentHover/accentText unset
++      // lets every consumer fall to --kavacha-accent-fallback until the user
++      // picks one. A selected theme (Forest/Daylight) MAY carry an accent —
++      // choosing it is a user act — but the shipped default must not.
+       tabActiveBackground: "#241D3A",
+       tabHoverBackground: "#1A1530",
+       sidebarBackground: "#060409",
+diff --git a/src/zen/kavacha-theme/kavacha-midnight.inc.css b/src/zen/kavacha-theme/kavacha-midnight.inc.css
+index 203b9ba..463a9ef 100644
+--- a/src/zen/kavacha-theme/kavacha-midnight.inc.css
++++ b/src/zen/kavacha-theme/kavacha-midnight.inc.css
+@@ -51,11 +51,14 @@
+   --kavacha-text-secondary: #cabfe6;
+   --kavacha-text-disabled: #8a80a8;
+ 
+-  /* --- Theme accent. NOT the user accent: --zen-primary-color stays
+-         user-owned (ADR 0008), and nothing here assigns to it. --- */
+-  --kavacha-accent: #e8a33d;
+-  --kavacha-accent-hover: #f2b85c;
+-  --kavacha-accent-text: #0b0912;
++  /* --- No accent at the default. Kavacha ships no default accent (user
++         decision 2026-07-13; the reverted "gold accent" was #e8a33d, exactly
++         what a prior revision of this floor had baked back in). --kavacha-accent
++         stays UNDEFINED so its consumers fall to --kavacha-accent-fallback
++         below, which is the neutral "no accent chosen" state; --zen-primary-color
++         likewise stays user-owned. A user's pick, from any surface, wins over
++         both. --accent-hover/--accent-text have no consumers, so they are
++         simply omitted rather than given placeholder values. --- */
+ 
+   /* --- Tabs. Consumed by kavacha-polish.inc.css and kavacha-menu.inc.css,
+          which before 0061 only ever saw their currentColor fallbacks at the

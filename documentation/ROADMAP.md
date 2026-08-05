@@ -446,20 +446,39 @@ stack, build/CI, and docs). Outcome:
   - `0068` — the welcome flow's "Choose your look" fought patch 0064's theme-mode
     authority (a "Light" pick was reverted, "Match my system" could never persist).
     The radio now goes through `KavachaThemeEngine.setMode`.
+- **Second fix wave (Marionette-verified), patches 0069–0070:**
+  - `0069` — restored "no default accent". Patch 0061 had re-baked `--kavacha-accent:
+    #e8a33d` (the gold reverted 2026-07-13) at the Midnight floor and in the engine's
+    BUILTIN_THEMES, so a fresh install shipped a gold accent. Midnight now defines no
+    accent tokens; all 18 consumers use `var(--kavacha-accent, var(--kavacha-accent-fallback))`,
+    so an undefined accent lands on the neutral `#8b7bd8` fallback (the pre-0061 state).
+    0061's other 11 token completions are kept. Verified: at the default,
+    `--kavacha-accent` computes empty and a consumer resolves to `rgb(139,123,216)`,
+    not gold. A selected theme may still carry an accent (choosing it is a user act).
+  - `0070` — the permission manager labelled every non-ALLOW capability "Blocked",
+    including PROMPT ("ask") and autoplay-style extended values. One `_genericStateLabel`
+    helper now maps ALLOW→allowed, DENY→blocked, everything else→"Ask every time".
+  - Also corrected the stale `ui/defaults/kavacha-ux.js` Cmd+T comment (it described the
+    floating-search default that patch 0042 replaced with a real new tab on 2026-08-02).
 - **CI/build hardening** (commit `5d64a8c`): nightly publish is now an atomic upsert
   (was delete-then-create, which could destroy the release on a failed create),
   serialized by a concurrency group, and labels carried-forward stale assets in the
   notes; `bootstrap.sh update` re-syncs to the pin instead of Zen's moving dev tip,
   and an off-pin existing clone hard-stops instead of building against the wrong base.
-- **Still open from the audit (not yet fixed):** a baked default accent `#e8a33d` in
-  patch 0061 contradicts the no-default-accent directive (decision needed); layout-engine
-  partial-patch field clobbering; the Studio "toolbar position" control is a no-op;
+- **Still open from the audit (not yet fixed):** layout-engine partial-patch field
+  clobbering (changing toolbar position resets its visibility, and vice versa); the
+  Studio "toolbar position" control is a no-op (no CSS consumes the attribute); the
+  layout file silently reverts `zen.tabs.vertical` changes made through Zen's own UI;
   sideloaded theme/marketplace manifests aren't schema-validated (ADR 0010 says they
   are); the SDK `tabs.open` allows any `about:` page with the system principal;
-  privacy-score "fix" buttons write the same proxy pref their check reads; several
-  docs are stale (ARCHITECTURE.md still describes container-per-workspace; VERIFICATION.md
-  rows for 0059–0065 describe verifications of a tree the committed patches couldn't
-  produce). Full per-finding detail is in the audit reviewers' reports.
+  privacy-score "fix" buttons write the same proxy pref their check reads; the widget
+  host's register/unregister lifecycle is dead code (uninstalling a widget leaves it
+  forever; emptying the dashboard resurrects all built-ins); "Session only" cookie
+  rules don't purge already-stored cookies; several docs are stale (ARCHITECTURE.md
+  still describes container-per-workspace; VERIFICATION.md rows for 0059–0065 describe
+  verifications of a tree the committed patches couldn't produce; REMAINING_WORK.md's
+  "Phases 1–4 complete" contradicts the open update-service blocker). Full per-finding
+  detail is in the audit reviewers' reports.
 
 ## Phase 5 — Kavacha Account & Ownership (Months 8–10) — Y1
 

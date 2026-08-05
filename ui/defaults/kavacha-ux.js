@@ -13,10 +13,12 @@
 // therefore win conflicts — libpref loads defaults reverse-alphabetically).
 pref("zen.tabs.vertical", false);
 
-// Cmd+T opens Zen's centered floating search (Zen default, kept on purpose —
-// user decision 2026-07-14 after trying both): patch 0010 makes the float
-// center correctly in horizontal mode, so the earlier
-// zen.urlbar.replace-newtab=false workaround is retired.
+// Cmd+T opens a real new tab (user decision 2026-08-02): patch 0042 sets
+// zen.urlbar.replace-newtab=false in prefs/zen/zen-urlbar.yaml. The pref lives
+// there, not here. (Earlier, 2026-07-14, the floating search was kept on
+// purpose; that was reversed after more use.) When the dashboard new tab is
+// enabled, patch 0011 leaves the cursor in the URL bar so typing still summons
+// the centered floating search — the best of both.
 
 // New tabs open at the END of the strip (the right, in horizontal), like
 // other browsers. Zen's default (true) is "newest on top" for the vertical

@@ -94,6 +94,17 @@ nothing for three patches (fixed only in 0036).
 Each row's test is taken from the patch's own header, which already specifies
 the Marionette pass to run.
 
+> **Caveat on the 0060–0065 rows (added 2026-08-04).** These L4 verifications
+> (dated 2026-08-02/03) were run on a local working tree with patch 0059's
+> `preferences-js.patch` fix applied by hand. The *committed* patch series was
+> unbuildable from a fresh checkout during that window — 0059 as merged could
+> not apply (it was authored against a pre-0021 image of that file), so CI was
+> red and `bootstrap.sh setup` would have failed at `apply_patches` — until the
+> repair commit `293dbf9` (2026-08-03). The behaviours these rows describe are
+> real and were observed live; the caveat is only that they were not reproducible
+> from the committed tree until the repair. Everything from patch 0066 onward was
+> verified against a clean build of the committed chain.
+
 ### Phase 3 — customization engines
 
 | Patch | Feature | L4 test to run | Status |

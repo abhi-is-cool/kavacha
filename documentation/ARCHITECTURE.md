@@ -30,10 +30,15 @@ Mechanisms, in order of preference (most to least update-resilient):
 ## Key subsystem designs
 
 ### Workspaces (`ui/workspaces/`)
-Isolation is delegated to Firefox **containers** (contextual identities): one container
-per workspace gives cookie/storage separation for free, without engine work. The
-workspace manager owns the mapping (workspace ⇄ container ⇄ tab set ⇄ theme ⇄ search
-provider) — see `workspace.schema.json`.
+A workspace can optionally sit on a Firefox **container** (contextual identity) for
+cookie/storage separation, but this is **off by default** (patch 0038,
+`kavacha.workspaces.isolate-containers`): superseding ADR 0003's original
+one-container-per-workspace design, ordinary spaces share the default container so
+tabs move between them freely, and templates that need a boundary (e.g. Private) opt
+in. Per-space *bookmarks* isolate and *history* is attributed per space via Places
+side tables (ADR 0005), independent of containers. The workspace manager owns the
+mapping (workspace ⇄ optional container ⇄ tab set ⇄ theme ⇄ search provider) — see
+`workspace.schema.json`.
 
 ### Customization (`customization/`)
 Everything is a document: layouts and themes are JSON (+ CSS) validated by schemas.
@@ -59,4 +64,12 @@ Significant choices are ADRs in [decisions/](decisions/):
 
 - [0001 — Fork Zen via an overlay repo, never touch Gecko](decisions/0001-fork-zen-overlay.md)
 - [0002 — Enforce privacy through default prefs, not locks](decisions/0002-privacy-via-default-prefs.md)
-- [0003 — Workspaces map to Firefox containers](decisions/0003-workspaces-on-containers.md)
+- [0003 — Workspaces map to Firefox containers](decisions/0003-workspaces-on-containers.md) — *superseded on defaults by patch 0038: per-space containers are opt-in, off by default*
+- [0004 — Federated universal search](decisions/0004-universal-search-federated.md)
+- [0005 — Per-workspace isolation: bookmarks isolate, history attributes, passwords global](decisions/0005-workspace-isolation.md)
+- [0006 — Workspace state-history substrate (snapshots)](decisions/0006-workspace-state-history.md)
+- [0007 — Privacy Center over Firefox's blocking ledger](decisions/0007-privacy-center.md)
+- [0008 — Customization engines (layout + theme)](decisions/0008-customization-engines.md)
+- [0009 — Customization Studio (about:studio)](decisions/0009-customization-studio.md)
+- [0010 — Component marketplace](decisions/0010-component-marketplace.md)
+- [0011 — Kavacha SDK + plugin permission model](decisions/0011-kavacha-sdk-plugins.md)

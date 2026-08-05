@@ -15,12 +15,16 @@ Two things are deliberately elsewhere:
 - **[ECOSYSTEM.md](ECOSYSTEM.md)** — Mail, Drive, Identity, search aggregator, Enterprise.
   Separate products, gated on the browser shipping.
 
-Where we are: **Phases 1–4 complete** (58 patches). **Phases 5, 6 and 7 have not
-started.** Patches 0045–0050 (2026-08-02) closed the open defects and the Phase 4 feature
-list; patches 0051–0058 (same day) closed fifteen of the seventeen Phase 2/3 follow-ups in
-§3 and were build- and Marionette-verified. What is left in Phase 4 is one follow-up and
-the release blockers in [SHIPPING.md](SHIPPING.md); what is left in §3 is two items gated
-on Phases 5 and 6.
+Where we are: **Phases 1–4 feature-complete** through patch 0074 (2026-08-04), **except**
+the open Phase 1 **update-service blocker** (see ROADMAP.md — no path to ship a security
+fix until `updates.kavacha.app` exists) and the release gates in
+[SHIPPING.md](SHIPPING.md). **Phases 5, 6 and 7 have not started.** Patches 0045–0050
+(2026-08-02) closed the open defects and the Phase 4 feature list; 0051–0058 closed
+fifteen of seventeen Phase 2/3 follow-ups (§3). A post-merge audit (2026-08-03) then found
+and fixed a wave of defects in the 0022–0065 work — patches 0059 (repair) and 0066–0074,
+all Marionette-verified; a handful of non-critical audit items remain open (see the
+"Post-merge audit" section of ROADMAP.md). What is left in §3 is two items gated on
+Phases 5 and 6.
 
 ---
 

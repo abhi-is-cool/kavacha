@@ -460,15 +460,23 @@ stack, build/CI, and docs). Outcome:
     helper now maps ALLOW→allowed, DENY→blocked, everything else→"Ask every time".
   - Also corrected the stale `ui/defaults/kavacha-ux.js` Cmd+T comment (it described the
     floating-search default that patch 0042 replaced with a real new tab on 2026-08-02).
+- **Third fix wave (Marionette-verified), patch 0071 — layout engine correctness:**
+  - Partial `setLayout` patches no longer clobber sibling fields (setting toolbar position
+    reset its visibility, and vice versa — a shallow spread replaced the whole sub-object);
+    `setLayout` now deep-merges nested objects.
+  - The layout file no longer reverts tab-orientation changes made through Zen's own
+    Looks & Feel toggle: the engine observes `zen.tabs.vertical` and follows an external
+    flip (arc/vertical both map to pref=true, so real arc setups are untouched; the
+    engine's own write is guarded against self-triggering).
+  - Removed the Studio "Toolbar position: Top/Bottom" control — it wrote an attribute no
+    CSS consumes, so it did nothing. The engine keeps the attribute as inert substrate
+    for a future bottom-toolbar layer; the working "show toolbar" checkbox stays.
 - **CI/build hardening** (commit `5d64a8c`): nightly publish is now an atomic upsert
   (was delete-then-create, which could destroy the release on a failed create),
   serialized by a concurrency group, and labels carried-forward stale assets in the
   notes; `bootstrap.sh update` re-syncs to the pin instead of Zen's moving dev tip,
   and an off-pin existing clone hard-stops instead of building against the wrong base.
-- **Still open from the audit (not yet fixed):** layout-engine partial-patch field
-  clobbering (changing toolbar position resets its visibility, and vice versa); the
-  Studio "toolbar position" control is a no-op (no CSS consumes the attribute); the
-  layout file silently reverts `zen.tabs.vertical` changes made through Zen's own UI;
+- **Still open from the audit (not yet fixed):**
   sideloaded theme/marketplace manifests aren't schema-validated (ADR 0010 says they
   are); the SDK `tabs.open` allows any `about:` page with the system principal;
   privacy-score "fix" buttons write the same proxy pref their check reads; the widget

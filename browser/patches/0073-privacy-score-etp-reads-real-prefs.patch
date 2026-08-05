@@ -1,0 +1,72 @@
+# Patch 0073 — The privacy-score ETP check must read real protection, not the
+# category summary pref (audit 2026-08-03; fixes patch 0050).
+#
+# The "Enhanced Tracking Protection (strict)" posture check read
+# browser.contentblocking.category === "strict" and its "turn on" fix wrote the
+# same pref. That pref is a UI SUMMARY with no global observer: verified over
+# Marionette that setting it "strict" never flips
+# privacy.trackingprotection.enabled. So the check reported ETP on whenever the
+# summary said strict — even with real tracking protection disabled — and the
+# fix set a pref that changes no protection. A self-referential check+fix that
+# can neither detect nor repair the thing it scores. (The other seven posture
+# checks already read and write their real prefs; only this one used a proxy.)
+#
+# FIX: the check reads the actual prefs Kavacha ships for strict ETP
+# (trackingprotection.enabled + socialtracking/cryptomining/fingerprinting),
+# and the fix sets those (plus emailtracking) AND the category so the stock
+# ETP UI stays in sync.
+#
+# Marionette-verified on a FRESH profile: check reads on at the defaults;
+# after disabling privacy.trackingprotection.enabled the check reads OFF even
+# though browser.contentblocking.category is still "strict" (the exact false
+# positive the old code gave); the fix restores the real prefs to true and the
+# check reads on again.
+diff --git a/src/browser/components/preferences/kavacha-privacy.js b/src/browser/components/preferences/kavacha-privacy.js
+index 2714d72..63bf51b 100644
+--- a/src/browser/components/preferences/kavacha-privacy.js
++++ b/src/browser/components/preferences/kavacha-privacy.js
+@@ -807,11 +807,40 @@ var gKavachaPrivacyCenter = {
+       {
+         id: "kavachaPostureEtp",
+         improve: "kavacha-privacy-improve-etp",
++        // Read the ACTUAL tracking-protection prefs, not
++        // browser.contentblocking.category. The category is a UI summary with
++        // no global observer (verified: setting it "strict" never flips
++        // privacy.trackingprotection.enabled), so the old check-and-fix both
++        // touched a pref that neither reports nor changes real protection —
++        // the score could say ETP was on while it was off, and its "turn on"
++        // did nothing. These are the prefs Kavacha ships for strict ETP.
+         on: () =>
+-          prefs.getStringPref("browser.contentblocking.category", "") ===
+-          "strict",
+-        fix: () =>
+-          prefs.setStringPref("browser.contentblocking.category", "strict"),
++          prefs.getBoolPref("privacy.trackingprotection.enabled", false) &&
++          prefs.getBoolPref(
++            "privacy.trackingprotection.socialtracking.enabled",
++            false
++          ) &&
++          prefs.getBoolPref(
++            "privacy.trackingprotection.cryptomining.enabled",
++            false
++          ) &&
++          prefs.getBoolPref(
++            "privacy.trackingprotection.fingerprinting.enabled",
++            false
++          ),
++        fix: () => {
++          for (const p of [
++            "privacy.trackingprotection.enabled",
++            "privacy.trackingprotection.socialtracking.enabled",
++            "privacy.trackingprotection.cryptomining.enabled",
++            "privacy.trackingprotection.fingerprinting.enabled",
++            "privacy.trackingprotection.emailtracking.enabled",
++          ]) {
++            prefs.setBoolPref(p, true);
++          }
++          // Keep the stock ETP UI's summary in step with what we just enabled.
++          prefs.setStringPref("browser.contentblocking.category", "strict");
++        },
+       },
+       {
+         id: "kavachaPostureTcp",

@@ -482,10 +482,15 @@ stack, build/CI, and docs). Outcome:
   only about:blank/newtab/home are openable and loads use a null (unprivileged)
   principal. Verified: the four privileged pages are refused and the captured
   triggering principal is null, not system.
+- **Fifth fix wave (Marionette-verified), patch 0073 — privacy-score ETP check:** the
+  ETP posture check read `browser.contentblocking.category` (a UI summary with no global
+  observer) for both its state and its "turn on" fix, so it could report ETP on while
+  real protection was off and its fix changed nothing. Now reads and writes the actual
+  tracking-protection prefs. Verified: after disabling the real pref the check reads OFF
+  even with the category still "strict", and the fix restores real protection.
 - **Still open from the audit (not yet fixed):**
   sideloaded theme/marketplace manifests aren't schema-validated (ADR 0010 says they
-  are);
-  privacy-score "fix" buttons write the same proxy pref their check reads; the widget
+  are); the widget
   host's register/unregister lifecycle is dead code (uninstalling a widget leaves it
   forever; emptying the dashboard resurrects all built-ins); "Session only" cookie
   rules don't purge already-stored cookies; several docs are stale (ARCHITECTURE.md

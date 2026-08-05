@@ -1,0 +1,99 @@
+# Patch 0072 — SDK tabs.open must not reach privileged UI or load with the
+# system principal (audit 2026-08-03; fixes patch 0029).
+#
+# Two hardening defects in the `tabs` capability:
+#
+# 1. "about:" AS A WHOLE IS NOT SAFE. The old check allowed any about: URL, so
+#    a granted plugin could open about:config, about:logins, about:profiles,
+#    about:preferences or about:studio — privileged UI — despite the comment
+#    claiming chrome:// was refused "so a plugin can never reach privileged
+#    UI". Now only about:blank / about:newtab / about:home (benign,
+#    content-loadable) are openable; every other about: page is refused.
+#
+# 2. SYSTEM PRINCIPAL AS triggeringPrincipal. A plugin-initiated load carried
+#    Services.scriptSecurityManager.getSystemPrincipal(), which bypasses the
+#    security checks a normal content load gets. A plugin is not the user;
+#    the load now uses a fresh null principal (unprivileged), the correct
+#    provenance for "some code asked to open a page".
+#
+# No shipped plugin exists, so there is no compat cost. Marionette-verified on
+# the built browser with a test plugin granted "tabs": about:config,
+# about:logins, about:preferences and about:studio are all refused;
+# about:blank and https open; and the captured triggeringPrincipal reports
+# isSystemPrincipal=false, isNullPrincipal=true.
+diff --git a/src/zen/common/sys/KavachaSDK.sys.mjs b/src/zen/common/sys/KavachaSDK.sys.mjs
+index e965710..dd751d6 100644
+--- a/src/zen/common/sys/KavachaSDK.sys.mjs
++++ b/src/zen/common/sys/KavachaSDK.sys.mjs
+@@ -12,7 +12,8 @@
+ // This is the ONLY sanctioned surface a plugin has. It deliberately exposes
+ // four capabilities and nothing else:
+ //   workspaces — list / current / create-from-template (read + safe create; no delete)
+-//   tabs       — list / open (http/https/about only) / close, on the active window
++//   tabs       — list / open (http/https + a few safe about: pages, as an
++//                unprivileged load) / close, on the active window
+ //   notes      — read / write the current workspace note
+ //   commands   — register a Cmd+K command (revocable as a group by source)
+ //
+@@ -49,9 +50,19 @@ function _slug(label) {
+   );
+ }
+ 
+-// Only web-safe and about: URLs may be opened by a plugin. file:// and
+-// chrome:// are refused so a plugin can never reach local files or privileged
+-// UI through the tabs capability.
++// The only about: pages a plugin may open. "about:" as a whole is NOT safe:
++// about:config, about:logins, about:profiles, about:preferences, about:studio
++// and others are privileged UI, so the tabs capability must not reach them —
++// an allowlist of benign, content-loadable pages is the whole grant.
++const kOpenableAboutPages = new Set([
++  "about:blank",
++  "about:newtab",
++  "about:home",
++]);
++
++// Only web URLs and the few safe about: pages above may be opened by a plugin.
++// file:// and chrome:// are refused so a plugin can never reach local files or
++// privileged UI through the tabs capability.
+ function _assertOpenableUrl(url) {
+   let uri;
+   try {
+@@ -59,9 +70,20 @@ function _assertOpenableUrl(url) {
+   } catch (e) {
+     throw new Error(`KavachaSDK: invalid url "${url}"`);
+   }
+-  if (!["http", "https", "about"].includes(uri.scheme)) {
++  if (uri.scheme === "about") {
++    const base = uri.spec.replace(/[?#].*$/, "").toLowerCase();
++    if (!kOpenableAboutPages.has(base)) {
++      throw new Error(
++        `KavachaSDK: refusing to open "${uri.spec}" — of about: pages only ` +
++          `about:blank, about:newtab and about:home may be opened by a plugin`
++      );
++    }
++    return uri.spec;
++  }
++  if (!["http", "https"].includes(uri.scheme)) {
+     throw new Error(
+-      `KavachaSDK: refusing to open "${uri.scheme}:" — only http, https, and about are allowed`
++      `KavachaSDK: refusing to open "${uri.scheme}:" — only http, https, and a ` +
++        `few safe about: pages are allowed`
+     );
+   }
+   return uri.spec;
+@@ -124,9 +146,14 @@ export const KavachaSDK = {
+         async open(url) {
+           await require(KavachaPermission.TABS);
+           const spec = _assertOpenableUrl(url);
++          // A plugin is not the user: a plugin-initiated load must NOT carry the
++          // system principal (which bypasses the security checks a normal
++          // content load gets). A fresh null principal makes the load
++          // unprivileged, the correct provenance for "some code asked to open
++          // a page".
+           return _activeWindow().gBrowser?.addTab(spec, {
+             triggeringPrincipal:
+-              Services.scriptSecurityManager.getSystemPrincipal(),
++              Services.scriptSecurityManager.createNullPrincipal({}),
+           });
+         },
+         async close(tabId) {

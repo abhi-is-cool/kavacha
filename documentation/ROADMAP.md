@@ -476,9 +476,15 @@ stack, build/CI, and docs). Outcome:
   serialized by a concurrency group, and labels carried-forward stale assets in the
   notes; `bootstrap.sh update` re-syncs to the pin instead of Zen's moving dev tip,
   and an off-pin existing clone hard-stops instead of building against the wrong base.
+- **Fourth fix wave (Marionette-verified), patch 0072 — SDK hardening:** the `tabs`
+  capability let a granted plugin open any `about:` page (about:config, about:logins,
+  about:profiles — privileged UI) and triggered loads with the system principal. Now
+  only about:blank/newtab/home are openable and loads use a null (unprivileged)
+  principal. Verified: the four privileged pages are refused and the captured
+  triggering principal is null, not system.
 - **Still open from the audit (not yet fixed):**
   sideloaded theme/marketplace manifests aren't schema-validated (ADR 0010 says they
-  are); the SDK `tabs.open` allows any `about:` page with the system principal;
+  are);
   privacy-score "fix" buttons write the same proxy pref their check reads; the widget
   host's register/unregister lifecycle is dead code (uninstalling a widget leaves it
   forever; emptying the dashboard resurrects all built-ins); "Session only" cookie

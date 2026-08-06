@@ -493,11 +493,16 @@ stack, build/CI, and docs). Outcome:
   already-stored cookies survived quit despite the promise. It now also clears the site's
   stored cookies via removeCookiesFromExactHost, and the copy matches. Verified: the
   SESSION rule purges with the exact host, Keep/Block do not.
+- **Seventh fix wave (Marionette-verified), patch 0075 — widget lifecycle:** an empty
+  dashboard was impossible (removing the last card resurrected all built-ins, because
+  enabledIds conflated "emptied" with "never arranged") and uninstalling a widget
+  component left its card forever (the register/unregisterBySource lifecycle was
+  unwired). Now null/absent means built-ins while an explicit [] stays empty, and
+  uninstall reverses a widget component's card + drops any custom widgets it registered.
+  Verified: emptying stays empty; uninstall removes the card.
 - **Still open from the audit (not yet fixed):**
   sideloaded theme/marketplace manifests aren't schema-validated (ADR 0010 says they
-  are); the widget
-  host's register/unregister lifecycle is dead code (uninstalling a widget leaves it
-  forever; emptying the dashboard resurrects all built-ins); several docs are stale (ARCHITECTURE.md
+  are); several docs are stale (ARCHITECTURE.md
   still describes container-per-workspace; VERIFICATION.md rows for 0059–0065 describe
   verifications of a tree the committed patches couldn't produce; REMAINING_WORK.md's
   "Phases 1–4 complete" contradicts the open update-service blocker). Full per-finding

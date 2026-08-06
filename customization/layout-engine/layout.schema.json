@@ -46,10 +46,10 @@
       "default": []
     },
     "widgets": {
-      "type": "array",
+      "type": ["array", "null"],
       "items": { "type": "string" },
-      "default": [],
-      "description": "Dashboard widget ids, in display order (patch 0057). Empty or absent means the widget host's built-ins in their declared order; unknown ids are ignored, since a widget disappears when its marketplace component is uninstalled."
+      "default": null,
+      "description": "Dashboard widget ids, in display order (patch 0057; semantics revised in 0075). null or absent means the widget host's built-ins in their declared order; an explicit empty array means the user emptied the dashboard and it stays empty; unknown ids are ignored, since a widget disappears when its marketplace component is uninstalled."
     },
     "componentSizes": {
       "type": "object",

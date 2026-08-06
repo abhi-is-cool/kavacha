@@ -1,0 +1,133 @@
+# Patch 0075 — Widget lifecycle: an empty dashboard stays empty, and
+# uninstalling a widget component removes its card (audit 2026-08-03; fixes
+# patch 0057). Pairs with a layout.schema.json change committed alongside.
+#
+# TWO defects:
+#
+# 1. AN EMPTY DASHBOARD WAS IMPOSSIBLE. enabledIds() returned every built-in
+#    whenever the stored widget list was empty OR absent, so removing the last
+#    card resurrected all of them and a panel of unresolved ids silently became
+#    the full default set. The list now distinguishes null/absent ("never
+#    arranged" -> built-ins) from an explicit [] ("emptied on purpose" -> stays
+#    empty): DEFAULT_LAYOUT.widgets is null, _normalize preserves null vs [],
+#    and enabledIds keys on Array.isArray, not length. (Pre-release note: a dev
+#    profile carrying the old seeded widgets:[] now reads as an empty dashboard;
+#    acceptable with no public users, and fresh profiles seed null.)
+#
+# 2. UNINSTALL LEFT A WIDGET'S CARD FOREVER. The marketplace applied a widget
+#    component with KavachaWidgetHost.toggle(builtinWidgetId, true) but uninstall
+#    never reversed it, and the header's "register/unregisterBySource drops a
+#    component's widgets" was unwired. uninstall() now calls
+#    KavachaWidgetHost.unregisterBySource (dropping any CUSTOM widgets a
+#    component registered — live-wiring the lifecycle the host was built for,
+#    a no-op for today's built-in-referencing components) and, for a WIDGET
+#    component, toggles its built-in card back off. A widget add is cleanly
+#    reversible; a theme/layout/PANEL is not (no pre-apply memory), so those
+#    stay put as before.
+#
+# Marionette-verified on a clean build: unset -> built-ins; setEnabledIds([])
+# and toggling the last card off both leave [] (not the full set); applying
+# widget-spaces adds the card and uninstalling it removes the card.
+diff --git a/src/zen/common/sys/KavachaLayoutEngine.sys.mjs b/src/zen/common/sys/KavachaLayoutEngine.sys.mjs
+index cb8913e..1e18970 100644
+--- a/src/zen/common/sys/KavachaLayoutEngine.sys.mjs
++++ b/src/zen/common/sys/KavachaLayoutEngine.sys.mjs
+@@ -55,11 +55,13 @@ const DEFAULT_LAYOUT = {
+   toolbar: { position: "top", visible: true },
+   hiddenElements: [],
+   componentSizes: {},
+-  // Patch 0057: which dashboard widgets are shown, in order. Empty means
+-  // "the widget host's built-ins, in their declared order" — that default
+-  // lives in KavachaWidgetHost, not here, so this engine never has to know
+-  // what widgets exist.
+-  widgets: [],
++  // Patch 0057: which dashboard widgets are shown, in order. null (the default)
++  // means "never arranged — the widget host's built-ins, in their declared
++  // order"; an explicit [] means "the user emptied the dashboard, keep it
++  // empty". The two must stay distinct or an empty dashboard is impossible
++  // (fixed in patch 0075). The built-in default lives in KavachaWidgetHost, not
++  // here, so this engine never has to know what widgets exist.
++  widgets: null,
+ };
+ 
+ // componentSizes is keyed by an abstract component id; a raw {id: px} can't
+diff --git a/src/zen/common/sys/KavachaMarketplace.sys.mjs b/src/zen/common/sys/KavachaMarketplace.sys.mjs
+index 99e52b9..23e0960 100644
+--- a/src/zen/common/sys/KavachaMarketplace.sys.mjs
++++ b/src/zen/common/sys/KavachaMarketplace.sys.mjs
+@@ -337,11 +337,18 @@ export const KavachaMarketplace = {
+ 
+   /**
+    * Uninstall a component: remove it from the installed set, persist, drop its
+-   * palette command group, and bump the revision. Uninstalling never touches
+-   * the browser's current look — a theme/layout the component applied stays put
+-   * until the user changes it (the engines own that state).
++   * palette command group and any custom widgets it registered, take a widget
++   * component's card back off the dashboard, and bump the revision.
++   *
++   * A theme or layout the component applied stays put — reverting it would need
++   * the pre-apply state, which the engines don't keep. A widget is different:
++   * putting a card ON the dashboard is cleanly reversible (take it off), so an
++   * uninstalled widget component leaves no card behind. A PANEL replaced the
++   * whole arrangement with no memory of what preceded it, so it is left as-is
++   * like a theme.
+    */
+   async uninstall(id) {
++    const component = await this.resolveComponent(id);
+     const installed = await this._loadInstalled();
+     if (installed.has(id)) {
+       installed.delete(id);
+@@ -350,6 +357,18 @@ export const KavachaMarketplace = {
+     const source = "marketplace:" + id;
+     KavachaCommandRegistry.unregisterBySource(source);
+     this._commandSources.delete(source);
++    // Drop any custom widgets this component registered (a future component
++    // that brings its own widget definitions); a no-op for the built-in-
++    // referencing components shipped today, but it completes the lifecycle the
++    // widget host's register()/unregisterBySource() was built for.
++    KavachaWidgetHost.unregisterBySource(source);
++    // Take a widget component's built-in card back off the dashboard.
++    if (
++      component?.type === KavachaComponentType.WIDGET &&
++      component.payload?.builtinWidgetId
++    ) {
++      await KavachaWidgetHost.toggle(component.payload.builtinWidgetId, false);
++    }
+     this._bumpRevision();
+   },
+ 
+diff --git a/src/zen/common/sys/KavachaWidgetHost.sys.mjs b/src/zen/common/sys/KavachaWidgetHost.sys.mjs
+index 8a04dc1..00a32c8 100644
+--- a/src/zen/common/sys/KavachaWidgetHost.sys.mjs
++++ b/src/zen/common/sys/KavachaWidgetHost.sys.mjs
+@@ -261,11 +261,11 @@ export const KavachaWidgetHost = {
+   // ----- Arrangement ------------------------------------------------------
+ 
+   /**
+-   * The widget ids to show, in order. An absent or empty list means "the
+-   * built-ins, in their declared order", so an existing profile gets a working
+-   * dashboard with no migration. Unknown ids are dropped rather than surfaced
+-   * as an error: a widget can vanish simply because its component was
+-   * uninstalled, which is not a fault condition.
++   * The widget ids to show, in order. An absent list (null) means "the
++   * built-ins, in their declared order"; an explicit empty list means the
++   * dashboard was emptied on purpose and stays empty. Unknown ids are dropped
++   * rather than surfaced as an error: a widget can vanish simply because its
++   * component was uninstalled, which is not a fault condition.
+    */
+   async enabledIds() {
+     let configured = null;
+@@ -274,7 +274,12 @@ export const KavachaWidgetHost = {
+     } catch (e) {
+       // Layout unreadable — fall through to the built-in default.
+     }
+-    if (!Array.isArray(configured) || !configured.length) {
++    // null/absent = "never arranged" -> the built-ins. An explicit [] = the
++    // user emptied the dashboard and it must STAY empty. The old `!length`
++    // test conflated the two, so removing the last widget resurrected every
++    // built-in (a dashboard could never be empty) and a panel of unresolved
++    // ids silently became the full default set. (patch 0075)
++    if (!Array.isArray(configured)) {
+       return BUILTIN_WIDGETS.map(w => w.id);
+     }
+     return configured.filter(id => this.has(id));

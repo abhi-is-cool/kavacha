@@ -1,0 +1,210 @@
+# Patch 0076 — Validate sideloaded theme + component manifests fail-closed,
+# the trust boundary ADR 0010 promised (audit 2026-08-03; fixes patches 0023
+# and 0028).
+#
+# ADR 0010 states a sideloaded package's manifest "is validated against
+# customization/themes/theme-manifest.schema.json". Neither host did: the theme
+# engine JSON.parse'd a sideloaded manifest and used its id/colors/style fields
+# (which compose FILE PATHS) directly, and the marketplace listed any
+# component.json whose JSON merely parsed. Untrusted third-party data drove
+# path construction and the applied look with no schema check.
+#
+# FIX (fail-closed — an invalid package is neither listed nor applied, the
+# choice for untrusted data): both hosts validate with Firefox's own
+# JsonSchema (resource://gre/modules/JsonSchema.sys.mjs, draft 2020-12) against
+# an embedded schema — the repo schema file is not packaged into the app, so it
+# is carried in the module and kept in sync by hand (CI validates the file).
+#   - Theme engine: _userThemeIds() only surfaces a sideloaded theme whose
+#     manifest validates (so it never reaches the Appearance panel or
+#     setActiveTheme's known-ids gate), and resolveTheme() re-validates and
+#     throws on a mismatch (applyToWindow/modeOf already keep the current theme
+#     on a throw). A manifest must also declare the id of its own directory.
+#     The schema's `colors: const "colors.json"` and kebab-case `id` pattern
+#     are what stop a package pointing `colors`/paths outside itself.
+#   - Marketplace: _discoverUserComponents() skips a component.json that fails
+#     validation (known `type` enum, semver `version`, object `payload`).
+#   Built-ins are first-party and skip validation on both paths.
+#
+# Marionette-verified on a clean build: a well-formed sideloaded theme lists and
+# resolves; one with an uppercase/spaced id, empty name, non-semver version,
+# a `colors: "../../etc/passwd"` traversal and an extra field is excluded from
+# the list AND rejected by resolveTheme; a valid component is listed and one
+# with type "malware"/bad version is skipped.
+diff --git a/src/zen/common/sys/KavachaMarketplace.sys.mjs b/src/zen/common/sys/KavachaMarketplace.sys.mjs
+index 23e0960..efd0aae 100644
+--- a/src/zen/common/sys/KavachaMarketplace.sys.mjs
++++ b/src/zen/common/sys/KavachaMarketplace.sys.mjs
+@@ -50,6 +50,33 @@ const { KavachaCommandRegistry, KavachaCommandDomain } =
+   ChromeUtils.importESModule(
+     "resource:///modules/KavachaCommandRegistry.sys.mjs"
+   );
++const { JsonSchema } = ChromeUtils.importESModule(
++  "resource://gre/modules/JsonSchema.sys.mjs"
++);
++
++// A sideloaded component.json is untrusted third-party data, so it is
++// validated FAIL-CLOSED before it is listed (ADR 0010): an invalid package is
++// skipped, never surfaced. The bundled catalog is first-party and skips this.
++// `type` must be a known value and `payload` an object; the rest are the
++// descriptor fields the listing renders. additionalProperties stays open —
++// per-type payloads vary, and _applyComponent + APPLICABLE_TYPES already gate
++// what a type may actually do.
++const COMPONENT_MANIFEST_SCHEMA = {
++  $schema: "https://json-schema.org/draft/2020-12/schema",
++  type: "object",
++  required: ["type", "name", "version"],
++  properties: {
++    type: {
++      type: "string",
++      enum: ["theme", "layout", "bundle", "widget", "panel"],
++    },
++    name: { type: "string", minLength: 1, maxLength: 80 },
++    version: { type: "string", pattern: "^\\d+\\.\\d+\\.\\d+$" },
++    description: { type: "string", maxLength: 500 },
++    author: { type: "string" },
++    payload: { type: "object" },
++  },
++};
+ 
+ const kRevisionPref = "kavacha.marketplace.revision";
+ const kMarketDir = "kavacha-marketplace";
+@@ -279,6 +306,16 @@ export const KavachaMarketplace = {
+         const manifest = JSON.parse(
+           await IOUtils.readUTF8(PathUtils.join(child, "component.json"))
+         );
++        // Fail-closed: skip a package whose manifest does not validate.
++        let check;
++        try {
++          check = JsonSchema.validate(manifest, COMPONENT_MANIFEST_SCHEMA);
++        } catch (e) {
++          continue;
++        }
++        if (!check.valid) {
++          continue;
++        }
+         out.push({
+           id,
+           type: manifest.type,
+diff --git a/src/zen/common/sys/KavachaThemeEngine.sys.mjs b/src/zen/common/sys/KavachaThemeEngine.sys.mjs
+index ccef380..935debb 100644
+--- a/src/zen/common/sys/KavachaThemeEngine.sys.mjs
++++ b/src/zen/common/sys/KavachaThemeEngine.sys.mjs
+@@ -71,6 +71,44 @@
+ //    props per window like `_sheetByWindow` already was.
+ // ---------------------------------------------------------------------------
+ 
++const lazy = {};
++ChromeUtils.defineESModuleGetters(lazy, {
++  JsonSchema: "resource://gre/modules/JsonSchema.sys.mjs",
++});
++
++// Embedded copy of customization/themes/theme-manifest.schema.json (ADR 0010).
++// Sideloaded packages are NOT packaged with that repo file, so the schema is
++// carried here; the two must stay in sync (CI validates the file, this guards
++// the runtime). A sideloaded manifest is untrusted third-party data whose
++// `id`, `colors` and `style` fields compose file paths, so it is validated
++// FAIL-CLOSED — an invalid package is neither listed nor applied — which is
++// the guarantee ADR 0010 and customization/README.md state.
++const THEME_MANIFEST_SCHEMA = {
++  $schema: "https://json-schema.org/draft/2020-12/schema",
++  type: "object",
++  required: ["name", "id", "version", "colors"],
++  additionalProperties: false,
++  properties: {
++    $schema: { type: "string" },
++    id: { type: "string", pattern: "^[a-z0-9]+(-[a-z0-9]+)*$" },
++    name: { type: "string", minLength: 1, maxLength: 80 },
++    version: { type: "string", pattern: "^\\d+\\.\\d+\\.\\d+$" },
++    author: { type: "string" },
++    description: { type: "string", maxLength: 500 },
++    license: { type: "string" },
++    kavachaMinVersion: { type: "string" },
++    colors: { type: "string", const: "colors.json" },
++    style: { type: "string" },
++    icons: { type: "string" },
++    fonts: { type: "array", items: { type: "string", pattern: "\\.woff2$" } },
++    supports: {
++      type: "array",
++      items: { type: "string", enum: ["light", "dark"] },
++      minItems: 1,
++    },
++  },
++};
++
+ const kThemePref = "kavacha.theme.active";
+ const kDefaultTheme = "kavacha-midnight";
+ const kUserThemesDir = "kavacha-themes";
+@@ -367,8 +405,15 @@ export const KavachaThemeEngine = {
+     try {
+       for (const child of await IOUtils.getChildren(dir)) {
+         const info = await IOUtils.stat(child);
+-        if (info.type === "directory") {
+-          out.push(PathUtils.filename(child));
++        if (info.type !== "directory") {
++          continue;
++        }
++        const id = PathUtils.filename(child);
++        // Fail-closed (ADR 0010): only surface a sideloaded theme whose
++        // manifest validates, so an invalid package never reaches the
++        // Appearance panel or setActiveTheme's known-ids check.
++        if (await this._userThemeIsValid(child, id)) {
++          out.push(id);
+         }
+       }
+     } catch (e) {
+@@ -377,7 +422,41 @@ export const KavachaThemeEngine = {
+     return out;
+   },
+ 
++  async _userThemeIsValid(base, id) {
++    try {
++      const manifest = JSON.parse(
++        await IOUtils.readUTF8(PathUtils.join(base, "manifest.json"))
++      );
++      return this._validateManifest(manifest, id).ok;
++    } catch (e) {
++      return false;
++    }
++  },
++
+   /** Resolve an id to { id, name, colors, styleCss }. Built-in or on-disk. */
++  /**
++   * Validate a sideloaded theme manifest fail-closed (ADR 0010). Built-ins
++   * skip this — they are first-party. Returns { ok, why }.
++   */
++  _validateManifest(manifest, id) {
++    let result;
++    try {
++      result = lazy.JsonSchema.validate(manifest, THEME_MANIFEST_SCHEMA);
++    } catch (e) {
++      return { ok: false, why: String(e?.message || e) };
++    }
++    if (!result.valid) {
++      const first = result.errors?.[0];
++      return { ok: false, why: first?.error || first?.message || "schema mismatch" };
++    }
++    // The directory the package lives in is authoritative; a manifest must not
++    // claim a different id (it would shadow another theme's tokens/paths).
++    if (manifest.id !== id) {
++      return { ok: false, why: `manifest id "${manifest.id}" != directory "${id}"` };
++    }
++    return { ok: true };
++  },
++
+   async resolveTheme(id) {
+     if (BUILTIN_THEMES[id]) {
+       return { id, ...BUILTIN_THEMES[id], styleCss: null };
+@@ -386,6 +465,13 @@ export const KavachaThemeEngine = {
+     const manifest = JSON.parse(
+       await IOUtils.readUTF8(PathUtils.join(base, "manifest.json"))
+     );
++    const check = this._validateManifest(manifest, id);
++    if (!check.ok) {
++      // Fail-closed: an untrusted package that does not match the schema does
++      // not load. Callers (applyToWindow, modeOf) already keep the current
++      // theme on a throw.
++      throw new Error(`KavachaThemeEngine: theme "${id}" rejected — ${check.why}`);
++    }
+     const colors = JSON.parse(
+       await IOUtils.readUTF8(PathUtils.join(base, colorsFileOf(manifest)))
+     );

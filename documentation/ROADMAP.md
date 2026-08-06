@@ -500,12 +500,16 @@ stack, build/CI, and docs). Outcome:
   unwired). Now null/absent means built-ins while an explicit [] stays empty, and
   uninstall reverses a widget component's card + drops any custom widgets it registered.
   Verified: emptying stays empty; uninstall removes the card.
-- **Still open from the audit (not yet fixed):**
-  sideloaded theme/marketplace manifests aren't schema-validated (ADR 0010 says they
-  are); several docs are stale (ARCHITECTURE.md
-  still describes container-per-workspace; VERIFICATION.md rows for 0059–0065 describe
-  verifications of a tree the committed patches couldn't produce; REMAINING_WORK.md's
-  "Phases 1–4 complete" contradicts the open update-service blocker). Full per-finding
+- **Eighth fix wave (Marionette-verified), patch 0076 — manifest validation:** ADR 0010's
+  trust boundary was unimplemented — the theme engine and marketplace used sideloaded
+  manifests (whose id/colors/style fields compose file paths) with no schema check. Both
+  now validate fail-closed via Firefox's JsonSchema against an embedded schema: an invalid
+  theme is neither listed nor applied, an invalid component is skipped. Verified a
+  path-traversal `colors` and a bad `type` are both rejected.
+- **Audit closed (2026-08-06).** Every finding from the post-merge audit is resolved:
+  the 0059 repair, criticals 0066–0068, and fixes 0069–0076 (accent, permission labels,
+  layout engine, SDK hardening, privacy-score, session cookies, widget lifecycle, manifest
+  validation), plus the stale-doc corrections and CI/build hardening. Full per-finding
   detail is in the audit reviewers' reports.
 
 ## Phase 5 — Kavacha Account & Ownership (Months 8–10) — Y1

@@ -1,0 +1,127 @@
+# Patch 0077 — Blocked-today badge on the ⚙ menu (ROADMAP Phase 4 follow-up;
+# the last open Phase 4 item). The Privacy Center pane had today's blocked-
+# tracker count but nowhere on a chrome surface showed it.
+#
+# WHAT: a third pinned row in the Kavacha ⚙ menu (beside Settings and
+# Appearance) reading "N trackers blocked today", which opens the Privacy
+# Center (paneKavachaPrivacy) on click. The count comes from the SAME source
+# the pane reads — PrivacyMetricsService.getTodayStats() over
+# protections.sqlite — so the badge and the pane never disagree.
+#
+# WHY the menu, not the toolbar: a pinned menu row matches the existing
+# Settings/Appearance destinations, needs no customizable-widget plumbing, and
+# leaves the horizontal URL row (patch 0010) untouched. It reads as one place
+# with the pane it opens (shares the tracking-protection icon).
+#
+# DETAILS: the count is async, so the row ships a static "Trackers blocked
+# today" label and fills in the number when the ledger resolves; a
+# `.isConnected` guard drops a late resolve after the panel closed, and the
+# panel rebuilds on every open so the figure is always today's. Private
+# windows have no ledger and get no row. The pinned-search entry is updated to
+# the counted label so the filter still finds it.
+#
+# Marionette-verified on the built browser: with 7 events seeded for today, the
+# menu's pinned rows are [Settings, Appearance, "7 trackers blocked today"] and
+# the badge's command opens paneKavachaPrivacy.
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index 4a52cd8..175be8d 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -74,6 +74,15 @@ kavacha-menu-no-results = Nothing matches that
+ # Kavacha patch 0063 — the Appearance panel. Replaces the menu's generated
+ # Appearance section with one place that shows the colours.
+ kavacha-menu-appearance = Appearance
++
++# Kavacha patch 0077 — blocked-today badge. The static label shows before the
++# ledger resolves; the count label replaces it with today's number.
++kavacha-menu-blocked-loading = Trackers blocked today
++kavacha-menu-blocked-today =
++    { $count ->
++        [one] { $count } tracker blocked today
++       *[other] { $count } trackers blocked today
++    }
+ kavacha-appearance-title = Appearance
+ kavacha-appearance-mode-dark = Dark
+ kavacha-appearance-mode-light = Light
+diff --git a/src/zen/common/sys/KavachaMenu.sys.mjs b/src/zen/common/sys/KavachaMenu.sys.mjs
+index f2c3033..89f9c30 100644
+--- a/src/zen/common/sys/KavachaMenu.sys.mjs
++++ b/src/zen/common/sys/KavachaMenu.sys.mjs
+@@ -45,6 +45,11 @@ const lazy = {};
+ 
+ ChromeUtils.defineESModuleGetters(lazy, {
+   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
++  // MOZ_SRC_FILES module — moz-src, not resource:///modules (same reader the
++  // Privacy Center pane uses). The blocked-today count comes from the same
++  // protections.sqlite ledger, so the menu badge and the pane never disagree.
++  PrivacyMetricsService:
++    "moz-src:///browser/components/protections/PrivacyMetricsService.sys.mjs",
+ });
+ 
+ // Same Fluent surface the palette uses (ZenUBGlobalActions): a sync-capable
+@@ -59,6 +64,9 @@ const kSettingsIcon = "chrome://browser/skin/zen-icons/settings.svg";
+ // The same icon the Appearance pane uses in the about:preferences nav, so the
+ // two entry points to appearance look like the same place.
+ const kAppearanceIcon = "chrome://browser/skin/zen-icons/paintbrush.svg";
++// The same icon the Privacy Center uses in the about:preferences nav, so its
++// menu badge and pane read as one place.
++const kPrivacyIcon = "chrome://browser/skin/zen-icons/tracking-protection.svg";
+ 
+ // Patch 0060: below this many commands the whole panel already fits without
+ // scrolling, and a filter field costs a row to save nothing. Above it the
+@@ -365,7 +373,9 @@ export const KavachaMenu = {
+       const item = this._makeItem(win, { label, icon, onCommand });
+       item.classList.add("kavacha-menu-pinned");
+       body.appendChild(item);
+-      pinned.push({ item, search: label.toLowerCase() });
++      const entry = { item, search: label.toLowerCase() };
++      pinned.push(entry);
++      return entry;
+     };
+ 
+     pin({
+@@ -391,6 +401,44 @@ export const KavachaMenu = {
+       },
+     });
+ 
++    // Blocked-today badge (patch 0077): today's blocked-tracker count as a
++    // pinned destination into the Privacy Center — the count was in the pane
++    // but nowhere on a chrome surface. Private windows have no ledger to read.
++    if (!lazy.PrivateBrowsingUtils.isWindowPrivate(win)) {
++      const blocked = pin({
++        l10nId: "kavacha-menu-blocked-loading",
++        fallback: "Trackers blocked today",
++        icon: kPrivacyIcon,
++        onCommand: () => {
++          panel.hidePopup();
++          win.openPreferences("paneKavachaPrivacy");
++        },
++      });
++      // The count is async; the row already shows a static label and its own
++      // count fills in when the ledger resolves. The panel rebuilds on each
++      // open, so the number is always today's. A dead build guards against a
++      // late resolve after the panel closed.
++      lazy.PrivacyMetricsService.getTodayStats()
++        .then(stats => {
++          if (!blocked.item.isConnected) {
++            return;
++          }
++          let text;
++          try {
++            text = lazy.l10n.formatValueSync("kavacha-menu-blocked-today", {
++              count: stats.total,
++            });
++          } catch (e) {
++            return; // keep the static loading label
++          }
++          if (text) {
++            blocked.item.setAttribute("label", text);
++            blocked.search = text.toLowerCase();
++          }
++        })
++        .catch(() => {});
++    }
++
+     // Generated sections: one per non-empty domain, in the registry's declared
+     // order. Every Kavacha feature (plus marketplace/plugin runtime commands)
+     // reaches the panel here — nothing is hand-listed.

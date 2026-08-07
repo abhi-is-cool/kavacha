@@ -100,9 +100,13 @@ Shipped 2026-08-02 as patches 0047–0050. One follow-up remains.
       Session only / Block over Gecko's own `cookie` permission, plus a delete-on-close
       switch that correctly drives *both* required prefs and does not silently disable
       the user's unrelated history or cache clearing when switched off.
-- [ ] **Blocked-today badge surface** — the count is in the pane; putting it on a chrome
-      surface (toolbar or ⚙ menu) means touching `KavachaMenu` and chrome markup rather
-      than the settings pane, so it was left out of 0050 rather than folded in.
+- [x] **Blocked-today badge surface** (patch 0077, 2026-08-07) — a third pinned row in the
+      ⚙ menu, beside Settings and Appearance, reading "N trackers blocked today" and
+      opening the Privacy Center. The count comes from the same PrivacyMetricsService
+      ledger the pane reads, filled in async; private windows get no row. Chosen over a
+      toolbar button to avoid touching the horizontal URL row and the customizable-widget
+      layer. This closes the Phase 4 feature list (the network-silence test remains, but
+      it is a release gate in SHIPPING.md, not a feature).
 
 The fifth Phase 4 item, the **network-silence test**, is a release blocker rather than a
 feature — [SHIPPING.md](SHIPPING.md) R3. It is now also the natural place to prove that a

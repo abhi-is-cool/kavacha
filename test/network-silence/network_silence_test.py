@@ -117,7 +117,7 @@ def macos_binary(app_path):
     return app_path
 
 
-def run(app_path, idle_seconds):
+def run(app_path, idle_seconds, headless=False):
     binary = macos_binary(app_path)
     if not os.path.exists(binary):
         print(f"ERROR: browser binary not found at {binary}", file=sys.stderr)
@@ -136,12 +136,19 @@ def run(app_path, idle_seconds):
     env["MOZ_LOG_FILE"] = log_file
     env["MOZ_DISABLE_SAFE_MODE_KEY"] = "1"
 
-    print(f"Launching {binary}\n  profile: {profile}\n  idle: {idle_seconds}s")
+    # -headless keeps the phone-home behaviour (startup pings, GMP ballot, push
+    # all still fire) while needing no display — which is what lets this run on
+    # a headless CI runner after the nightly package step.
+    cmd = [binary, "-no-remote", "-profile", profile]
+    if headless:
+        cmd.append("-headless")
+    cmd.append("about:blank")
+    print(
+        f"Launching {binary}\n  profile: {profile}\n  idle: {idle_seconds}s"
+        f"{' (headless)' if headless else ''}"
+    )
     proc = subprocess.Popen(
-        [binary, "-no-remote", "-profile", profile, "about:blank"],
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
     try:
         time.sleep(idle_seconds)
@@ -233,5 +240,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--app", required=True, help="Path to Kavacha.app or its binary")
     ap.add_argument("--idle", type=int, default=45, help="Seconds to sit idle")
+    ap.add_argument("--headless", action="store_true", help="Launch without a display (CI)")
     args = ap.parse_args()
-    sys.exit(run(args.app, args.idle))
+    sys.exit(run(args.app, args.idle, args.headless))

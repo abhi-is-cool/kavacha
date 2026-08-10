@@ -240,6 +240,28 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # R3 (SHIPPING.md): the network-silence gate. Runs the just-built binary
+      # headless on a fresh profile and fails if it contacts any telemetry /
+      # advertising / experimentation host — the load-bearing proof of Kavacha's
+      # privacy claim, on the real artifact. Linux only (the behaviour is
+      # pref-driven and identical across platforms, and this is the cheap
+      # runner); -headless needs no display. Placed after the upload so a
+      # regression marks the build red without withholding the binary.
+      - name: Network-silence test (R3)
+        if: matrix.platform == 'linux'
+        run: |
+          objbin="$(ls -d browser/zen-upstream/engine/obj-*/dist/bin 2>/dev/null | head -1)"
+          app=""
+          for cand in "$objbin/kavacha" "$objbin/zen"; do
+            [ -x "$cand" ] && app="$cand" && break
+          done
+          if [ -z "$app" ]; then
+            echo "could not find the built binary under $objbin"; ls -la "$objbin" || true; exit 1
+          fi
+          echo "testing $app"
+          python3 test/network-silence/network_silence_test.py --app "$app" --headless --idle 40
+        shell: bash
+
   # Rolling "nightly" prerelease: Actions artifacts require a GitHub login to
   # download, a Release gives a public link anyone can try. The tag is moved
   # to the built commit each publish.

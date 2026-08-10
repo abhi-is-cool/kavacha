@@ -138,3 +138,39 @@ pref("signon.management.page.breach-alerts.enabled", false);
 // Form autofill telemetry-adjacent heuristics stay local; no change needed.
 // WebRTC: don't leak local IPs when not in a call.
 pref("media.peerconnection.ice.default_address_only", true);
+
+// ---------------------------------------------------------------------------
+// Background phone-home from media plugins, DRM, and push (2026-08-08)
+// ---------------------------------------------------------------------------
+// The network-silence test (test/network-silence/) found that a fresh, idle
+// profile still reaches out to third parties BEFORE any content asks for it:
+//   - the Gecko-Media-Plugin update ballot to aus5.mozilla.org (revealing
+//     version / buildID / OS / the "kavacha" channel to Mozilla),
+//   - Widevine CDM fetches from Google (update.googleapis.com / dl.google.com),
+//   - a persistent Web Push connection to push.services.mozilla.com.
+// These are privacy-first DEFAULTS, not locks — every one is a plain default-
+// branch pref the user can flip back on. DRM in particular is the exact pref
+// behind Settings > General > "Play DRM-controlled content".
+
+// DRM / Widevine OFF by default. Re-enable via the Settings checkbox above,
+// or media.eme.enabled. Streaming that needs DRM (Netflix, Spotify) will ask.
+// The CDM is `gmp-widevinecdm`; it is fetched from Google's component service
+// (update.googleapis.com / dl.google.com) via allow-chromium-update, a path
+// SEPARATE from the aus5 ballot below — so both must be turned off to keep a
+// fresh profile from fetching it. `visible` stays true so it is discoverable
+// in about:addons for a user who turns EME back on.
+pref("media.eme.enabled", false);
+pref("media.gmp-widevinecdm.enabled", false);
+pref("media.gmp-widevinecdm.visible", true);
+pref("media.gmp-widevinecdm.allow-chromium-update", false);
+pref("media.gmp-widevinecdm.autoupdate", false);
+
+// Silence the periodic GMP update ballot so a fresh profile makes no such
+// request. A data: URL resolves locally — no network — while leaving the pref
+// user-editable (restore the aus5 URL to get automatic plugin updates back).
+pref("media.gmp-manager.url", "data:text/plain,");
+
+// Web Push OFF by default: no standing connection to push.services.mozilla.com
+// until a site the user allows actually needs it. dom.push.enabled flips it
+// back; site notification prompts are still governed per-site.
+pref("dom.push.enabled", false);

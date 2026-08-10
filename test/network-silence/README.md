@@ -32,21 +32,27 @@ hosts were actually resolved and classifies them:
 It does **not** assert zero total network — that would forbid the very
 blocklists that make the browser private.
 
-## Current result (2026-08-07, local build 152.0.6)
+## Current result (2026-08-08, local build 152.0.6)
 
-**PASSES R3** — 0 telemetry/ads/experimentation hosts. Notable phone-home a
-fresh profile still makes, surfaced by this test and pending a product
-decision (see below): `aus5.mozilla.org` (app + **GMP** media-plugin update
-ballot), `update.googleapis.com` / `dl.google.com` (Widevine CDM),
-`ciscobinary.openh264.org` (OpenH264), `push.services.mozilla.com` (Web Push).
+**PASSES R3** — 0 telemetry/ads/experimentation hosts. The first run of this
+test (2026-08-07) found several fresh-profile phone-homes nothing else caught;
+they are now silenced by default in `privacy/tracker-controls/kavacha.js`
+(privacy-first, but unlocked prefs the user can flip back on):
 
-The GMP ballot to `aus5.mozilla.org` is the sharpest: it fires on a fresh idle
-profile *before any media plays*, sending version / buildID / OS / the
-`kavacha` channel to Mozilla. Patch 0002 redirected the app-update host and
-disabled system-addon updates but did not touch `media.gmp-manager.url`.
-Whether to silence it (and Web Push, and Widevine) is a product call — it
-trades a fresh-profile phone-home against codec/DRM/notification functionality
-— so it is left for the maintainer rather than changed here.
+| Was contacted | Silenced by | Status |
+|---|---|---|
+| `aus5.mozilla.org` (GMP update ballot) | `media.gmp-manager.url = data:text/plain,` | gone |
+| `update.googleapis.com` / `dl.google.com` (Widevine CDM) | `media.eme.enabled` + `media.gmp-widevinecdm.*` off | gone |
+| `push.services.mozilla.com` (Web Push) | `dom.push.enabled = false` | gone |
+| `ciscobinary.openh264.org` (OpenH264, WebRTC codec) | — kept on purpose | **notable** |
+
+OpenH264 is deliberately left on: it is Cisco's openly-licensed WebRTC codec,
+not a tracker or DRM blob, and disabling it breaks video calls. It is the one
+remaining NOTABLE entry and does not fail the test.
+
+The remaining `ok` hosts are Mozilla Remote Settings (the tracking-protection
+and add-on blocklists) and content-signature verification — the data that makes
+the browser private; forbidding them would be self-defeating.
 
 ## CI wiring — the one open decision (R3)
 

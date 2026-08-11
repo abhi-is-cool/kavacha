@@ -81,3 +81,12 @@ pref("kavacha.workspaces.isolate-containers", false);
 // making it invisible to pref auditing and absent from about:config.
 // The code default in KavachaSessionCleanup.sys.mjs matches this value.
 pref("kavacha.session.clear-unpinned-on-quit", false);
+
+// Personal search index (ADR 0012 / patch 0078): full-text over the readable
+// text of pages you visit, so universal search can answer "where did I read
+// about X". Local-only, deletion follows Places (Clear History wipes it).
+// Unlocked, privacy-first: on by default, the Privacy Center exposes an off
+// switch and "Clear index now". Bounds: rows and days.
+pref("kavacha.index.enabled", true);
+pref("kavacha.index.max-pages", 5000);
+pref("kavacha.index.retention-days", 90);

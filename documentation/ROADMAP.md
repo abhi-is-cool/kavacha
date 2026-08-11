@@ -540,10 +540,16 @@ stack, build/CI, and docs). Outcome:
 ## Phase 6 — AI & Personal Search (Months 10–12) — Y1
 
 - [ ] Ollama/llama.cpp runtime bridge
-- [ ] **Personal search index**: local index over history, bookmarks, saved pages,
-      PDFs, downloads, and workspace notes — SQLite FTS + metadata, optional local
-      embeddings; local by default, encrypted-at-rest option, user-controlled
-      deletion. Retrieval backbone for AI features and later knowledge graph
+- [x] **Personal search index** (ADR 0012 + patch `0078-personal-search-index.patch`,
+      2026-08-10): local full-text index over the readable text of pages you visit —
+      a KavachaIndexer actor pair captures innerText (http/https, ~2.5s after load,
+      32k cap, never private windows), stored one-row-per-URL in kavacha-index.sqlite,
+      surfaced as a "Page Text" universal-search source with workspace attribution.
+      Deletion FOLLOWS Places (history-cleared wipes it, Forget-a-Site drops the URL);
+      unlocked on/off + "Clear index now" in the Privacy Center; count+age retention.
+      Storage note: mozStorage ships no SQLite FTS, so it is LIKE + JS-built snippets,
+      not FTS5. Marionette-verified (reliable capture, deletion contract). Follow-ups:
+      index bookmarks/notes/downloads/PDFs, optional local embeddings + encrypted-at-rest
 - [ ] Page summarization → sidebar
 - [ ] Natural-language history search (on the personal index)
 - [ ] Tab assistant via command palette ("group tabs by topic", "close duplicates",

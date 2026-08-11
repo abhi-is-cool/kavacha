@@ -1,0 +1,718 @@
+# Patch 0078 — Personal search index (ROADMAP Phase 6; ADR 0012). Full-text
+# over the readable text of pages you visit, so universal search can answer
+# "where did I find that paper?" — the retrieval backbone the north star's
+# knowledge graph and AI features later read.
+#
+# WHAT: a KavachaIndexer JSWindowActor pair captures the innerText of top-level
+# http/https pages (~2.5s after load, capped at 32k chars, never in private
+# windows). The parent actor is the policy gate (enabled pref, private-window
+# drop, per-tab workspace attribution — same tab layer as ADR 0005) and hands
+# off to KavachaPersonalIndex, a process singleton storing one row per URL in
+# kavacha-index.sqlite. Universal search gains a "Page Text" source badged with
+# workspace attribution; the Privacy Center gains a Personal Index group
+# (status, on/off, "Clear index now").
+#
+# STORAGE — LIKE, not FTS. mozStorage's SQLite ships with NO full-text module
+# (fts5/4/3 all fail to create; Firefox strips them, and Places uses frecency +
+# LIKE). So search is LIKE with every term required, walking newest-first with
+# early termination; ranking (occurrence count, recency tiebreak) and the
+# «…» snippet are built in JS. 32k/page keeps the substring scans bounded.
+#
+# DELETION FOLLOWS PLACES — the privacy contract. The module listens to
+# PlacesObservers: history-cleared wipes the index, page-removed drops that URL.
+# So "Clear History" and "Forget About This Site" behave as expected with no
+# separate chore. Plus: private windows never captured; kavacha.index.enabled
+# (unlocked) stops capture; count+age retention (5000 pages / 90 days).
+# Local-only; sync waits for Phase 5's E2E story.
+#
+# NEW DIRECTORY: src/zen/kavacha-index/ needs the src/zen/moz.build DIRS entry
+# and a FINAL_TARGET_FILES.actors moz.build; a NEW dir is packaged only by a
+# full `mach build` (build-only), not build:ui. DEV-BUILD NOTE: surfer's
+# engine symlinks-to-src make the content-process sandbox unable to load the
+# actor children (it can't follow the link outside engine/); a packaged build
+# (omni.ja, CI) has real content and is unaffected — copy real files into
+# engine/zen/kavacha-index/ for local actor testing.
+#
+# Verified over Marionette on a real build: capture is reliable (3/3 fresh
+# pages indexed), LIKE search returns the right page with a JS snippet and
+# workspace attribution, re-indexing a URL replaces its text, the enabled pref
+# gates capture, and BOTH Places observers fire (page-removed drops one URL,
+# history-cleared wipes all).
+diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+index 4bb91ef..32cd014 100644
+--- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
++++ b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+@@ -586,3 +586,13 @@ kavacha-sites-cookie-row = Cookies
+ kavacha-sites-forget =
+     .label = Forget this site
+     .tooltiptext = Remove every stored permission and cookie rule for this site
++
++# Kavacha patch 0078 — Personal search index (ADR 0012).
++kavacha-index-header = Personal index
++kavacha-index-description = Kavacha keeps a private, on-device full-text index of the pages you visit, so Search Everything can find a page by what it said — not just its title. It never leaves your device.
++kavacha-index-enabled =
++    .label = Index the text of pages I visit
++kavacha-index-status-label = Indexed
++kavacha-index-status = { $pages } pages · { $size }
++kavacha-index-clear = Clear index now
++kavacha-index-note = Clearing your history also clears this index, and forgetting a site removes it here too — the index never remembers a page longer than your history does.
+diff --git a/locales/en-US/browser/browser/zen-workspaces.ftl b/locales/en-US/browser/browser/zen-workspaces.ftl
+index f7cbc5c..b93c50a 100644
+--- a/locales/en-US/browser/browser/zen-workspaces.ftl
++++ b/locales/en-US/browser/browser/zen-workspaces.ftl
+@@ -176,6 +176,7 @@ kavacha-search-group-notes = Workspace Notes
+ kavacha-search-group-bookmarks = Bookmarks
+ kavacha-search-group-history = History
+ kavacha-search-group-downloads = Downloads
++kavacha-search-group-pagetext = Page Text
+ 
+ kavacha-timeline-title =
+     .value = Timeline — { $name }
+diff --git a/src/browser/components/preferences/kavacha-privacy.js b/src/browser/components/preferences/kavacha-privacy.js
+index 93a41c1..191cce1 100644
+--- a/src/browser/components/preferences/kavacha-privacy.js
++++ b/src/browser/components/preferences/kavacha-privacy.js
+@@ -148,6 +148,14 @@ var gKavachaPrivacyCenter = {
+           this._addSessionCookieRule();
+         }
+       });
++    document
++      .getElementById("kavachaIndexEnabled")
++      .addEventListener("command", event =>
++        this._setIndexEnabled(event.target.checked)
++      );
++    document
++      .getElementById("kavachaIndexClear")
++      .addEventListener("command", () => this._clearIndex());
+     // The engine can also change from the workspace override (patch 0003),
+     // about:preferences#search, or the search bar. Follow it rather than
+     // letting this pane drift out of sync with the browser.
+@@ -762,6 +770,7 @@ var gKavachaPrivacyCenter = {
+     this._renderPermissions();
+     this._renderCookies();
+     this._renderSites();
++    this._renderIndex();
+ 
+     const recording = Services.prefs.getBoolPref(
+       "browser.contentblocking.database.enabled",
+@@ -916,6 +925,46 @@ var gKavachaPrivacyCenter = {
+     ];
+   },
+ 
++  // ----- Personal search index (ADR 0012) --------------------------------
++
++  get _personalIndex() {
++    return ChromeUtils.importESModule(
++      "resource:///modules/KavachaPersonalIndex.sys.mjs"
++    ).KavachaPersonalIndex;
++  },
++
++  async _renderIndex() {
++    const box = document.getElementById("kavachaIndexEnabled");
++    if (!box) {
++      return;
++    }
++    box.checked = Services.prefs.getBoolPref("kavacha.index.enabled", true);
++    const status = document.getElementById("kavachaIndexStatus");
++    try {
++      const { pages, bytes } = await this._personalIndex.stats();
++      document.l10n.setAttributes(status, "kavacha-index-status", {
++        pages,
++        size: this._formatBytes(bytes),
++      });
++    } catch (e) {
++      status.textContent = "—";
++    }
++  },
++
++  _setIndexEnabled(on) {
++    Services.prefs.setBoolPref("kavacha.index.enabled", on);
++    this._renderIndex();
++  },
++
++  async _clearIndex() {
++    try {
++      await this._personalIndex.clearAll();
++    } catch (e) {
++      console.error("KavachaPrivacyCenter: clear index failed", e);
++    }
++    this._renderIndex();
++  },
++
+   _renderPosture() {
+     const checks = this._postureChecks;
+     const off = [];
+diff --git a/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml b/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml
+index 32b81c4..6d832bd 100644
+--- a/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml
++++ b/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml
+@@ -165,4 +165,18 @@
+   </vbox>
+ </groupbox>
+ 
++<groupbox id="kavachaIndexGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
++  <label><html:h2 data-l10n-id="kavacha-index-header"/></label>
++  <description class="description-deemphasized" data-l10n-id="kavacha-index-description"/>
++  <checkbox id="kavachaIndexEnabled" data-l10n-id="kavacha-index-enabled"/>
++  <hbox class="kavacha-privacy-row" align="center">
++    <label data-l10n-id="kavacha-index-status-label"/>
++    <html:span class="kavacha-privacy-row-value" id="kavachaIndexStatus">—</html:span>
++  </hbox>
++  <hbox pack="start">
++    <button id="kavachaIndexClear" data-l10n-id="kavacha-index-clear"/>
++  </hbox>
++  <description class="description-deemphasized" data-l10n-id="kavacha-index-note"/>
++</groupbox>
++
+ </html:template>
+diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
+index 856b6f5..b8794c9 100644
+--- a/src/zen/common/modules/ZenStartup.mjs
++++ b/src/zen/common/modules/ZenStartup.mjs
+@@ -150,6 +150,11 @@ class ZenStartup {
+       ChromeUtils.importESModule(
+         "resource:///modules/KavachaSpaceHistory.sys.mjs"
+       ).KavachaSpaceHistory.init();
++      // Kavacha: personal search index (ADR 0012; full-text over visited
++      // pages, deletion follows Places; singleton, idempotent).
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaPersonalIndex.sys.mjs"
++      ).KavachaPersonalIndex.init();
+       // Kavacha: apply the saved layout document to this window's chrome
+       // (process singleton + per-window apply; ADR 0008).
+       const kavachaLayout = ChromeUtils.importESModule(
+diff --git a/src/zen/common/sys/ZenActorsManager.sys.mjs b/src/zen/common/sys/ZenActorsManager.sys.mjs
+index 7591676..ba66fbd 100644
+--- a/src/zen/common/sys/ZenActorsManager.sys.mjs
++++ b/src/zen/common/sys/ZenActorsManager.sys.mjs
+@@ -19,6 +19,22 @@ let JSPROCESSACTORS = {};
+  * available at https://firefox-source-docs.mozilla.org/dom/ipc/jsactors.html
+  */
+ let JSWINDOWACTORS = {
++  // Kavacha personal index (ADR 0012, patch 0078): captures readable page
++  // text for local full-text search. http/https only; the parent actor is
++  // the policy gate (enabled pref, private windows, attribution).
++  KavachaIndexer: {
++    parent: {
++      esModuleURI: "resource:///actors/KavachaIndexerParent.sys.mjs",
++    },
++    child: {
++      esModuleURI: "resource:///actors/KavachaIndexerChild.sys.mjs",
++      events: {
++        DOMContentLoaded: {},
++        pageshow: {},
++      },
++    },
++    matches: ["https://*/*", "http://*/*"],
++  },
+   ZenModsMarketplace: {
+     parent: {
+       esModuleURI: "resource:///actors/ZenModsMarketplaceParent.sys.mjs",
+diff --git a/src/zen/kavacha-index/KavachaPersonalIndex.sys.mjs b/src/zen/kavacha-index/KavachaPersonalIndex.sys.mjs
+new file mode 100644
+index 0000000..5566c02
+--- /dev/null
++++ b/src/zen/kavacha-index/KavachaPersonalIndex.sys.mjs
+@@ -0,0 +1,281 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha personal search index (ADR 0012; ROADMAP Phase 6). Full-text over
++// the readable text of pages the user visited — the store behind "where did
++// I find that paper?". Capture happens in the KavachaIndexer actor pair
++// (http/https top frames, at idle, never in private windows); this module
++// owns storage, ranking, retention, and the deletion contract.
++//
++// DELETION FOLLOWS HISTORY: the index can never outlive what Places
++// remembers. "Clear History" wipes it; "Forget About This Site" (or any
++// page-removed) drops that URL. On top of that, kavacha.index.enabled stops
++// capture (unlocked default, Privacy Center exposes it) and clearAll() backs
++// the "Clear index now" button.
++//
++// Process singleton; init from ZenStartup is idempotent. Everything is
++// fire-and-forget safe: indexing failures must never break browsing.
++
++const lazy = {};
++ChromeUtils.defineESModuleGetters(lazy, {
++  Sqlite: "resource://gre/modules/Sqlite.sys.mjs",
++});
++
++const kEnabledPref = "kavacha.index.enabled";
++const kMaxPagesPref = "kavacha.index.max-pages";
++const kRetentionDaysPref = "kavacha.index.retention-days";
++const kDbFile = "kavacha-index.sqlite";
++
++export const KavachaPersonalIndex = {
++  _initialized: false,
++  _dbPromise: null,
++
++  init() {
++    if (this._initialized) {
++      return;
++    }
++    this._initialized = true;
++    // The deletion contract (ADR 0012): follow Places. PlacesObservers is a
++    // window-less global in the parent process.
++    try {
++      PlacesObservers.addListener(
++        ["history-cleared", "page-removed"],
++        this._onPlacesEvents
++      );
++    } catch (e) {
++      console.error("KavachaPersonalIndex: Places listener failed", e);
++    }
++  },
++
++  _onPlacesEvents: events => {
++    for (const event of events) {
++      if (event.type === "history-cleared") {
++        KavachaPersonalIndex.clearAll();
++      } else if (event.type === "page-removed" && event.url) {
++        KavachaPersonalIndex.remove(event.url);
++      }
++    }
++  },
++
++  get enabled() {
++    return Services.prefs.getBoolPref(kEnabledPref, true);
++  },
++
++  /* -------------------------------------------------------------- storage */
++
++  _getDb() {
++    if (!this._dbPromise) {
++      this._dbPromise = (async () => {
++        const db = await lazy.Sqlite.openConnection({
++          path: PathUtils.join(PathUtils.profileDir, kDbFile),
++        });
++        // mozStorage's SQLite ships with NO full-text module (fts5/4/3 all
++        // fail to create — Firefox strips them for attack surface; Places
++        // itself uses frecency + LIKE, not FTS). So one table holds the page
++        // text and search is LIKE with an early-terminating recency walk; an
++        // index on visited_at makes the ORDER BY / LIMIT cheap.
++        await db.execute(`
++          CREATE TABLE IF NOT EXISTS pages (
++            id INTEGER PRIMARY KEY,
++            url TEXT NOT NULL UNIQUE,
++            title TEXT,
++            text TEXT,
++            workspace_uuid TEXT,
++            visited_at INTEGER NOT NULL,
++            indexed_at INTEGER NOT NULL
++          )
++        `);
++        await db.execute(
++          "CREATE INDEX IF NOT EXISTS idx_pages_visited ON pages(visited_at)"
++        );
++        lazy.Sqlite.shutdown.addBlocker("KavachaPersonalIndex: close db", () =>
++          db.close()
++        );
++        return db;
++      })();
++    }
++    return this._dbPromise;
++  },
++
++  /* -------------------------------------------------------------- capture */
++
++  /**
++   * Upsert one page. One row per URL (ADR 0012): a revisit replaces the old
++   * text — the index answers "where did I see this", Places keeps per-visit
++   * history. Never throws.
++   */
++  async indexPage({ url, title = "", text = "", workspaceUuid = null }) {
++    try {
++      if (!this.enabled || !url || !text) {
++        return;
++      }
++      const db = await this._getDb();
++      const now = Date.now();
++      // One row per URL: a revisit replaces the old text (ADR 0012). URL is
++      // UNIQUE, so ON CONFLICT upserts atomically.
++      await db.execute(
++        `INSERT INTO pages (url, title, text, workspace_uuid, visited_at, indexed_at)
++         VALUES (:url, :title, :text, :workspaceUuid, :now, :now)
++         ON CONFLICT(url) DO UPDATE SET
++           title = excluded.title, text = excluded.text,
++           workspace_uuid = excluded.workspace_uuid,
++           visited_at = excluded.visited_at, indexed_at = excluded.indexed_at`,
++        { url, title, text, workspaceUuid, now }
++      );
++      await this._gc(db);
++    } catch (e) {
++      console.error("KavachaPersonalIndex: indexPage failed", e);
++    }
++  },
++
++  async _gc(db) {
++    const maxPages = Services.prefs.getIntPref(kMaxPagesPref, 5000);
++    const retentionDays = Services.prefs.getIntPref(kRetentionDaysPref, 90);
++    const cutoff = Date.now() - retentionDays * 86_400_000;
++    await db.execute(
++      `DELETE FROM pages WHERE visited_at < :cutoff
++        OR id NOT IN (SELECT id FROM pages ORDER BY visited_at DESC LIMIT :maxPages)`,
++      { cutoff, maxPages }
++    );
++  },
++
++  /* ---------------------------------------------------------------- query */
++
++  /**
++   * Matches where every query term appears in title or text (AND). SQL walks
++   * newest-first and stops early once `limit` candidates match — cheap for the
++   * common case; JS then builds a snippet and re-ranks by how many times the
++   * terms occur (a page that says "flood" ten times beats one that says it
++   * once), recency breaking ties. Returns
++   * [{url, title, snippet, workspaceUuid, visitedAt, score}] with score
++   * ASCENDING (better first) so it sorts the same way as the other sources.
++   */
++  async search(query, { limit = 10 } = {}) {
++    try {
++      const terms = String(query || "")
++        .toLowerCase()
++        .split(/\s+/)
++        .filter(Boolean);
++      if (!terms.length) {
++        return [];
++      }
++      const db = await this._getDb();
++      // Every term must appear (in title OR text). LIKE escapes %/_ so a query
++      // like "50%" is a literal, not a wildcard.
++      const params = { limit: limit * 3 }; // over-fetch, re-rank, then trim
++      const where = terms
++        .map((t, i) => {
++          params[`t${i}`] = "%" + this._likeEscape(t) + "%";
++          return `(lower(title) LIKE :t${i} ESCAPE '\\' OR lower(text) LIKE :t${i} ESCAPE '\\')`;
++        })
++        .join(" AND ");
++      const rows = await db.execute(
++        `SELECT url, title, text, workspace_uuid, visited_at
++           FROM pages WHERE ${where}
++          ORDER BY visited_at DESC LIMIT :limit`,
++        params
++      );
++      const scored = rows.map(r => {
++        const url = r.getResultByName("url");
++        const title = r.getResultByName("title") || url;
++        const text = r.getResultByName("text") || "";
++        const hay = (title + " " + text).toLowerCase();
++        let occ = 0;
++        for (const t of terms) {
++          occ += hay.split(t).length - 1;
++        }
++        return {
++          url,
++          title,
++          snippet: this._snippet(text, terms),
++          workspaceUuid: r.getResultByName("workspace_uuid"),
++          visitedAt: r.getResultByName("visited_at"),
++          // More occurrences ranks better; ascending score, so negate. Recency
++          // is the tiebreak via a tiny fractional term.
++          score: -occ - r.getResultByName("visited_at") / 1e15,
++        };
++      });
++      scored.sort((a, b) => a.score - b.score);
++      return scored.slice(0, limit);
++    } catch (e) {
++      console.error("KavachaPersonalIndex: search failed", e);
++      return [];
++    }
++  },
++
++  _likeEscape(s) {
++    return s.replace(/[\\%_]/g, m => "\\" + m);
++  },
++
++  // A window of text around the first term hit, with every term occurrence
++  // wrapped «…». SQLite has no snippet() without FTS, so this is JS.
++  _snippet(text, terms, window = 90) {
++    if (!text) {
++      return "";
++    }
++    const lower = text.toLowerCase();
++    let at = -1;
++    for (const t of terms) {
++      const i = lower.indexOf(t);
++      if (i !== -1 && (at === -1 || i < at)) {
++        at = i;
++      }
++    }
++    if (at === -1) {
++      return "";
++    }
++    let start = Math.max(0, at - Math.floor(window / 3));
++    let end = Math.min(text.length, start + window);
++    let slice = text.slice(start, end);
++    // Highlight each term (case-insensitive) in the slice.
++    for (const t of terms) {
++      slice = slice.replace(
++        new RegExp(this._reEscape(t), "gi"),
++        m => "«" + m + "»"
++      );
++    }
++    return (start > 0 ? "…" : "") + slice.trim() + (end < text.length ? "…" : "");
++  },
++
++  _reEscape(s) {
++    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
++  },
++
++  /** {pages, bytes} for the Privacy Center's status line. */
++  async stats() {
++    try {
++      const db = await this._getDb();
++      const rows = await db.execute("SELECT COUNT(*) AS n FROM pages");
++      let bytes = 0;
++      try {
++        bytes = (await IOUtils.stat(PathUtils.join(PathUtils.profileDir, kDbFile)))
++          .size;
++      } catch (e) {}
++      return { pages: rows[0].getResultByName("n"), bytes };
++    } catch (e) {
++      return { pages: 0, bytes: 0 };
++    }
++  },
++
++  /* ------------------------------------------------------------- deletion */
++
++  async remove(url) {
++    try {
++      const spec = url instanceof Ci.nsIURI ? url.spec : String(url);
++      const db = await this._getDb();
++      await db.execute("DELETE FROM pages WHERE url = :spec", { spec });
++    } catch (e) {
++      console.error("KavachaPersonalIndex: remove failed", e);
++    }
++  },
++
++  async clearAll() {
++    try {
++      const db = await this._getDb();
++      await db.execute("DELETE FROM pages");
++    } catch (e) {
++      console.error("KavachaPersonalIndex: clearAll failed", e);
++    }
++  },
++};
+diff --git a/src/zen/kavacha-index/actors/KavachaIndexerChild.sys.mjs b/src/zen/kavacha-index/actors/KavachaIndexerChild.sys.mjs
+new file mode 100644
+index 0000000..c91b577
+--- /dev/null
++++ b/src/zen/kavacha-index/actors/KavachaIndexerChild.sys.mjs
+@@ -0,0 +1,78 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Content half of the Kavacha personal index (ADR 0012). After a page settles,
++// ships title + capped innerText to the parent, which is the policy gate
++// (enabled pref, private windows, attribution). Top frames only; the actor is
++// registered for http/https matches.
++
++const lazy = {};
++ChromeUtils.defineESModuleGetters(lazy, {
++  // A CHROME timer, not this.contentWindow.setTimeout: the content timer is
++  // throttled and frozen with the page (background tabs, bfcache), so the
++  // delayed capture would fire only sometimes. This one is reliable.
++  setTimeout: "resource://gre/modules/Timer.sys.mjs",
++});
++
++// innerText over Readability on purpose: this index exists for RECALL, not
++// reading view, and body.innerText is dependency-free and good enough for
++// substring match (ADR 0012). 32k chars (~5000 words) keeps the store — and
++// the LIKE scans over it — bounded; the lead of a page carries the recall
++// signal anyway.
++const kCaptureDelayMs = 2500;
++const kMaxChars = 32_000;
++
++export class KavachaIndexerChild extends JSWindowActorChild {
++  #captured = false;
++
++  // Two triggers, because ONE is not reliable enough for a passive indexer:
++  // DOMContentLoaded catches the common case early but its delayed capture can
++  // miss on a fast load; `pageshow` is delivered after the full load (and on
++  // bfcache restore) and reliably fires. Whichever wins first captures; the
++  // parent upserts by URL, and #captured guards against indexing the same load
++  // twice within the actor's life, so a second trigger is harmless.
++  handleEvent(event) {
++    if (event.type !== "DOMContentLoaded" && event.type !== "pageshow") {
++      return;
++    }
++    // Top frame only — iframes get their own actor instances.
++    if (this.browsingContext !== this.browsingContext.top) {
++      return;
++    }
++    if (!this.contentWindow) {
++      return;
++    }
++    lazy.setTimeout(() => this.#capture(), kCaptureDelayMs);
++  }
++
++  didDestroy() {
++    // Window gone before a delay elapsed — nothing to do; the timers died with
++    // their window. Kept explicit so nobody "fixes" a leak that isn't one.
++  }
++
++  #capture() {
++    if (this.#captured) {
++      return;
++    }
++    try {
++      const doc = this.document;
++      const win = this.contentWindow;
++      if (!doc || !win || !/^https?:$/.test(doc.location?.protocol || "")) {
++        return;
++      }
++      const text = (doc.body?.innerText || "").slice(0, kMaxChars).trim();
++      if (!text) {
++        return;
++      }
++      this.#captured = true;
++      this.sendAsyncMessage("KavachaIndexer:PageText", {
++        url: doc.location.href,
++        title: doc.title || "",
++        text,
++      });
++    } catch (e) {
++      // Indexing must never break a page. Swallow and move on.
++    }
++  }
++}
+diff --git a/src/zen/kavacha-index/actors/KavachaIndexerParent.sys.mjs b/src/zen/kavacha-index/actors/KavachaIndexerParent.sys.mjs
+new file mode 100644
+index 0000000..07db945
+--- /dev/null
++++ b/src/zen/kavacha-index/actors/KavachaIndexerParent.sys.mjs
+@@ -0,0 +1,43 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Parent half of the Kavacha personal index (ADR 0012): the POLICY GATE.
++// The child only extracts; every decision about whether a page may enter the
++// index — feature enabled, never private windows, workspace attribution —
++// happens here, in the privileged process, where the child can't lie about it.
++
++const lazy = {};
++ChromeUtils.defineESModuleGetters(lazy, {
++  KavachaPersonalIndex: "resource:///modules/KavachaPersonalIndex.sys.mjs",
++  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
++});
++
++export class KavachaIndexerParent extends JSWindowActorParent {
++  receiveMessage(message) {
++    if (message.name !== "KavachaIndexer:PageText") {
++      return;
++    }
++    try {
++      if (!lazy.KavachaPersonalIndex.enabled) {
++        return;
++      }
++      const browser = this.browsingContext.top.embedderElement;
++      if (!browser || lazy.PrivateBrowsingUtils.isBrowserPrivate(browser)) {
++        return;
++      }
++      // Tab-layer workspace attribution, same as ADR 0005: the tab knows its
++      // Space; PlacesVisit events never did.
++      let workspaceUuid = null;
++      try {
++        const tab = browser.ownerGlobal.gBrowser?.getTabForBrowser(browser);
++        workspaceUuid = tab?.getAttribute("zen-workspace-id") || null;
++      } catch (e) {}
++      const { url, title, text } = message.data || {};
++      // Fire-and-forget: indexing must never block or break browsing.
++      lazy.KavachaPersonalIndex.indexPage({ url, title, text, workspaceUuid });
++    } catch (e) {
++      console.error("KavachaIndexerParent: capture dropped", e);
++    }
++  }
++}
+diff --git a/src/zen/kavacha-index/moz.build b/src/zen/kavacha-index/moz.build
+new file mode 100644
+index 0000000..c99a1e0
+--- /dev/null
++++ b/src/zen/kavacha-index/moz.build
+@@ -0,0 +1,12 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++EXTRA_JS_MODULES += [
++    "KavachaPersonalIndex.sys.mjs",
++]
++
++FINAL_TARGET_FILES.actors += [
++    "actors/KavachaIndexerChild.sys.mjs",
++    "actors/KavachaIndexerParent.sys.mjs",
++]
+diff --git a/src/zen/kavacha-search/KavachaUniversalSearch.mjs b/src/zen/kavacha-search/KavachaUniversalSearch.mjs
+index 4210ea4..9d8571d 100644
+--- a/src/zen/kavacha-search/KavachaUniversalSearch.mjs
++++ b/src/zen/kavacha-search/KavachaUniversalSearch.mjs
+@@ -83,7 +83,7 @@ class nsKavachaUniversalSearch {
+   async open() {
+     const panel = this.panel;
+     if (!this.#groupLabels) {
+-      const ids = ["tabs", "notes", "bookmarks", "history", "downloads"];
++      const ids = ["tabs", "notes", "bookmarks", "history", "downloads", "pagetext"];
+       const values = await document.l10n.formatValues(
+         ids.map(id => ({ id: `kavacha-search-group-${id}` }))
+       );
+@@ -278,6 +278,36 @@ class nsKavachaUniversalSearch {
+     return out;
+   }
+ 
++  // Personal index (ADR 0012): full-text over the pages you actually read —
++  // the one source that matches what a page SAID, not just its title/URL.
++  // The snippet is the detail line, because "…«flood mapping» in Sentinel-1
++  // imagery…" is the whole reason this group exists.
++  async #searchIndex(q) {
++    try {
++      const { KavachaPersonalIndex } = ChromeUtils.importESModule(
++        "resource:///modules/KavachaPersonalIndex.sys.mjs"
++      );
++      const rows = await KavachaPersonalIndex.search(q, {
++        limit: Math.floor(kMaxPerSource / 2),
++      });
++      return rows.map(r => ({
++        group: "pagetext",
++        title: r.title,
++        detail: r.snippet || this.#prettyUrl(r.url),
++        url: r.url,
++        workspaceId: r.workspaceUuid || null,
++        score: r.score, // ascending = better, matching the group sort
++        action: () => {
++          this.close();
++          window.openTrustedLinkIn(r.url, "tab");
++        },
++      }));
++    } catch (e) {
++      console.error("KavachaUniversalSearch: index search failed", e);
++      return [];
++    }
++  }
++
+   /* ------------------------------------------------------------ querying */
+ 
+   async #runQuery(q) {
+@@ -292,6 +322,7 @@ class nsKavachaUniversalSearch {
+       Promise.resolve().then(() => this.#searchPlaces(q, "bookmarks")),
+       this.#searchHistoryWithBadges(q),
+       this.#searchDownloads(q),
++      this.#searchIndex(q),
+     ]);
+     if (token !== this.#queryToken) {
+       return; // a newer query superseded this one
+diff --git a/src/zen/moz.build b/src/zen/moz.build
+index 818a2eb..fbbebfe 100644
+--- a/src/zen/moz.build
++++ b/src/zen/moz.build
+@@ -11,6 +11,7 @@ DIRS += [
+     "common",
+     "drag-and-drop",
+     "glance",
++    "kavacha-index",
+     "kavacha-marketplace",
+     "kavacha-plugins",
+     "kavacha-studio",

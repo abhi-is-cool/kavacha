@@ -1,0 +1,571 @@
+# Patch 0079 — Local AI runtime bridge (ROADMAP Phase 6; ADR 0013). The
+# generation half of the north star's "ask questions about what you kept":
+# a single, narrow, auditable path from Kavacha to a local language model,
+# and the first feature that rides it. The retrieval half is patch 0078's
+# personal index; wiring the two into natural-language history search is the
+# next brick, and every later AI feature (tab assistant, ask-my-history)
+# reuses this bridge rather than opening its own.
+#
+# WHAT: KavachaAIBridge.sys.mjs — a stateless process module exposing exactly
+# isAvailable(), listModels(), generate(prompt,{model,system,signal}) and
+# chat(messages,{model,signal}) over Ollama's REST shape (/api/tags,
+# /api/generate, /api/chat), which llama.cpp / LM-Studio / any OpenAI-ish
+# local server also speaks. It holds no browser state: a feature gathers its
+# own context and passes it in, so what the model sees is always visible at
+# the call site. First consumer: a "Summarize This Page" palette command that
+# reads the current page's stored text from the personal index (new
+# getText(url)) and shows the model's answer in a kavacha-ai arrow panel. AI
+# settings get a "Local AI" group in the Privacy Center — enabled toggle,
+# endpoint field, model picker, live status — because a feature that reads
+# your pages belongs where privacy is managed.
+#
+# PRIVACY — THE ENDPOINT LINE. kavacha.ai.endpoint defaults to
+# http://localhost:11434 and Kavacha NEVER falls back anywhere remote: every
+# request is exactly `this.endpoint + path` and nothing else. If the user
+# points it at their own hosted model, that is their choice; Kavacha hosts
+# nothing and defaults nowhere off-device. Availability is probed ON DEMAND
+# only (a short-timeout GET /api/tags when a feature runs or the settings open)
+# — never at startup and never in the background, so a fresh idle profile stays
+# network-silent (R3). kavacha.ai.enabled (default true, UNLOCKED) is the
+# master switch; off means the bridge never touches the network — a disabled
+# generate() throws before any fetch. The bridge stores no prompts or
+# responses; AI "memory" is a later, explicitly-opt-in feature, not a side
+# effect here.
+#
+# WHY A PATCH, NOT AN OVERLAY: the bridge is an EXTRA_JS_MODULES entry in
+# src/zen/common/moz.build (loaded as resource:///modules/), the summarize
+# command is a BUILTIN in the command registry, the result panel is a
+# <panel> in zen-panels/popups.inc, and getText() is a method on the index
+# singleton — all backend registrations an overlay cannot express. A new
+# EXTRA_JS_MODULES entry ships only via a full `mach build` (build-only), not
+# build:ui.
+#
+# Verified over Marionette against a mock Ollama server on a real build:
+# isAvailable() reports the runtime and lists its models, generate() and
+# chat() round-trip, a dead endpoint degrades to {available:false,
+# reason:"unreachable"} without throwing, a disabled bridge makes zero
+# requests (generate throws before fetch), the "Summarize This Page" command
+# fills the panel with the model's summary end-to-end, and the Privacy Center
+# "Local AI" group renders status "ready" with the model picker populated from
+# the runtime. Real-model quality needs a real model and is out of the
+# engineering gate's scope.
+#
+# Upstream files touched: locales/en-US/.../zen-preferences.ftl,
+# locales/en-US/.../zen-command-palette.ftl,
+# src/browser/base/content/zen-panels/popups.inc,
+# src/browser/components/preferences/kavacha-privacy.js,
+# src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml,
+# src/zen/common/moz.build, src/zen/common/sys/KavachaAIBridge.sys.mjs (new),
+# src/zen/common/sys/KavachaCommandRegistry.sys.mjs,
+# src/zen/kavacha-index/KavachaPersonalIndex.sys.mjs.
+diff --git a/locales/en-US/browser/browser/preferences/zen-preferences.ftl b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+index 32cd014..0ae013d 100644
+--- a/locales/en-US/browser/browser/preferences/zen-preferences.ftl
++++ b/locales/en-US/browser/browser/preferences/zen-preferences.ftl
+@@ -596,3 +596,19 @@ kavacha-index-status-label = Indexed
+ kavacha-index-status = { $pages } pages · { $size }
+ kavacha-index-clear = Clear index now
+ kavacha-index-note = Clearing your history also clears this index, and forgetting a site removes it here too — the index never remembers a page longer than your history does.
++
++# Kavacha patch 0079 — Local AI bridge (ADR 0013).
++kavacha-ai-header = Local AI
++kavacha-ai-description = Kavacha's AI features run against a model on your own machine (or a server you choose) and never a Kavacha-hosted service. Page text is sent only to the endpoint below, or nowhere.
++kavacha-ai-enabled =
++    .label = Enable local AI features
++kavacha-ai-endpoint-label = Endpoint
++kavacha-ai-model-label = Model
++kavacha-ai-refresh = Refresh
++kavacha-ai-status-label = Status
++kavacha-ai-status-disabled = Off
++kavacha-ai-status-checking = Checking…
++kavacha-ai-status-ready = Ready · { $count } model(s)
++kavacha-ai-status-no-models = Runtime found, but no models installed
++kavacha-ai-status-unreachable = No local model runtime found
++kavacha-ai-note = Availability is checked only when you use an AI feature or open this page — never in the background. Point the endpoint at a local model server such as Ollama (http://localhost:11434).
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index 175be8d..998936e 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -123,3 +123,12 @@ kavacha-coachmark-title = Everything is here
+ kavacha-coachmark-body = Spaces, themes, layout, privacy and the rest of Kavacha live behind this button. Cmd+K opens the same list.
+ # Kavacha patch 0057 — the widget dashboard.
+ kavacha-action-open-dashboard = Dashboard
++
++# Kavacha patch 0079 — local AI: summarize the current page.
++kavacha-action-summarize-page = Summarize This Page
++kavacha-ai-summary-title = Page summary
++kavacha-ai-thinking = Thinking…
++kavacha-ai-unavailable = No local model found. Install a local model runtime (for example Ollama) and check Settings → Privacy → Local AI.
++kavacha-ai-not-indexed = This page has not been indexed yet, so there is no text to summarize. Give it a moment, or check that the personal index is on.
++kavacha-ai-empty = The model returned nothing.
++kavacha-ai-error = The local model could not complete the request.
+diff --git a/src/browser/base/content/zen-panels/popups.inc b/src/browser/base/content/zen-panels/popups.inc
+index 64a3c70..ff75bdd 100644
+--- a/src/browser/base/content/zen-panels/popups.inc
++++ b/src/browser/base/content/zen-panels/popups.inc
+@@ -226,3 +226,11 @@
+     <html:div id="kavacha-notes-preview" hidden="true"/>
+   </vbox>
+ </panel>
++
++<panel id="kavacha-ai-panel" type="arrow" orient="vertical">
++  <vbox style="width: 420px; padding: 10px; gap: 8px;">
++    <label id="kavacha-ai-title" style="font-weight: 600;"/>
++    <html:div id="kavacha-ai-body"
++      style="overflow: auto; max-height: 420px; white-space: pre-wrap; line-height: 1.45;"/>
++  </vbox>
++</panel>
+diff --git a/src/browser/components/preferences/kavacha-privacy.js b/src/browser/components/preferences/kavacha-privacy.js
+index 191cce1..bd069f5 100644
+--- a/src/browser/components/preferences/kavacha-privacy.js
++++ b/src/browser/components/preferences/kavacha-privacy.js
+@@ -156,6 +156,24 @@ var gKavachaPrivacyCenter = {
+     document
+       .getElementById("kavachaIndexClear")
+       .addEventListener("command", () => this._clearIndex());
++    document
++      .getElementById("kavachaAIEnabled")
++      .addEventListener("command", event =>
++        this._setAIEnabled(event.target.checked)
++      );
++    document
++      .getElementById("kavachaAIEndpoint")
++      .addEventListener("change", event =>
++        this._setAIEndpoint(event.target.value)
++      );
++    document
++      .getElementById("kavachaAIModel")
++      .addEventListener("command", event =>
++        Services.prefs.setStringPref("kavacha.ai.model", event.target.value)
++      );
++    document
++      .getElementById("kavachaAIRefresh")
++      .addEventListener("command", () => this._renderAI());
+     // The engine can also change from the workspace override (patch 0003),
+     // about:preferences#search, or the search bar. Follow it rather than
+     // letting this pane drift out of sync with the browser.
+@@ -771,6 +789,7 @@ var gKavachaPrivacyCenter = {
+     this._renderCookies();
+     this._renderSites();
+     this._renderIndex();
++    this._renderAI();
+ 
+     const recording = Services.prefs.getBoolPref(
+       "browser.contentblocking.database.enabled",
+@@ -965,6 +984,75 @@ var gKavachaPrivacyCenter = {
+     this._renderIndex();
+   },
+ 
++  // ----- Local AI bridge (ADR 0013) --------------------------------------
++
++  get _aiBridge() {
++    return ChromeUtils.importESModule(
++      "resource:///modules/KavachaAIBridge.sys.mjs"
++    ).KavachaAIBridge;
++  },
++
++  async _renderAI() {
++    const box = document.getElementById("kavachaAIEnabled");
++    if (!box) {
++      return;
++    }
++    const enabled = Services.prefs.getBoolPref("kavacha.ai.enabled", true);
++    box.checked = enabled;
++    document.getElementById("kavachaAIEndpoint").value =
++      Services.prefs.getStringPref(
++        "kavacha.ai.endpoint",
++        "http://localhost:11434"
++      );
++    const status = document.getElementById("kavachaAIStatus");
++    if (!enabled) {
++      document.l10n.setAttributes(status, "kavacha-ai-status-disabled");
++      return;
++    }
++    document.l10n.setAttributes(status, "kavacha-ai-status-checking");
++    // Probe on demand (never in the background) and populate the model picker.
++    let result;
++    try {
++      result = await this._aiBridge.isAvailable();
++    } catch (e) {
++      result = { available: false, models: [], reason: "unreachable" };
++    }
++    const menu = document.getElementById("kavachaAIModel");
++    const popup = menu.menupopup || menu.querySelector("menupopup");
++    while (popup.firstChild) {
++      popup.firstChild.remove();
++    }
++    const chosen = Services.prefs.getStringPref("kavacha.ai.model", "");
++    for (const name of result.models) {
++      const item = document.createXULElement("menuitem");
++      item.setAttribute("label", name);
++      item.setAttribute("value", name);
++      popup.append(item);
++    }
++    menu.disabled = !result.models.length;
++    menu.value = chosen || result.models[0] || "";
++    if (result.available && result.models.length) {
++      document.l10n.setAttributes(status, "kavacha-ai-status-ready", {
++        count: result.models.length,
++      });
++    } else if (result.available) {
++      document.l10n.setAttributes(status, "kavacha-ai-status-no-models");
++    } else {
++      document.l10n.setAttributes(status, "kavacha-ai-status-unreachable");
++    }
++  },
++
++  _setAIEnabled(on) {
++    Services.prefs.setBoolPref("kavacha.ai.enabled", on);
++    this._renderAI();
++  },
++
++  _setAIEndpoint(value) {
++    const v = (value || "").trim() || "http://localhost:11434";
++    Services.prefs.setStringPref("kavacha.ai.endpoint", v);
++    this._renderAI();
++  },
++
+   _renderPosture() {
+     const checks = this._postureChecks;
+     const off = [];
+diff --git a/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml b/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml
+index 6d832bd..3f15d55 100644
+--- a/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml
++++ b/src/browser/components/preferences/kavachaPrivacyCenter.inc.xhtml
+@@ -179,4 +179,26 @@
+   <description class="description-deemphasized" data-l10n-id="kavacha-index-note"/>
+ </groupbox>
+ 
++<groupbox id="kavachaAIGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
++  <label><html:h2 data-l10n-id="kavacha-ai-header"/></label>
++  <description class="description-deemphasized" data-l10n-id="kavacha-ai-description"/>
++  <checkbox id="kavachaAIEnabled" data-l10n-id="kavacha-ai-enabled"/>
++  <hbox class="kavacha-privacy-row" align="center">
++    <label data-l10n-id="kavacha-ai-endpoint-label" control="kavachaAIEndpoint"/>
++    <html:input id="kavachaAIEndpoint" type="text" style="flex: 1; min-width: 16em;"/>
++  </hbox>
++  <hbox class="kavacha-privacy-row" align="center">
++    <label data-l10n-id="kavacha-ai-model-label" control="kavachaAIModel"/>
++    <menulist id="kavachaAIModel" flex="1">
++      <menupopup/>
++    </menulist>
++    <button id="kavachaAIRefresh" data-l10n-id="kavacha-ai-refresh"/>
++  </hbox>
++  <hbox class="kavacha-privacy-row" align="center">
++    <label data-l10n-id="kavacha-ai-status-label"/>
++    <html:span class="kavacha-privacy-posture-status" id="kavachaAIStatus">—</html:span>
++  </hbox>
++  <description class="description-deemphasized" data-l10n-id="kavacha-ai-note"/>
++</groupbox>
++
+ </html:template>
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+index 51eaa28..642bbd3 100644
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -3,6 +3,7 @@
+ # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ 
+ EXTRA_JS_MODULES += [
++  "sys/KavachaAIBridge.sys.mjs",
+   "sys/KavachaAppearancePanel.sys.mjs",
+   "sys/KavachaCommandRegistry.sys.mjs",
+   "sys/KavachaLayoutEngine.sys.mjs",
+diff --git a/src/zen/common/sys/KavachaAIBridge.sys.mjs b/src/zen/common/sys/KavachaAIBridge.sys.mjs
+new file mode 100644
+index 0000000..c07e565
+--- /dev/null
++++ b/src/zen/common/sys/KavachaAIBridge.sys.mjs
+@@ -0,0 +1,162 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha local AI runtime bridge (ADR 0013; ROADMAP Phase 6). The whole
++// contact between Kavacha and a language model — and nothing more. It talks
++// HTTP to a LOCAL model server (Ollama's API by default) at the user's
++// endpoint and NEVER falls back to a remote service: page text and history
++// reach the model only at kavacha.ai.endpoint, or nowhere.
++//
++// Stateless by design: it holds no browser state and stores no prompts or
++// responses. A feature gathers its own context and passes it in, so what the
++// model sees is always visible at the call site. Availability is probed on
++// demand, never in the background (a fresh profile stays silent — R3).
++//
++// Surface: isAvailable(), listModels(), generate(), chat(). That is all.
++
++const lazy = {};
++ChromeUtils.defineESModuleGetters(lazy, {
++  setTimeout: "resource://gre/modules/Timer.sys.mjs",
++  clearTimeout: "resource://gre/modules/Timer.sys.mjs",
++});
++
++const kEnabledPref = "kavacha.ai.enabled";
++const kEndpointPref = "kavacha.ai.endpoint";
++const kModelPref = "kavacha.ai.model";
++const kDefaultEndpoint = "http://localhost:11434";
++const kProbeTimeoutMs = 2500;
++
++export const KavachaAIBridge = {
++  get enabled() {
++    return Services.prefs.getBoolPref(kEnabledPref, true);
++  },
++
++  get endpoint() {
++    // Trim a trailing slash so "…:11434/" + "/api/tags" doesn't double up.
++    const raw =
++      Services.prefs.getStringPref(kEndpointPref, kDefaultEndpoint) ||
++      kDefaultEndpoint;
++    return raw.replace(/\/+$/, "");
++  },
++
++  get defaultModel() {
++    return Services.prefs.getStringPref(kModelPref, "");
++  },
++
++  /**
++   * Is a local runtime reachable, and what models does it have? Short-timeout,
++   * on-demand only. Returns { available, models: [names], reason }. Never
++   * throws — callers branch on `available` and show `reason` when false.
++   */
++  async isAvailable() {
++    if (!this.enabled) {
++      return { available: false, models: [], reason: "disabled" };
++    }
++    try {
++      const models = await this.listModels();
++      return {
++        available: true,
++        models,
++        reason: models.length ? "" : "no-models",
++      };
++    } catch (e) {
++      // A refused connection (no runtime) and a timeout both land here; the UI
++      // says the same thing — "no local model found".
++      return { available: false, models: [], reason: "unreachable" };
++    }
++  },
++
++  /** Model names from GET /api/tags. Throws when the runtime is unreachable. */
++  async listModels() {
++    const data = await this._request("/api/tags", { method: "GET" });
++    return (data?.models || [])
++      .map(m => m?.name)
++      .filter(name => typeof name === "string");
++  },
++
++  /**
++   * One-shot completion. `prompt` is the user/content text; `system` an
++   * optional instruction. Non-streaming (the whole response at once) — the
++   * consumers here are short. Pass `signal` to abort (a closed panel cancels).
++   * Returns the response string. Throws on runtime/model errors.
++   */
++  async generate(prompt, { model, system, signal } = {}) {
++    const chosen = model || (await this._pickModel());
++    const body = {
++      model: chosen,
++      prompt: String(prompt || ""),
++      stream: false,
++    };
++    if (system) {
++      body.system = String(system);
++    }
++    const data = await this._request("/api/generate", {
++      method: "POST",
++      body,
++      signal,
++    });
++    return (data?.response || "").trim();
++  },
++
++  /**
++   * Multi-turn chat. `messages` is [{role, content}]. Non-streaming. Returns
++   * the assistant message string.
++   */
++  async chat(messages, { model, signal } = {}) {
++    const chosen = model || (await this._pickModel());
++    const data = await this._request("/api/chat", {
++      method: "POST",
++      body: {
++        model: chosen,
++        messages: Array.isArray(messages) ? messages : [],
++        stream: false,
++      },
++      signal,
++    });
++    return (data?.message?.content || "").trim();
++  },
++
++  /* -------------------------------------------------------------- internal */
++
++  // The configured model, or the runtime's first one if none is set.
++  async _pickModel() {
++    const configured = this.defaultModel;
++    if (configured) {
++      return configured;
++    }
++    const models = await this.listModels();
++    if (!models.length) {
++      throw new Error("KavachaAIBridge: no model available");
++    }
++    return models[0];
++  },
++
++  async _request(path, { method = "GET", body, signal } = {}) {
++    if (!this.enabled) {
++      throw new Error("KavachaAIBridge: disabled");
++    }
++    // Only ever the configured endpoint — no remote fallback (ADR 0013).
++    const url = this.endpoint + path;
++    const controller = signal ? null : new AbortController();
++    const timer = controller
++      ? lazy.setTimeout(() => controller.abort(), kProbeTimeoutMs)
++      : null;
++    try {
++      const res = await fetch(url, {
++        method,
++        signal: signal || controller.signal,
++        headers: body ? { "Content-Type": "application/json" } : undefined,
++        body: body ? JSON.stringify(body) : undefined,
++      });
++      if (!res.ok) {
++        throw new Error(`KavachaAIBridge: ${method} ${path} -> ${res.status}`);
++      }
++      return await res.json();
++    } finally {
++      if (timer) {
++        lazy.clearTimeout(timer);
++      }
++    }
++  },
++};
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+index 8ebb95f..ee12f40 100644
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -183,6 +183,13 @@ const BUILTIN = [
+     icon: "chrome://browser/skin/zen-icons/selectable/time.svg",
+     domain: KavachaCommandDomain.PRODUCTIVITY,
+   },
++  {
++    l10nId: "kavacha-action-summarize-page",
++    command: window => summarizeActivePage(window),
++    icon: "chrome://browser/skin/zen-icons/selectable/edit.svg",
++    domain: KavachaCommandDomain.PRODUCTIVITY,
++    isAvailable: window => !window.gZenWorkspaces?.privateWindowOrDisabled,
++  },
+ 
+   // -- Appearance ----------------------------------------------------------
+   {
+@@ -359,6 +366,85 @@ const _registered = [];
+ const _sinks = [];
+ const _removalSinks = [];
+ 
++// "Summarize This Page" (ADR 0013): send the current page's captured text to
++// the local AI bridge and show the summary in the AI panel. Uses the personal
++// index's stored text (ADR 0012) so nothing new has to be extracted; if the
++// page was not indexed (index off, or opened seconds ago) it says so. All
++// model contact is at the user's local endpoint — the bridge never goes
++// remote. Fails soft: no runtime -> a plain "no local model" message, not an
++// error.
++const kSummarizeSystem =
++  "You are a concise assistant. Summarize the following web page in 4-6 " +
++  "short bullet points, then one sentence on why it might matter. Use only " +
++  "the text provided.";
++
++async function summarizeActivePage(window) {
++  const doc = window.document;
++  const panel = doc.getElementById("kavacha-ai-panel");
++  const body = doc.getElementById("kavacha-ai-body");
++  const title = doc.getElementById("kavacha-ai-title");
++  if (!panel || !body) {
++    return;
++  }
++  const t = async (id, fb) => {
++    try {
++      return (await doc.l10n.formatValue(id)) || fb;
++    } catch (e) {
++      return fb;
++    }
++  };
++  title.textContent = await t("kavacha-ai-summary-title", "Page summary");
++  body.textContent = await t("kavacha-ai-thinking", "Thinking…");
++  const anchor =
++    doc.getElementById("kavacha-menu-button") ||
++    doc.getElementById("PanelUI-menu-button") ||
++    window.gBrowser.selectedTab;
++  try {
++    panel.openPopup(anchor, "bottomright topright", 0, 0, false, false);
++  } catch (e) {
++    panel.openPopupAtScreen(200, 120, false);
++  }
++
++  try {
++    const { KavachaAIBridge } = ChromeUtils.importESModule(
++      "resource:///modules/KavachaAIBridge.sys.mjs"
++    );
++    const { KavachaPersonalIndex } = ChromeUtils.importESModule(
++      "resource:///modules/KavachaPersonalIndex.sys.mjs"
++    );
++    const status = await KavachaAIBridge.isAvailable();
++    if (!status.available) {
++      body.textContent = await t(
++        "kavacha-ai-unavailable",
++        "No local model found. Install a local model runtime (for example " +
++          "Ollama) and check Settings → Privacy → Local AI."
++      );
++      return;
++    }
++    const url = window.gBrowser.selectedBrowser?.currentURI?.spec || "";
++    const text = await KavachaPersonalIndex.getText(url);
++    if (!text) {
++      body.textContent = await t(
++        "kavacha-ai-not-indexed",
++        "This page has not been indexed yet, so there is no text to " +
++          "summarize. Give it a moment, or check that the personal index is on."
++      );
++      return;
++    }
++    const summary = await KavachaAIBridge.generate(text, {
++      system: kSummarizeSystem,
++    });
++    body.textContent =
++      summary || (await t("kavacha-ai-empty", "The model returned nothing."));
++  } catch (e) {
++    console.error("KavachaCommandRegistry: summarize failed", e);
++    body.textContent = await t(
++      "kavacha-ai-error",
++      "The local model could not complete the request."
++    );
++  }
++}
++
+ const _domainRank = domain => {
+   const i = KavachaCommandDomainOrder.indexOf(domain);
+   return i === -1 ? KavachaCommandDomainOrder.length : i;
+diff --git a/src/zen/kavacha-index/KavachaPersonalIndex.sys.mjs b/src/zen/kavacha-index/KavachaPersonalIndex.sys.mjs
+index 5566c02..5866fd3 100644
+--- a/src/zen/kavacha-index/KavachaPersonalIndex.sys.mjs
++++ b/src/zen/kavacha-index/KavachaPersonalIndex.sys.mjs
+@@ -258,6 +258,21 @@ export const KavachaPersonalIndex = {
+     }
+   },
+ 
++  /** The stored text for one URL, or "" if it was never indexed. */
++  async getText(url) {
++    try {
++      const spec = url instanceof Ci.nsIURI ? url.spec : String(url);
++      const db = await this._getDb();
++      const rows = await db.execute(
++        "SELECT text FROM pages WHERE url = :spec",
++        { spec }
++      );
++      return rows.length ? rows[0].getResultByName("text") || "" : "";
++    } catch (e) {
++      return "";
++    }
++  },
++
+   /* ------------------------------------------------------------- deletion */
+ 
+   async remove(url) {

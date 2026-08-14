@@ -539,7 +539,20 @@ stack, build/CI, and docs). Outcome:
 
 ## Phase 6 — AI & Personal Search (Months 10–12) — Y1
 
-- [ ] Ollama/llama.cpp runtime bridge
+- [x] **Local AI runtime bridge** (ADR 0013 + patch `0079-local-ai-bridge.patch`,
+      2026-08-14): the generation half of "ask questions about what you kept". A
+      stateless `KavachaAIBridge` module speaks Ollama's REST shape (/api/tags,
+      /api/generate, /api/chat — also llama.cpp/LM-Studio) with a narrow surface:
+      isAvailable/listModels/generate/chat. Endpoint defaults to localhost:11434
+      and NEVER falls back remote; availability is probed on demand only (no
+      startup/background request, so R3 stays green); `kavacha.ai.enabled` is the
+      unlocked master switch and a disabled bridge makes zero requests. First
+      consumer: a "Summarize This Page" palette command reading the personal
+      index's stored text; AI settings (enabled/endpoint/model/status) live in the
+      Privacy Center's "Local AI" group. Marionette-verified against a mock Ollama
+      (availability/models/generate/chat, summarize round-trip, dead-endpoint
+      degradation, disabled=no-request, config pane). Next: wire it to the index
+      for natural-language history search.
 - [x] **Personal search index** (ADR 0012 + patch `0078-personal-search-index.patch`,
       2026-08-10): local full-text index over the readable text of pages you visit —
       a KavachaIndexer actor pair captures innerText (http/https, ~2.5s after load,

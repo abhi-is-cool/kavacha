@@ -90,3 +90,13 @@ pref("kavacha.session.clear-unpinned-on-quit", false);
 pref("kavacha.index.enabled", true);
 pref("kavacha.index.max-pages", 5000);
 pref("kavacha.index.retention-days", 90);
+
+// Local AI runtime bridge (ADR 0013 / patch 0079): Kavacha's AI features talk
+// to a LOCAL model server (Ollama's API by default) at this endpoint and never
+// fall back to a remote service. Unlocked, privacy-first: the feature is on but
+// inert until a local runtime is present (availability is probed on demand, so
+// a fresh profile with no model makes no network request). Point the endpoint
+// at your own local model server; pick a model or let it use the first found.
+pref("kavacha.ai.enabled", true);
+pref("kavacha.ai.endpoint", "http://localhost:11434");
+pref("kavacha.ai.model", "");

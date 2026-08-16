@@ -343,6 +343,61 @@ ships unbound, so there is no default chord to press).
 
 ---
 
+## 4c. Phase 6 AI surfaces (0080–0081) — L4 verified 2026-08-15
+
+Built with `./build/bootstrap.sh fast` and driven over Marionette against the built
+browser, with a mock Ollama on `localhost:11434` speaking the three endpoints the
+bridge uses (`/api/tags`, `/api/generate`, `/api/chat`) and logging every request,
+plus three fixture pages served over HTTP so the indexer actor could capture real
+text. **All checks passed.**
+
+| Area | What was proved |
+|---|---|
+| Sidebar registration | `viewKavachaAISidebar` is in `SidebarController.sidebars` after startup, pointing at the chrome page, and `visible` follows `kavacha.ai.enabled`. It opens at 216 px in the horizontal-tab layout, the switcher title resolves to "Kavacha AI" (so the Fluent id reaches browser.xhtml's scope — the D0e check), and the page exposes `summarizeCurrentPage` / `focusAsk` / `selectMode`. |
+| Sidebar theming | Body background computes to the *theme's* surface, not the literal fallback baked into the stylesheet — patch 0062's `content-theme.js` is in the cascade, so the sidebar follows a theme switch like the other Kavacha pages. |
+| Summarize | Header follows the selected tab; 487 characters of real captured page text reached the model; the reply rendered as **two real `<li>` nodes** through `KavachaMarkdown` with no `<script>` anywhere in the output. |
+| On-demand capture | The indexer actor's `Capture` query returns `{url, title, text}` for the current page **without writing to the index**, which is what makes summarizing work with the index switched off. |
+| Term extraction | "Where did I read about flood mapping in Kerala?" → `flood, mapping, kerala`. A quoted phrase survives whole (`"remote sensing"`). An all-stopword question yields `[]` and is reported as such rather than searched. |
+| Retrieval + relaxation | The AND pass finds the one page carrying all three terms; the OR pass adds partial matches ranked by distinct terms matched. `exact` and `relaxed` are reported separately, and the sidebar's sentence differs accordingly — the first cut conflated them and claimed "no page matched every word" when one had. |
+| Places fallback | With the index empty, retrieval still returned the right page from Places on title match (`indexed: false`) — proving the fallback is load-bearing, not decorative. |
+| Cited answers | The answer rendered with `[1]`/`[2]` as controls titled with their source, the source list numbered to match, and **clicking `[1]` opened that source in a new tab**. |
+| Degradation | Dead endpoint → `unreachable`; `kavacha.ai.enabled=false` → `disabled`; both return the ranked sources with no answer. Grouping with AI off reports `disabled` and changes nothing. Saving a session with AI off still saves, under the fallback name `<Space> — <date>`. |
+| Duplicate tabs | `planDuplicates` picked exactly the `#fragment` copy; the **pinned** copy of the same URL was neither closed nor treated as the duplicate to remove; cancelling changed nothing; a second run closed 0. `about:blank` tabs are ignored. |
+| Grouping — success | A fenced-JSON reply with prose in front produced two real tab groups (2 tabs each, distinct colours). A second run left already-grouped tabs alone. |
+| Grouping — hostile replies | Prose-wrapped JSON parses; out-of-range and negative indices are **dropped, not clamped**; a missing label, duplicate indices, and a plain refusal all yield no groups and **no change to any tab**. |
+| Saved sessions | Stored with `reason: session` and the model's name, listed by `listSnapshots`, shown in the timeline; a second save with an unchanged tab set still records (the `force` path past structural dedup). |
+| Commands + icons | All five new commands register in the right domains (30 total). **Every `chrome://` icon URL across all 30 Kavacha commands was fetched: none 404.** This found that patch 0079's summarize command pointed at `selectable/edit.svg`, which is not in the icon set; fixed in 0080. |
+| No background requests (R3) | With the mock logging every request it receives: **0 requests after a full fresh-profile startup, and still 0 after opening the AI sidebar.** ADR 0013's "probed on demand, never in the background" survives the sidebar existing — registering it and rendering its footer read prefs only. The first request happens when a feature is actually invoked. |
+
+Harness notes:
+
+- **The packaged app must be rebuilt AND the profile's `startupCache` cleared** before a
+  `.sys.mjs` change is visible. A restart alone is not enough: two probe rounds were run
+  against stale module code that still resolved to a current file on disk. Correct
+  sequence: `bootstrap.sh fast` → kill → `rm -rf <profile>/startupCache` → relaunch.
+- **JSWindowActor child scripts do not load in the content process on a local macOS
+  build.** `resource:///actors/*Child.sys.mjs` are symlinks pointing outside the app
+  bundle and the content sandbox refuses them — Zen's own `ZenBoostsChild` and
+  `ZenGlanceChild` fail identically, so this is the build layout, not a Kavacha defect.
+  Anything actor-driven (the passive page indexer, on-demand capture) can only be
+  verified with `MOZ_DISABLE_CONTENT_SANDBOX=1`, which is how the above was run. **A
+  packaged CI build copies rather than symlinks, so this does not affect shipped
+  builds — but it means patch 0078's passive capture has never been exercised in a
+  default local run**, and it is worth an explicit check on a real packaged artifact.
+- §4b's note that `Services.prompt` cannot be monkey-patched from a Marionette sandbox
+  is confirmed the hard way: the stub silently did nothing, the real modal blocked the
+  harness, and the window ended up closing. Patch 0081 answers it in the product rather
+  than the harness — `planDuplicates()` decides and `closeDuplicates()` destroys, with
+  the confirmation injectable and defaulting to the real prompt.
+
+**Not covered**, stated rather than implied: quality of a real model's output (a mock
+proves the protocol and the plumbing, never the answers); the sidebar's *appearance*
+under a light theme (tokens asserted, not looks); grouping against more than the
+fixture tabs; and the summarize/ask paths driven from the palette by an actual key
+press rather than by invoking the registered command.
+
+---
+
 ## 5. Documentation reconciliation needed
 
 - **ROADMAP.md has zero references to patches 0033–0037.** Five patches of

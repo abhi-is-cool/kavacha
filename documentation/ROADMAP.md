@@ -563,10 +563,42 @@ stack, build/CI, and docs). Outcome:
       Storage note: mozStorage ships no SQLite FTS, so it is LIKE + JS-built snippets,
       not FTS5. Marionette-verified (reliable capture, deletion contract). Follow-ups:
       index bookmarks/notes/downloads/PDFs, optional local embeddings + encrypted-at-rest
-- [ ] Page summarization → sidebar
-- [ ] Natural-language history search (on the personal index)
-- [ ] Tab assistant via command palette ("group tabs by topic", "close duplicates",
-      "save this research session")
+- [x] **Page summarization → sidebar** (ADR 0014 + patch
+      `0080-ai-sidebar-and-ask-history.patch`, 2026-08-15): a Kavacha AI sidebar
+      replaces 0079's arrow panel, which dismissed on the first click into the page
+      it had just summarized. Registered at runtime through Firefox's own
+      `SidebarController.registerPrefSidebar` — the entry point its chat/page-assist
+      sidebars use — so no upstream file is edited and a Firefox uplift cannot
+      conflict; gated on `kavacha.ai.enabled`. Page text is captured **on demand**
+      through the indexer actor, so summarizing works with the personal index
+      switched off. Model output renders only via KavachaMarkdown (DOM nodes, never
+      HTML parsing) because the sidebar is chrome. **L4 verified 2026-08-15.**
+- [x] **Natural-language history search (on the personal index)** (same patch): the
+      index ANDs every term and has no FTS5, so a question matched nothing —
+      `KavachaAskHistory` is therefore a retrieval layer, not a prompt. It reduces the
+      question to content terms, tries AND then relaxes to OR ranked by distinct terms
+      matched, adds Places title/URL hits for pages whose text was never captured, and
+      requires `[n]` citations that link to their source. With no model it returns the
+      ranked sources — the question becomes a search. **L4 verified 2026-08-15**:
+      "Where did I read about flood mapping in Kerala?" → flood/mapping/kerala → the
+      paper, with a working citation.
+- [x] **Tab assistant via command palette** (ADR 0014 + patch
+      `0081-tab-assistant.patch`, 2026-08-15): "Group Tabs by Topic", "Close Duplicate
+      Tabs", "Save This Research Session". Two of the three deliberately need **no
+      model** — deduplication is a set operation and saving is a snapshot, and making
+      them AI-dependent would break them for everyone without a runtime. Grouping
+      validates every tab index the model returns against the real tab list, so a
+      confused reply changes nothing. Saved sessions are named and exempt from
+      snapshot retention. **L4 verified 2026-08-15**, including five shapes of bad
+      model reply and that pinned tabs are never closed.
+
+**Phase 6 is feature-complete.** Follow-ups carried forward, none blocking: optional
+local embeddings and an encrypted-at-rest index (ADR 0012); indexing bookmarks, notes,
+downloads and PDFs; streaming responses; AI memory (FEATURES 5.2) as an opt-in feature
+with its own store. Also newly known and worth a check on a packaged artifact: JSWindow
+actor child scripts do not load on a local macOS build (content sandbox vs. symlinks
+out of the bundle — Zen's own actors fail the same way), so patch 0078's *passive*
+capture has never run in a default local session. See [VERIFICATION.md](VERIFICATION.md) §4c.
 
 ## Phase 7 — Browser, later (post-v1.0)
 

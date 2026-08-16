@@ -1,6 +1,6 @@
 # Kavacha — Remaining Work
 
-**Defects and features.** Everything below is open as of 2026-08-02, consolidated from
+**Defects and features.** Everything below is open as of 2026-08-15, consolidated from
 [ROADMAP.md](ROADMAP.md), [MASTER_PLAN.md](MASTER_PLAN.md),
 [PLATFORM_PLAN.md](PLATFORM_PLAN.md) and [FEATURES.md](FEATURES.md), which stay as the
 record of *why* and of what is already done. This file is the record of what is *left to
@@ -15,16 +15,20 @@ Two things are deliberately elsewhere:
 - **[ECOSYSTEM.md](ECOSYSTEM.md)** — Mail, Drive, Identity, search aggregator, Enterprise.
   Separate products, gated on the browser shipping.
 
-Where we are: **Phases 1–4 feature-complete** through patch 0074 (2026-08-04), **except**
-the open Phase 1 **update-service blocker** (see ROADMAP.md — no path to ship a security
-fix until `updates.kavacha.app` exists) and the release gates in
-[SHIPPING.md](SHIPPING.md). **Phases 5, 6 and 7 have not started.** Patches 0045–0050
+Where we are: **Phases 1–4 and 6 feature-complete** through patch 0081 (2026-08-15),
+**except** the open Phase 1 **update-service blocker** (see ROADMAP.md — no path to ship a
+security fix until `updates.kavacha.app` exists) and the release gates in
+[SHIPPING.md](SHIPPING.md). **Phase 5 (accounts and sync) and Phase 7 have not started**,
+and Phase 5 is now the only unstarted Y1 phase. Phase 6 landed out of order because none
+of it needs an account: patches 0078–0079 built the index and the model bridge, 0080–0081
+built the surfaces (§5). Patches 0045–0050
 (2026-08-02) closed the open defects and the Phase 4 feature list; 0051–0058 closed
 fifteen of seventeen Phase 2/3 follow-ups (§3). A post-merge audit (2026-08-03) then found
 and fixed a wave of defects in the 0022–0065 work — patches 0059 (repair) and 0066–0074,
 all Marionette-verified; a handful of non-critical audit items remain open (see the
-"Post-merge audit" section of ROADMAP.md). What is left in §3 is two items gated on
-Phases 5 and 6.
+"Post-merge audit" section of ROADMAP.md). What is left in §3 is one item gated on Phase 5
+(marketplace remote install) and one newly unblocked by Phase 6 (per-workspace AI
+settings).
 
 ---
 
@@ -135,8 +139,13 @@ build-verified**; the two that are left are blocked on other phases, not on effo
       migration gotcha landed as asked: a switch confirms first, naming the container
       being left, because containers are separate first-party cookie jars and a move
       reads as being signed out everywhere.
-- [ ] **Per-workspace AI settings** — schema shipped; wiring waits on Phase 6. *Not
-      attempted: there is nothing to wire it to until the Ollama bridge exists.*
+- [ ] **Per-workspace AI settings** — schema shipped. **No longer blocked** as of
+      2026-08-15: the bridge (0079) and its consumers (0080–0081) exist, so there is
+      now something to wire it to. What a Space could plausibly override: the model
+      (a small fast one for a browsing Space, a larger one for research), whether the
+      personal index captures at all, and whether AI features appear. The Space object
+      already carries per-Space overrides for search engine, extensions and settings
+      (patches 0003–0005), so this is that pattern again rather than new machinery.
 - [x] Edit an existing space's description (0051). Two halves had to land together —
       patch 0014 stored the description and **nothing in the browser ever read it**, so
       it is now editable *and* shown, as the strip button's tooltip.
@@ -233,26 +242,44 @@ Vivaldi each built their own) and contrary to the north star. What users actuall
 from it is cookie-based SSO across `*.google.com`, which already works in any browser; the
 only thing that broke it in Kavacha was per-space containers, fixed by patch 0038.
 
-## 5. Phase 6 — AI & Personal Search (0 of 5)
+## 5. Phase 6 — AI & Personal Search (5 of 5) — **feature-complete 2026-08-15**
 
-- [ ] Ollama / llama.cpp runtime bridge — model discovery, download management, inference,
-      resource limits. Every feature must degrade *invisibly* (not break) when no local
-      model is installed.
-- [ ] **Personal search index** — local index over history, bookmarks, saved pages, PDFs,
-      downloads and workspace notes; SQLite FTS + metadata, optional local embeddings;
-      local by default, encrypted-at-rest option, user-controlled deletion.
-      **Build this first**: it is the retrieval backbone for every other AI feature, it
-      plugs into universal search as one more source behind the existing
-      `{title, detail, workspaceId, score, action}` contract, and it is what grows into the
-      north-star knowledge graph.
-- [ ] Page summarization → sidebar.
-- [ ] Natural-language history search over the index.
-- [ ] Tab assistant via the command palette — "group tabs by topic", "close duplicates",
-      "save this research session".
+- [x] **Ollama / llama.cpp runtime bridge** (ADR 0013, patch 0078→0079).
+- [x] **Personal search index** (ADR 0012, patch 0078). Storage note: mozStorage ships no
+      SQLite FTS, so it is LIKE + JS-built snippets, not FTS5 — which is precisely why
+      natural-language search needed a retrieval layer rather than a prompt.
+- [x] **Page summarization → sidebar** (ADR 0014, patch 0080).
+- [x] **Natural-language history search over the index** (ADR 0014, patch 0080).
+- [x] **Tab assistant via the command palette** (ADR 0014, patch 0081) — group by topic,
+      close duplicates, save this research session. Only the first needs a model.
+
+All four Phase 6 patches are L4-verified against the built browser
+([VERIFICATION.md](VERIFICATION.md) §4c), with the model mocked: a mock proves the
+protocol and the plumbing, never the quality of a real model's answers.
+
+Follow-ups, none blocking:
+
+- [ ] Optional local **embeddings** and an **encrypted-at-rest** index (ADR 0012's own
+      follow-ups). Today's retrieval is lexical, so it finds "flood mapping" and not
+      "inundation modelling" — embeddings are what close that gap.
+- [ ] Index **bookmarks, workspace notes, downloads and PDFs**, not just visited page
+      text. The Phase 6 spec named all of them; 0078 shipped page text.
+- [ ] **Streaming responses.** The bridge is non-streaming, so a long summary shows a
+      spinner rather than filling in.
+- [ ] **AI memory** (FEATURES 5.2) — explicitly opt-in, with its own store. Deliberately
+      not a side effect of the bridge, which is stateless.
+- [ ] Check the **passive page indexer on a packaged build**. Actor child scripts do not
+      load in the content process on a local macOS build (the content sandbox refuses
+      symlinks pointing out of the app bundle; Zen's own actors fail identically), so
+      0078's passive capture has only ever been exercised with the sandbox disabled. CI
+      packages by copying, so this is expected to be fine — but "expected to be fine" is
+      what §4c exists to stop us writing.
 
 Ground rule carried from [ai/README.md](../ai/README.md): the AI layer reads browser state
 through a narrow, auditable API and never gets blanket profile access. Any optional cloud
-model must be off by default, clearly labeled, and per-request opt-in.
+model must be off by default, clearly labeled, and per-request opt-in. Patch 0079's
+endpoint guarantee holds for all of Phase 6 — page text, questions and tab titles reach
+`kavacha.ai.endpoint` or nowhere.
 
 ## 6. Phase 7 — Browser, later (post-v1.0)
 
@@ -293,12 +320,16 @@ Browser features, no servers, no accounts. Full list in [ROADMAP.md](ROADMAP.md)
    a real quit; does the permission dashboard operate a live permission store (the
    permission and cookie-rule lists were empty here, which on this profile is plausible
    rather than proof).
-2. **Personal search index** (§5) — the highest-leverage thing left in the plan, and the
-   one the north star actually depends on. Everything in Phase 6 waits on it, and
-   universal search gets better the day it lands.
-3. **Blocked-today badge surface** (§2) — the last open Phase 4 follow-up, and small.
-4. ~~Phase 2/3 follow-ups (§3)~~ — **done** (0051–0058). The two that remain are gated on
-   Phases 5 and 6 and cannot be pulled forward.
+2. ~~Personal search index~~ and ~~the rest of Phase 6~~ — **done** (0078–0081,
+   2026-08-10 → 2026-08-15). The index is in, and universal search gained a "Page Text"
+   source the day it landed.
+3. ~~Blocked-today badge surface~~ — **done** (0077).
+4. ~~Phase 2/3 follow-ups (§3)~~ — **done** (0051–0058).
+5. **Phase 5 — accounts and sync** (§4) is now the only unstarted Y1 phase, and it is
+   the one with real prerequisites: a service to run, and an external crypto review
+   before sync can ship (SHIPPING R9). The one piece that does **not** depend on the
+   account — **"Export My Digital Life"** — is worth pulling forward on its own.
+6. **Per-workspace AI settings** (§3) — small, and newly unblocked by Phase 6.
 
 Before any of this, read [SHIPPING.md](SHIPPING.md) — if the goal is a release rather than
 a bigger feature set, that file's order beats this one.

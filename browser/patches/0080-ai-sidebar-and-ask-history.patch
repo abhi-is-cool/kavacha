@@ -1,0 +1,1817 @@
+# Patch 0080 — Kavacha AI sidebar: page summarization + natural-language
+# history search (ROADMAP Phase 6; ADR 0014). Two roadmap items in one patch
+# because they are one surface: "summarize this" and "where did I read about
+# this" are the same question asked of the same two engines — patch 0078's
+# personal index for retrieval, patch 0079's bridge for generation — and
+# splitting them would have produced two half-sidebars.
+#
+# WHY A SIDEBAR AND NOT THE 0079 PANEL. Patch 0079 printed its summary into an
+# arrow panel. A summary is read WHILE browsing: the panel dismissed on the
+# first click into the page it had just summarized, could not be resized, and
+# had nowhere to put the source list ask-your-history needs. Firefox's classic
+# sidebar is already alive in Kavacha (measured: sidebar-box opens at 216px in
+# the horizontal-tab layout) and its <browser> is non-remote, so a chrome page
+# there has the privileges to call the engines directly. The 0079 panel stays —
+# it is the right surface for the tab assistant's one-sentence reports.
+#
+# REGISTRATION IS AT RUNTIME, NOT IN FIREFOX'S FILE. Firefox declares sidebars
+# in a literal Map in browser/components/sidebar/browser-sidebar.js, a file Zen
+# already patches. KavachaAISidebar calls registerPrefSidebar() — the same
+# entry point Firefox uses for its own pref-gated sidebars — once per window
+# from ZenStartup, so Kavacha adds a sidebar without editing an upstream file
+# and without joining the rebase queue on that Map. Gated on
+# kavacha.ai.enabled: switch AI off and the entry disappears.
+#
+# WHY NATURAL-LANGUAGE SEARCH NEEDED A NEW MODULE. The index matches with LIKE
+# and ANDs every term (no FTS5 in mozStorage — ADR 0012). Ask it "where did I
+# read about flood mapping in Kerala?" and it looks for one page containing
+# "where" AND "did" AND "read" AND … and returns nothing, always. So
+# KavachaAskHistory is a retrieval layer, not a prompt: strip the question to
+# content terms, try AND, RELAX to OR when that is thin (ranking by how many
+# distinct terms a page carries), add Places title/URL hits for pages whose
+# text was never captured, then hand the model numbered passages and require
+# [n] citations. Measured on the built browser: the question above reduces to
+# flood / mapping / kerala and finds the paper.
+#
+# DEGRADATION IS A FEATURE, NOT AN ERROR PATH. No model, model off, model
+# unreachable, or sources with no captured text all return the ranked source
+# list with a plain sentence saying why — the question simply becomes a
+# search. Retrieval never needed the model; only the prose did.
+#
+# SAFETY. Model output is untrusted text rendered by a CHROME document, so it
+# only ever reaches the screen through KavachaMarkdown (patch 0052), which
+# builds DOM nodes and never parses HTML, or through textContent. Citations
+# are linkified by walking text nodes and replacing them with elements this
+# code created. An innerHTML here would be script execution as chrome.
+#
+# ALSO FIXED HERE: patch 0079 pointed "Summarize This Page" at
+# zen-icons/selectable/edit.svg, which is not in the icon set — the same defect
+# class the 0051-0058 audit found eleven of. All 30 Kavacha command icons were
+# fetched against the built browser afterwards; none 404.
+#
+# Summarize no longer depends on the index being ON: the indexer actor gained
+# an on-demand Capture query that returns the page text WITHOUT storing it.
+# Summarizing what you are looking at should not require having stored it.
+#
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index 998936e..14dd432 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -74,15 +74,6 @@ kavacha-menu-no-results = Nothing matches that
+ # Kavacha patch 0063 — the Appearance panel. Replaces the menu's generated
+ # Appearance section with one place that shows the colours.
+ kavacha-menu-appearance = Appearance
+-
+-# Kavacha patch 0077 — blocked-today badge. The static label shows before the
+-# ledger resolves; the count label replaces it with today's number.
+-kavacha-menu-blocked-loading = Trackers blocked today
+-kavacha-menu-blocked-today =
+-    { $count ->
+-        [one] { $count } tracker blocked today
+-       *[other] { $count } trackers blocked today
+-    }
+ kavacha-appearance-title = Appearance
+ kavacha-appearance-mode-dark = Dark
+ kavacha-appearance-mode-light = Light
+@@ -124,11 +115,18 @@ kavacha-coachmark-body = Spaces, themes, layout, privacy and the rest of Kavacha
+ # Kavacha patch 0057 — the widget dashboard.
+ kavacha-action-open-dashboard = Dashboard
+ 
+-# Kavacha patch 0079 — local AI: summarize the current page.
++# Kavacha patch 0079 — local AI. The AI panel's shared strings; summarize
++# itself moved to the sidebar in patch 0080, which carries literal strings
++# because a chrome page is outside browser.xhtml's Fluent scope.
++# kavacha-ai-not-indexed was dropped with it: the sidebar captures page text
++# on demand, so "not indexed yet" is no longer a state summarizing can reach.
+ kavacha-action-summarize-page = Summarize This Page
+ kavacha-ai-summary-title = Page summary
+ kavacha-ai-thinking = Thinking…
+ kavacha-ai-unavailable = No local model found. Install a local model runtime (for example Ollama) and check Settings → Privacy → Local AI.
+-kavacha-ai-not-indexed = This page has not been indexed yet, so there is no text to summarize. Give it a moment, or check that the personal index is on.
+ kavacha-ai-empty = The model returned nothing.
+ kavacha-ai-error = The local model could not complete the request.
++
++# Kavacha patch 0080 — natural-language search over the personal index.
++kavacha-action-ask-history = Ask Your History
++
+diff --git a/locales/en-US/browser/browser/zen-workspaces.ftl b/locales/en-US/browser/browser/zen-workspaces.ftl
+index b93c50a..3a0b0d2 100644
+--- a/locales/en-US/browser/browser/zen-workspaces.ftl
++++ b/locales/en-US/browser/browser/zen-workspaces.ftl
+@@ -275,3 +275,10 @@ zen-workspaces-panel-context-branch =
+     .label = Branch This Space
+ zen-workspaces-panel-context-timeline =
+     .label = Space Timeline…
++
++# Kavacha patch 0080 — the AI sidebar's entry in the sidebar switcher. Lives
++# in this file because it labels a XUL menuitem in browser.xhtml, whose Fluent
++# scope is zen-locales.inc.xhtml; the sidebar PAGE itself is a chrome document
++# outside that scope and carries literal strings, like the other Kavacha pages.
++kavacha-ai-sidebar-menu =
++    .label = Kavacha AI
+diff --git a/src/browser/base/content/zen-assets.jar.inc.mn b/src/browser/base/content/zen-assets.jar.inc.mn
+index a7cc8e4..caf6212 100644
+--- a/src/browser/base/content/zen-assets.jar.inc.mn
++++ b/src/browser/base/content/zen-assets.jar.inc.mn
+@@ -27,3 +27,4 @@
+ #include ../../../zen/kavacha-studio/jar.inc.mn
+ #include ../../../zen/kavacha-marketplace/jar.inc.mn
+ #include ../../../zen/kavacha-plugins/jar.inc.mn
++#include ../../../zen/kavacha-ai/jar.inc.mn
+diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
+index b8794c9..a42f086 100644
+--- a/src/zen/common/modules/ZenStartup.mjs
++++ b/src/zen/common/modules/ZenStartup.mjs
+@@ -155,6 +155,12 @@ class ZenStartup {
+       ChromeUtils.importESModule(
+         "resource:///modules/KavachaPersonalIndex.sys.mjs"
+       ).KavachaPersonalIndex.init();
++      // Kavacha: register the AI sidebar with this window's SidebarController
++      // (ADR 0014). Per window, because SidebarController is; costs no
++      // network request — the page probes only when asked to do something.
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaAISidebar.sys.mjs"
++      ).KavachaAISidebar.register(window);
+       // Kavacha: apply the saved layout document to this window's chrome
+       // (process singleton + per-window apply; ADR 0008).
+       const kavachaLayout = ChromeUtils.importESModule(
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+index 642bbd3..677b4f1 100644
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -4,7 +4,9 @@
+ 
+ EXTRA_JS_MODULES += [
+   "sys/KavachaAIBridge.sys.mjs",
++  "sys/KavachaAISidebar.sys.mjs",
+   "sys/KavachaAppearancePanel.sys.mjs",
++  "sys/KavachaAskHistory.sys.mjs",
+   "sys/KavachaCommandRegistry.sys.mjs",
+   "sys/KavachaLayoutEngine.sys.mjs",
+   "sys/KavachaMarkdown.sys.mjs",
+diff --git a/src/zen/common/sys/KavachaAISidebar.sys.mjs b/src/zen/common/sys/KavachaAISidebar.sys.mjs
+new file mode 100644
+index 0000000..5d8fb49
+--- /dev/null
++++ b/src/zen/common/sys/KavachaAISidebar.sys.mjs
+@@ -0,0 +1,104 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Registers the Kavacha AI sidebar with Firefox's own SidebarController
++// (ADR 0014; ROADMAP Phase 6) and gives chrome callers a way to open it and
++// hand it a job.
++//
++// WHY AT RUNTIME. Firefox declares its sidebars in a literal Map inside
++// browser/components/sidebar/browser-sidebar.js — a file Zen already carries
++// a patch against. Adding Kavacha's entry there would put a third party in
++// that queue and hand us a rebase conflict on every Firefox uplift that
++// touches the map. `registerPrefSidebar(pref, commandID, config)` is the same
++// call Firefox uses for its own pref-gated sidebars (chat, page assist,
++// passwords), and it appends to the map that is already built — so calling it
++// per window at startup produces exactly the entry the declarative form
++// would, and touches no upstream file.
++//
++// The registration is pref-gated on `kavacha.ai.enabled`, the same master
++// switch the bridge honours (ADR 0013): switch AI off and the sidebar
++// disappears from the switcher, and if it was open it closes. Registering
++// costs no network request — the page probes for a runtime only when it is
++// actually asked to do something.
++
++const kSidebarId = "viewKavachaAISidebar";
++const kEnabledPref = "kavacha.ai.enabled";
++const kSidebarUrl = "chrome://browser/content/kavacha-ai/sidebar.html";
++
++export const KavachaAISidebar = {
++  /**
++   * Register the sidebar in one chrome window. Idempotent — a second call for
++   * the same window is a no-op, which matters because ZenStartup runs per
++   * window and SidebarController is per window too.
++   */
++  register(window) {
++    try {
++      const controller = window.SidebarController;
++      if (!controller || controller.sidebars?.has?.(kSidebarId)) {
++        return;
++      }
++      // Touching `sidebars` first is load-bearing: it is a lazy getter that
++      // BUILDS the map. registerPrefSidebar writes straight to `_sidebars`,
++      // so calling it before anything has read the getter would throw on
++      // undefined — and then generateSidebarsMap() would later rebuild the
++      // map from scratch and drop our entry anyway.
++      controller.sidebars;
++      controller.registerPrefSidebar(kEnabledPref, kSidebarId, {
++        name: "kavachaai",
++        elementId: "sidebar-switcher-kavacha-ai",
++        url: kSidebarUrl,
++        menuId: "menu_kavachaAISidebar",
++        menuL10nId: "kavacha-ai-sidebar-menu",
++        revampL10nId: "kavacha-ai-sidebar-menu",
++        iconUrl: "chrome://browser/skin/zen-icons/selectable/chat.svg",
++      });
++    } catch (e) {
++      // A missing sidebar costs a feature, never a window. Zen reshuffles the
++      // browser box heavily and this is upstream machinery we do not own.
++      console.error("KavachaAISidebar: registration failed", e);
++    }
++  },
++
++  /**
++   * Open the sidebar and run `job` inside its page once it has loaded.
++   * Returns the page's content window, or null if the sidebar could not open.
++   *
++   * The job is handed over by CALLING THE PAGE, not by setting a pref or
++   * stashing state: the page owns its own request/abort lifecycle, and a
++   * caller that opens the sidebar twice in a row must not leave a queued
++   * intent behind to fire later.
++   */
++  async open(window, job) {
++    try {
++      if (!Services.prefs.getBoolPref(kEnabledPref, true)) {
++        return null;
++      }
++      this.register(window);
++      await window.SidebarController.show(kSidebarId);
++      const page = window.SidebarController.browser?.contentWindow;
++      if (page && typeof job === "function") {
++        // The page installs KavachaAISidebarPage on itself at DOMContentLoaded;
++        // show() resolves on load, so it is there. Guard anyway — a failed
++        // load should not throw out of a palette command.
++        if (page.KavachaAISidebarPage) {
++          job(page.KavachaAISidebarPage);
++        }
++      }
++      return page;
++    } catch (e) {
++      console.error("KavachaAISidebar: open failed", e);
++      return null;
++    }
++  },
++
++  /** Open the sidebar and summarize the window's current page. */
++  summarizeActivePage(window) {
++    return this.open(window, page => page.summarizeCurrentPage());
++  },
++
++  /** Open the sidebar in Ask mode, optionally with a question pre-filled. */
++  ask(window, question = "") {
++    return this.open(window, page => page.focusAsk(question));
++  },
++};
+diff --git a/src/zen/common/sys/KavachaAskHistory.sys.mjs b/src/zen/common/sys/KavachaAskHistory.sys.mjs
+new file mode 100644
+index 0000000..a6c578a
+--- /dev/null
++++ b/src/zen/common/sys/KavachaAskHistory.sys.mjs
+@@ -0,0 +1,354 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Natural-language search over the user's own history (ADR 0014; ROADMAP
++// Phase 6). The retrieval half of "Where did I find that paper on flood
++// mapping?" — it turns a QUESTION into evidence from the personal index
++// (ADR 0012) and Places, then asks the local model (ADR 0013) to answer from
++// that evidence and cite it.
++//
++// WHY THIS MODULE EXISTS AT ALL. The index matches with LIKE and ANDs every
++// term (mozStorage ships no FTS5 — see ADR 0012). Hand it "where did I read
++// about flood mapping in Kerala?" and it looks for a single page containing
++// all of "where", "did", "read", "about", … and returns nothing, every time.
++// Natural-language search is therefore not a prompt-engineering job on top of
++// the existing search; it is a retrieval layer:
++//
++//   1. strip the question down to content terms (stopwords carry no signal
++//      but do carry the AND that kills the query),
++//   2. try "all" first — a precise multi-word hit is the best evidence there
++//      is — and RELAX to "any" when that is thin,
++//   3. add Places title/URL matches, because a page visited before the index
++//      existed (or with the index off) still answers "where did I see it",
++//   4. hand the model numbered passages and require citations.
++//
++// Every step degrades on its own: no model still returns ranked sources — the
++// question becomes a search — and no index still returns Places hits.
++
++const lazy = {};
++ChromeUtils.defineESModuleGetters(lazy, {
++  KavachaAIBridge: "resource:///modules/KavachaAIBridge.sys.mjs",
++  KavachaPersonalIndex: "resource:///modules/KavachaPersonalIndex.sys.mjs",
++  PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
++});
++
++// Deliberately small and English-only. It exists to drop words that would
++// AND a query to death, not to do linguistics; an over-long list starts
++// eating real query terms ("time", "work" and "state" are all stopwords in
++// some canonical lists and all plausible things to have read about).
++// prettier-ignore
++const kStopWords = new Set([
++  "a", "about", "after", "again", "all", "also", "am", "an", "and", "any",
++  "anything", "are", "around", "as", "at", "back", "be", "because", "been",
++  "before", "being", "between", "both", "but", "by", "can", "could", "did",
++  "do", "does", "doing", "done", "down", "during", "each", "else", "ever",
++  "every", "find", "for", "found", "from", "get", "give", "go", "had", "has",
++  "have", "he", "her", "here", "hers", "him", "his", "how", "i", "if", "in",
++  "into", "is", "it", "its", "just", "know", "like", "look", "looking", "me",
++  "more", "most", "much", "my", "need", "no", "not", "of", "off", "on",
++  "once", "one", "only", "or", "other", "our", "out", "over", "own", "page",
++  "pages", "put", "read", "reading", "recall", "remember", "said", "same",
++  "saw", "say", "see", "seen", "she", "should", "site", "so", "some",
++  "something", "such", "take", "tell", "than", "that", "the", "their", "them",
++  "then", "there", "these", "they", "thing", "things", "this", "those",
++  "through", "to", "too", "under", "until", "up", "us", "use", "very", "want",
++  "was", "we", "web", "website", "well", "went", "were", "what", "when",
++  "where", "which", "while", "who", "whom", "why", "will", "with", "would",
++  "you", "your", "yours",
++]);
++
++// A question rarely needs more than a handful of content words, and each one
++// is another LIKE scan over the text column.
++const kMaxTerms = 8;
++// How many sources the model is shown. Small local models lose the thread in
++// long contexts, and the honest answer to "where did I see it" is a short
++// list, not twenty maybes.
++const kMaxContextSources = 5;
++const kPassageChars = 1100;
++const kMaxContextChars = 6000;
++// Below this many strong hits, relax the AND to an OR.
++const kRelaxBelow = 3;
++
++const kSystemPrompt =
++  "You answer questions about the user's own browsing history. Use ONLY the " +
++  "numbered sources given to you — they are pages this user actually " +
++  "visited. Cite every claim with the source number in square brackets, like " +
++  "[1] or [2]. If the sources do not contain the answer, say plainly that " +
++  "you could not find it in their history; never guess a source and never " +
++  "invent a URL. Answer in at most four sentences.";
++
++export const KavachaAskHistory = {
++  /**
++   * Content terms from a natural-language question: lowercased, punctuation
++   * stripped, stopwords and one-character fragments dropped, deduped, and
++   * capped. Quoted phrases survive as single terms, which is how a user pins
++   * an exact string ("flood mapping") through the relaxation below.
++   */
++  extractTerms(question) {
++    const text = String(question || "").toLowerCase();
++    const terms = [];
++    const seen = new Set();
++    const push = raw => {
++      const t = raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "").trim();
++      if (t.length < 2 || seen.has(t)) {
++        return;
++      }
++      seen.add(t);
++      terms.push(t);
++    };
++    // Quoted phrases first, then remove them so their words are not repeated
++    // as loose terms.
++    let rest = text;
++    for (const m of text.matchAll(/"([^"]{2,60})"/g)) {
++      push(m[1]);
++      rest = rest.replace(m[0], " ");
++    }
++    for (const word of rest.split(/[^\p{L}\p{N}'’.-]+/u)) {
++      const w = word.replace(/^[.'’-]+|[.'’-]+$/g, "");
++      if (!w || kStopWords.has(w)) {
++        continue;
++      }
++      push(w);
++    }
++    return terms.slice(0, kMaxTerms);
++  },
++
++  /**
++   * Evidence for a question. Returns `{terms, sources, exact, relaxed}` where
++   * each source is
++   * `{url, title, snippet, text, visitedAt, workspaceUuid, matched, indexed}`.
++   * Index hits (which carry text, so they can be quoted) come first; Places
++   * hits fill in pages whose text was never captured.
++   *
++   * `exact` is how many pages carried EVERY term and `relaxed` whether
++   * partial matches were added. They are reported separately because they are
++   * different things to tell the user — "nothing matched all your words" and
++   * "there are also some near misses below" — and conflating them puts a
++   * false statement on screen whenever one strong hit came back alongside
++   * weaker ones.
++   */
++  async retrieve(question, { limit = 8 } = {}) {
++    const terms = this.extractTerms(question);
++    if (!terms.length) {
++      return { terms, sources: [], exact: 0, relaxed: false };
++    }
++
++    let relaxed = false;
++    let exact = 0;
++    let hits = [];
++    try {
++      hits = await lazy.KavachaPersonalIndex.searchTerms(terms, {
++        limit,
++        mode: "all",
++        withText: true,
++      });
++      exact = hits.length;
++      if (hits.length < kRelaxBelow && terms.length > 1) {
++        // The AND found little. Ask for anything carrying ANY of the terms —
++        // searchTerms ranks by how many distinct terms a page holds, so the
++        // strongest partial matches still surface first.
++        const any = await lazy.KavachaPersonalIndex.searchTerms(terms, {
++          limit: limit * 2,
++          mode: "any",
++          withText: true,
++        });
++        const seen = new Set(hits.map(h => h.url));
++        for (const h of any) {
++          if (!seen.has(h.url)) {
++            seen.add(h.url);
++            hits.push(h);
++            relaxed = true;
++          }
++        }
++      }
++    } catch (e) {
++      console.error("KavachaAskHistory: index retrieval failed", e);
++    }
++
++    const sources = hits.slice(0, limit).map(h => ({
++      url: h.url,
++      title: h.title || h.url,
++      snippet: h.snippet || "",
++      text: h.text || "",
++      visitedAt: h.visitedAt || 0,
++      workspaceUuid: h.workspaceUuid || null,
++      matched: h.matched || 0,
++      indexed: true,
++    }));
++
++    // Places fills the gap the index cannot: anything visited before the
++    // index existed, or while it was switched off, has a title and a URL and
++    // no text. Those cannot be quoted, but they can absolutely be the answer
++    // to "where did I see it".
++    try {
++      const seen = new Set(sources.map(s => s.url));
++      for (const row of await this._searchPlaces(terms, limit)) {
++        if (sources.length >= limit + kMaxContextSources) {
++          break;
++        }
++        if (!seen.has(row.url)) {
++          seen.add(row.url);
++          sources.push(row);
++        }
++      }
++    } catch (e) {
++      console.error("KavachaAskHistory: places retrieval failed", e);
++    }
++
++    return { terms, sources, exact, relaxed };
++  },
++
++  /**
++   * Answer a question from the user's history. Returns
++   * `{answer, sources, degraded, reason, relaxed, terms}`.
++   *
++   * `degraded: true` means no answer was generated — no local model, or the
++   * model failed — and the caller should present `sources` as search results.
++   * That is a first-class outcome, not an error: the retrieval is the part
++   * that is always available, and the north star's question ("where did I
++   * find that paper") is answered by a ranked list even with no model at all.
++   */
++  async ask(question, { signal, limit = 8 } = {}) {
++    const { terms, sources, exact, relaxed } = await this.retrieve(question, {
++      limit,
++    });
++    const base = { sources, exact, relaxed, terms, answer: "" };
++
++    if (!terms.length) {
++      return { ...base, degraded: true, reason: "no-terms" };
++    }
++    if (!sources.length) {
++      return { ...base, degraded: true, reason: "no-sources" };
++    }
++
++    let status;
++    try {
++      status = await lazy.KavachaAIBridge.isAvailable();
++    } catch (e) {
++      status = { available: false, reason: "unreachable" };
++    }
++    if (!status.available) {
++      return { ...base, degraded: true, reason: status.reason || "unavailable" };
++    }
++
++    const cited = this._contextSources(sources);
++    if (!cited.length) {
++      // Every candidate came from Places with no captured text. Titles alone
++      // are not evidence worth asking a model to reason over — it would
++      // confabulate from URLs. Show the list instead.
++      return { ...base, degraded: true, reason: "no-text" };
++    }
++
++    try {
++      const answer = await lazy.KavachaAIBridge.generate(
++        this._buildPrompt(question, cited),
++        { system: kSystemPrompt, signal }
++      );
++      if (!answer) {
++        return { ...base, degraded: true, reason: "empty" };
++      }
++      // Only the sources the model could actually see are citable; renumber
++      // nothing, so [n] in the answer indexes `cited` positionally.
++      return {
++        ...base,
++        answer,
++        cited,
++        degraded: false,
++        reason: "",
++      };
++    } catch (e) {
++      if (e?.name === "AbortError") {
++        return { ...base, degraded: true, reason: "aborted" };
++      }
++      console.error("KavachaAskHistory: generation failed", e);
++      return { ...base, degraded: true, reason: "error" };
++    }
++  },
++
++  /* -------------------------------------------------------------- internal */
++
++  // The sources the model is shown: text-bearing, best-ranked first, capped
++  // both in count and in total characters.
++  _contextSources(sources) {
++    const cited = [];
++    let budget = kMaxContextChars;
++    for (const s of sources) {
++      if (cited.length >= kMaxContextSources || budget <= 0) {
++        break;
++      }
++      if (!s.text) {
++        continue;
++      }
++      const passage = this._passage(s.text, budget);
++      if (!passage) {
++        continue;
++      }
++      budget -= passage.length;
++      cited.push({ ...s, passage });
++    }
++    return cited;
++  },
++
++  // A page's most relevant stretch of text. The index already put the best
++  // match at the start of `snippet`; anchor on that, and otherwise take the
++  // lead, which for an article is the abstract or the first paragraphs.
++  _passage(text, budget) {
++    const max = Math.min(kPassageChars, budget);
++    if (text.length <= max) {
++      return text;
++    }
++    return text.slice(0, max).trimEnd() + "…";
++  },
++
++  _buildPrompt(question, cited) {
++    const blocks = cited.map(
++      (s, i) =>
++        `[${i + 1}] ${s.title}\nURL: ${s.url}\n${s.passage}`
++    );
++    return (
++      `Question: ${String(question || "").trim()}\n\n` +
++      `Sources:\n\n${blocks.join("\n\n---\n\n")}`
++    );
++  },
++
++  // Title/URL matches from Places, for pages the index never captured.
++  // Read-only connection: this only ever reads history the browser already
++  // keeps, and never writes to it.
++  async _searchPlaces(terms, limit) {
++    const db = await lazy.PlacesUtils.promiseDBConnection();
++    const params = { limit };
++    const where = terms
++      .map((t, i) => {
++        params[`t${i}`] = "%" + t.replace(/[\\%_]/g, m => "\\" + m) + "%";
++        return `(lower(p.title) LIKE :t${i} ESCAPE '\\' OR lower(p.url) LIKE :t${i} ESCAPE '\\')`;
++      })
++      .join(" OR ");
++    // execute(), not executeCached(): the SQL text varies with the number of
++    // terms, so caching it would fill the statement cache with near-duplicates.
++    const rows = await db.execute(
++      `SELECT p.url AS url, p.title AS title, p.last_visit_date AS visited
++         FROM moz_places p
++        WHERE p.hidden = 0 AND p.last_visit_date NOTNULL AND (${where})
++        ORDER BY p.frecency DESC
++        LIMIT :limit`,
++      params
++    );
++    return rows.map(r => {
++      const url = r.getResultByName("url");
++      const title = r.getResultByName("title") || url;
++      const hay = (title + " " + url).toLowerCase();
++      return {
++        url,
++        title,
++        snippet: "",
++        text: "",
++        // Places stores microseconds.
++        visitedAt: Math.floor((r.getResultByName("visited") || 0) / 1000),
++        workspaceUuid: null,
++        matched: terms.filter(t => hay.includes(t)).length,
++        indexed: false,
++      };
++    });
++  },
++};
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+index ee12f40..0f5d704 100644
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -185,10 +185,19 @@ const BUILTIN = [
+   },
+   {
+     l10nId: "kavacha-action-summarize-page",
+-    command: window => summarizeActivePage(window),
+-    icon: "chrome://browser/skin/zen-icons/selectable/edit.svg",
++    command: window => kavachaAISidebar().summarizeActivePage(window),
++    // Not selectable/edit.svg: patch 0079 used it and it is not in the icon
++    // set, so this command has rendered as a missing image since it shipped.
++    icon: "chrome://browser/skin/zen-icons/selectable/page.svg",
+     domain: KavachaCommandDomain.PRODUCTIVITY,
+-    isAvailable: window => !window.gZenWorkspaces?.privateWindowOrDisabled,
++    isAvailable: kNotPrivate,
++  },
++  {
++    l10nId: "kavacha-action-ask-history",
++    command: window => kavachaAISidebar().ask(window),
++    icon: "chrome://browser/skin/zen-icons/search-glass.svg",
++    domain: KavachaCommandDomain.PRODUCTIVITY,
++    isAvailable: kNotPrivate,
+   },
+ 
+   // -- Appearance ----------------------------------------------------------
+@@ -366,84 +375,17 @@ const _registered = [];
+ const _sinks = [];
+ const _removalSinks = [];
+ 
+-// "Summarize This Page" (ADR 0013): send the current page's captured text to
+-// the local AI bridge and show the summary in the AI panel. Uses the personal
+-// index's stored text (ADR 0012) so nothing new has to be extracted; if the
+-// page was not indexed (index off, or opened seconds ago) it says so. All
+-// model contact is at the user's local endpoint — the bridge never goes
+-// remote. Fails soft: no runtime -> a plain "no local model" message, not an
+-// error.
+-const kSummarizeSystem =
+-  "You are a concise assistant. Summarize the following web page in 4-6 " +
+-  "short bullet points, then one sentence on why it might matter. Use only " +
+-  "the text provided.";
+-
+-async function summarizeActivePage(window) {
+-  const doc = window.document;
+-  const panel = doc.getElementById("kavacha-ai-panel");
+-  const body = doc.getElementById("kavacha-ai-body");
+-  const title = doc.getElementById("kavacha-ai-title");
+-  if (!panel || !body) {
+-    return;
+-  }
+-  const t = async (id, fb) => {
+-    try {
+-      return (await doc.l10n.formatValue(id)) || fb;
+-    } catch (e) {
+-      return fb;
+-    }
+-  };
+-  title.textContent = await t("kavacha-ai-summary-title", "Page summary");
+-  body.textContent = await t("kavacha-ai-thinking", "Thinking…");
+-  const anchor =
+-    doc.getElementById("kavacha-menu-button") ||
+-    doc.getElementById("PanelUI-menu-button") ||
+-    window.gBrowser.selectedTab;
+-  try {
+-    panel.openPopup(anchor, "bottomright topright", 0, 0, false, false);
+-  } catch (e) {
+-    panel.openPopupAtScreen(200, 120, false);
+-  }
+-
+-  try {
+-    const { KavachaAIBridge } = ChromeUtils.importESModule(
+-      "resource:///modules/KavachaAIBridge.sys.mjs"
+-    );
+-    const { KavachaPersonalIndex } = ChromeUtils.importESModule(
+-      "resource:///modules/KavachaPersonalIndex.sys.mjs"
+-    );
+-    const status = await KavachaAIBridge.isAvailable();
+-    if (!status.available) {
+-      body.textContent = await t(
+-        "kavacha-ai-unavailable",
+-        "No local model found. Install a local model runtime (for example " +
+-          "Ollama) and check Settings → Privacy → Local AI."
+-      );
+-      return;
+-    }
+-    const url = window.gBrowser.selectedBrowser?.currentURI?.spec || "";
+-    const text = await KavachaPersonalIndex.getText(url);
+-    if (!text) {
+-      body.textContent = await t(
+-        "kavacha-ai-not-indexed",
+-        "This page has not been indexed yet, so there is no text to " +
+-          "summarize. Give it a moment, or check that the personal index is on."
+-      );
+-      return;
+-    }
+-    const summary = await KavachaAIBridge.generate(text, {
+-      system: kSummarizeSystem,
+-    });
+-    body.textContent =
+-      summary || (await t("kavacha-ai-empty", "The model returned nothing."));
+-  } catch (e) {
+-    console.error("KavachaCommandRegistry: summarize failed", e);
+-    body.textContent = await t(
+-      "kavacha-ai-error",
+-      "The local model could not complete the request."
+-    );
+-  }
+-}
++// The AI commands ("Summarize This Page", "Ask Your History") both open the
++// Kavacha AI sidebar and hand it the job (ADR 0014). Patch 0079 ran summarize
++// inline here and printed into an arrow panel; the sidebar replaced that
++// because a summary is something you READ WHILE BROWSING — an arrow panel
++// dismisses on the first click into the page it just summarized, cannot be
++// resized, and has nowhere to put the source list that ask-your-history needs.
++// The panel markup stays: it is the right surface for the tab assistant's
++// short reports, which are a sentence, not a document.
++const kavachaAISidebar = () =>
++  ChromeUtils.importESModule("resource:///modules/KavachaAISidebar.sys.mjs")
++    .KavachaAISidebar;
+ 
+ const _domainRank = domain => {
+   const i = KavachaCommandDomainOrder.indexOf(domain);
+diff --git a/src/zen/kavacha-ai/jar.inc.mn b/src/zen/kavacha-ai/jar.inc.mn
+new file mode 100644
+index 0000000..e20f8ca
+--- /dev/null
++++ b/src/zen/kavacha-ai/jar.inc.mn
+@@ -0,0 +1,7 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++        content/browser/kavacha-ai/sidebar.html                                (../../zen/kavacha-ai/sidebar.html)
++        content/browser/kavacha-ai/sidebar.css                                 (../../zen/kavacha-ai/sidebar.css)
++        content/browser/kavacha-ai/sidebar.js                                  (../../zen/kavacha-ai/sidebar.js)
+diff --git a/src/zen/kavacha-ai/sidebar.css b/src/zen/kavacha-ai/sidebar.css
+new file mode 100644
+index 0000000..3a8f392
+--- /dev/null
++++ b/src/zen/kavacha-ai/sidebar.css
+@@ -0,0 +1,299 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* Kavacha AI sidebar (ADR 0014). Every colour goes through the --kavacha-*
++ * vocabulary that content-theme.js stamps onto :root, with the literal
++ * fallback each Kavacha page carries for the moment before that script runs.
++ * The accent stays user-owned: --zen-primary-color first, then the theme's
++ * accent, then the neutral fallback (patch 0046/0069). */
++
++:root {
++  --ai-gap: 10px;
++  --ai-radius: 8px;
++  --ai-accent: var(
++    --zen-primary-color,
++    var(--kavacha-accent, var(--kavacha-accent-fallback, #8b7bd8))
++  );
++}
++
++body {
++  margin: 0;
++  padding: var(--ai-gap);
++  display: flex;
++  flex-direction: column;
++  gap: var(--ai-gap);
++  min-height: 100vh;
++  box-sizing: border-box;
++  font: message-box;
++  font-size: 13px;
++  line-height: 1.5;
++  color: var(--kavacha-text, #e8e6f0);
++  background: var(--kavacha-surface, #14111f);
++  /* The sidebar is narrow and resizable; nothing may push it wider. */
++  overflow-wrap: anywhere;
++}
++
++/* ---------------------------------------------------------------- modes */
++
++.ai-modes {
++  display: flex;
++  gap: 2px;
++  padding: 2px;
++  border-radius: var(--ai-radius);
++  background: var(--kavacha-surface-raised, #1d1930);
++}
++
++.ai-mode {
++  flex: 1;
++  padding: 5px 8px;
++  border: none;
++  border-radius: calc(var(--ai-radius) - 2px);
++  background: transparent;
++  color: inherit;
++  font: inherit;
++  cursor: pointer;
++}
++
++.ai-mode:hover {
++  background: var(--kavacha-surface-hover, #262040);
++}
++
++.ai-mode[aria-selected="true"] {
++  background: var(--kavacha-surface-hover, #262040);
++  box-shadow: inset 0 0 0 1px var(--ai-accent);
++}
++
++/* ---------------------------------------------------------------- views */
++
++.ai-view {
++  display: flex;
++  flex-direction: column;
++  gap: var(--ai-gap);
++  flex: 1;
++  min-height: 0;
++}
++
++.ai-view[hidden] {
++  display: none;
++}
++
++.ai-page {
++  padding: 8px;
++  border-radius: var(--ai-radius);
++  background: var(--kavacha-surface-raised, #1d1930);
++}
++
++.ai-page-title {
++  font-weight: 600;
++  /* Two lines of title, then ellipsis — a long title must not shove the
++   * Summarize button below the fold in a 216px sidebar. */
++  display: -webkit-box;
++  -webkit-line-clamp: 2;
++  -webkit-box-orient: vertical;
++  overflow: hidden;
++}
++
++.ai-page-host,
++.ai-label {
++  color: var(--kavacha-text-muted, #a29cba);
++  font-size: 12px;
++}
++
++.ai-row {
++  display: flex;
++  gap: 6px;
++}
++
++.ai-input {
++  width: 100%;
++  box-sizing: border-box;
++  padding: 6px 8px;
++  border: 1px solid var(--kavacha-border, #322b4d);
++  border-radius: var(--ai-radius);
++  background: var(--kavacha-surface-raised, #1d1930);
++  color: inherit;
++  font: inherit;
++  resize: vertical;
++}
++
++.ai-input:focus-visible {
++  outline: 2px solid var(--ai-accent);
++  outline-offset: -1px;
++}
++
++.ai-primary,
++.ai-secondary {
++  padding: 6px 10px;
++  border-radius: var(--ai-radius);
++  border: 1px solid var(--kavacha-border, #322b4d);
++  background: var(--kavacha-surface-raised, #1d1930);
++  color: inherit;
++  font: inherit;
++  cursor: pointer;
++}
++
++.ai-primary {
++  border-color: var(--ai-accent);
++}
++
++.ai-primary:hover,
++.ai-secondary:hover {
++  background: var(--kavacha-surface-hover, #262040);
++}
++
++.ai-primary[disabled] {
++  opacity: 0.55;
++  cursor: default;
++}
++
++/* --------------------------------------------------------------- output */
++
++.ai-status {
++  padding: 8px;
++  border-radius: var(--ai-radius);
++  background: var(--kavacha-surface-raised, #1d1930);
++  color: var(--kavacha-text-muted, #a29cba);
++  font-size: 12px;
++}
++
++.ai-status[hidden] {
++  display: none;
++}
++
++.ai-status .ai-link {
++  margin-top: 6px;
++}
++
++.ai-output:empty {
++  display: none;
++}
++
++.ai-output {
++  /* The answer scrolls, the controls above it do not. */
++  overflow-y: auto;
++  min-height: 0;
++}
++
++.ai-output p,
++.ai-output ul,
++.ai-output ol {
++  margin: 0 0 8px;
++  padding-inline-start: 1.1em;
++}
++
++.ai-output ul,
++.ai-output ol {
++  padding-inline-start: 1.3em;
++}
++
++.ai-output code,
++.ai-output pre {
++  font-family: monospace;
++  background: var(--kavacha-surface-raised, #1d1930);
++  border-radius: 4px;
++}
++
++.ai-output pre {
++  padding: 6px;
++  overflow-x: auto;
++}
++
++.ai-cite {
++  display: inline;
++  padding: 0 2px;
++  border: none;
++  background: none;
++  color: var(--ai-accent);
++  font: inherit;
++  cursor: pointer;
++}
++
++.ai-cite:hover {
++  text-decoration: underline;
++}
++
++/* -------------------------------------------------------------- sources */
++
++.ai-sources:empty {
++  display: none;
++}
++
++.ai-sources {
++  display: flex;
++  flex-direction: column;
++  gap: 6px;
++}
++
++.ai-sources-header {
++  color: var(--kavacha-text-muted, #a29cba);
++  font-size: 12px;
++  text-transform: uppercase;
++  letter-spacing: 0.04em;
++}
++
++.ai-source {
++  display: block;
++  width: 100%;
++  text-align: start;
++  padding: 6px 8px;
++  border: 1px solid var(--kavacha-border, #322b4d);
++  border-radius: var(--ai-radius);
++  background: var(--kavacha-surface-raised, #1d1930);
++  color: inherit;
++  font: inherit;
++  cursor: pointer;
++}
++
++.ai-source:hover {
++  background: var(--kavacha-surface-hover, #262040);
++}
++
++.ai-source-index {
++  color: var(--ai-accent);
++  font-variant-numeric: tabular-nums;
++}
++
++.ai-source-title {
++  font-weight: 600;
++}
++
++.ai-source-meta,
++.ai-source-snippet {
++  color: var(--kavacha-text-muted, #a29cba);
++  font-size: 12px;
++}
++
++.ai-source-snippet {
++  display: -webkit-box;
++  -webkit-line-clamp: 2;
++  -webkit-box-orient: vertical;
++  overflow: hidden;
++}
++
++/* --------------------------------------------------------------- footer */
++
++.ai-footer {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 6px;
++  padding-top: 6px;
++  border-top: 1px solid var(--kavacha-border, #322b4d);
++  color: var(--kavacha-text-muted, #a29cba);
++  font-size: 11px;
++}
++
++.ai-link {
++  padding: 0;
++  border: none;
++  background: none;
++  color: var(--ai-accent);
++  font: inherit;
++  cursor: pointer;
++  text-align: start;
++}
++
++.ai-link:hover {
++  text-decoration: underline;
++}
+diff --git a/src/zen/kavacha-ai/sidebar.html b/src/zen/kavacha-ai/sidebar.html
+new file mode 100644
+index 0000000..4feb49c
+--- /dev/null
++++ b/src/zen/kavacha-ai/sidebar.html
+@@ -0,0 +1,66 @@
++<!-- This Source Code Form is subject to the terms of the Mozilla Public
++   - License, v. 2.0. If a copy of the MPL was not distributed with this
++   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
++<!DOCTYPE html>
++<html lang="en" dir="ltr">
++  <head>
++    <meta charset="utf-8" />
++    <meta
++      http-equiv="Content-Security-Policy"
++      content="default-src chrome:; img-src chrome: data:; style-src chrome: 'unsafe-inline'; object-src 'none'"
++    />
++    <title>Kavacha AI</title>
++    <link rel="stylesheet" href="chrome://browser/content/kavacha-ai/sidebar.css" />
++    <!-- Patch 0062's shared theming: this document is not in the chrome token
++         cascade, so without it every var(--kavacha-*) below would resolve to
++         its literal dark fallback and the sidebar would stay black under a
++         light theme. Synchronous and before sidebar.js so the first paint is
++         already themed. -->
++    <script src="chrome://browser/content/kavacha-theme/content-theme.js"></script>
++    <script src="chrome://browser/content/kavacha-ai/sidebar.js"></script>
++  </head>
++  <body>
++    <nav class="ai-modes" role="tablist">
++      <button id="mode-summarize" class="ai-mode" role="tab" aria-selected="true">
++        Summarize
++      </button>
++      <button id="mode-ask" class="ai-mode" role="tab" aria-selected="false">
++        Ask
++      </button>
++    </nav>
++
++    <section id="view-summarize" class="ai-view" role="tabpanel">
++      <div class="ai-page">
++        <div id="page-title" class="ai-page-title">—</div>
++        <div id="page-host" class="ai-page-host"></div>
++      </div>
++      <button id="summarize-run" class="ai-primary">Summarize this page</button>
++      <div id="summarize-status" class="ai-status" hidden="hidden"></div>
++      <article id="summarize-out" class="ai-output"></article>
++    </section>
++
++    <section id="view-ask" class="ai-view" role="tabpanel" hidden="hidden">
++      <label class="ai-label" for="ask-input">
++        Ask about anything you have visited
++      </label>
++      <textarea
++        id="ask-input"
++        class="ai-input"
++        rows="3"
++        placeholder="Where did I find that paper on flood mapping?"
++      ></textarea>
++      <div class="ai-row">
++        <button id="ask-run" class="ai-primary">Ask</button>
++        <button id="ask-stop" class="ai-secondary" hidden="hidden">Stop</button>
++      </div>
++      <div id="ask-status" class="ai-status" hidden="hidden"></div>
++      <article id="ask-out" class="ai-output"></article>
++      <div id="ask-sources" class="ai-sources"></div>
++    </section>
++
++    <footer class="ai-footer">
++      <span id="ai-footer-status" class="ai-footer-status"></span>
++      <button id="ai-settings" class="ai-link">AI settings</button>
++    </footer>
++  </body>
++</html>
+diff --git a/src/zen/kavacha-ai/sidebar.js b/src/zen/kavacha-ai/sidebar.js
+new file mode 100644
+index 0000000..c5a986e
+--- /dev/null
++++ b/src/zen/kavacha-ai/sidebar.js
+@@ -0,0 +1,537 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha AI sidebar (ADR 0014; ROADMAP Phase 6) — the surface for the two
++// things a local model does with the user's own data: summarize the page in
++// front of them, and answer questions about everything they have kept.
++//
++// This is a CHROME document in a non-remote <browser>, exactly like Firefox's
++// own history and bookmarks sidebars, so it can import the Kavacha modules
++// directly. Two consequences it never gets to forget:
++//
++//   * Model output is UNTRUSTED TEXT rendered with SYSTEM PRIVILEGES. It is
++//     therefore only ever put on screen through KavachaMarkdown (patch 0052),
++//     which BUILDS DOM NODES and never parses HTML, or through textContent.
++//     An innerHTML here would be script execution as chrome — the same
++//     reasoning that governs the workspace notes panel.
++//   * Every request is abortable and superseded requests are dropped, because
++//     a sidebar is closed and re-opened constantly and a generation can take
++//     tens of seconds.
++//
++// Strings are literal English, matching the other Kavacha chrome pages
++// (studio.html, marketplace.html, plugins.html). That is deliberate: these
++// pages are not in browser.xhtml's Fluent scope, and D0e is the standing
++// reminder of what a mis-wired .ftl id ships as — a control that measures
++// perfectly and has no label.
++
++"use strict";
++
++/* global ChromeUtils, Services, document, window, console */
++
++(() => {
++  const { KavachaAIBridge } = ChromeUtils.importESModule(
++    "resource:///modules/KavachaAIBridge.sys.mjs"
++  );
++  const { KavachaAskHistory } = ChromeUtils.importESModule(
++    "resource:///modules/KavachaAskHistory.sys.mjs"
++  );
++  const { KavachaPersonalIndex } = ChromeUtils.importESModule(
++    "resource:///modules/KavachaPersonalIndex.sys.mjs"
++  );
++  const { KavachaMarkdown } = ChromeUtils.importESModule(
++    "resource:///modules/KavachaMarkdown.sys.mjs"
++  );
++
++  const kSummarizeSystem =
++    "You are a concise assistant. Summarize the web page below in 4-6 short " +
++    "bullet points, then one sentence on why it might matter. Use only the " +
++    "text provided; do not speculate about anything it does not say.";
++
++  const kUnavailable =
++    "No local model found. Kavacha talks only to a model server on this " +
++    "machine — install one (Ollama, for example), then check Settings → " +
++    "Privacy → Local AI.";
++
++  // The chrome window this sidebar lives in. topChromeWindow is the supported
++  // way across; the chromeEventHandler walk is the fallback for the same
++  // reason Firefox's own sidebars keep one.
++  const chromeWindow =
++    window.browsingContext?.topChromeWindow ||
++    window.docShell?.chromeEventHandler?.ownerGlobal ||
++    window.top;
++
++  const $ = id => document.getElementById(id);
++
++  // One in-flight request at a time, per view. A new request aborts the old.
++  const inflight = { summarize: null, ask: null };
++
++  /* ------------------------------------------------------------ rendering */
++
++  const clear = node => {
++    while (node.firstChild) {
++      node.firstChild.remove();
++    }
++  };
++
++  function setStatus(node, message, { action } = {}) {
++    clear(node);
++    if (!message) {
++      node.hidden = true;
++      return;
++    }
++    node.hidden = false;
++    node.append(document.createTextNode(message));
++    if (action) {
++      const button = document.createElement("button");
++      button.className = "ai-link";
++      button.textContent = action.label;
++      button.addEventListener("click", action.run);
++      node.append(document.createElement("br"), button);
++    }
++  }
++
++  // Turn "[1]" in the model's prose into a control that reveals the source it
++  // points at. Walks TEXT NODES of the already-built fragment — the citation
++  // markers arrive as text, and they stay text until we replace them with
++  // elements we created ourselves.
++  function linkCitations(fragment, sources) {
++    if (!sources.length) {
++      return;
++    }
++    const walker = document.createTreeWalker(fragment, NodeFilter.SHOW_TEXT);
++    const targets = [];
++    while (walker.nextNode()) {
++      if (/\[\d{1,2}\]/.test(walker.currentNode.nodeValue)) {
++        targets.push(walker.currentNode);
++      }
++    }
++    for (const textNode of targets) {
++      const parts = textNode.nodeValue.split(/(\[\d{1,2}\])/);
++      const replacement = document.createDocumentFragment();
++      for (const part of parts) {
++        const m = /^\[(\d{1,2})\]$/.exec(part);
++        const source = m ? sources[Number(m[1]) - 1] : null;
++        if (!source) {
++          // Either ordinary text, or a citation number the model invented
++          // that points at no source. Leave it as literal text rather than
++          // wiring a control to nothing.
++          replacement.append(document.createTextNode(part));
++          continue;
++        }
++        const cite = document.createElement("button");
++        cite.className = "ai-cite";
++        cite.textContent = part;
++        cite.title = source.title || source.url;
++        cite.addEventListener("click", () => openSource(source.url));
++        replacement.append(cite);
++      }
++      textNode.replaceWith(replacement);
++    }
++  }
++
++  function renderMarkdown(node, text, sources = []) {
++    clear(node);
++    const fragment = KavachaMarkdown.render(text, document);
++    linkCitations(fragment, sources);
++    node.append(fragment);
++  }
++
++  function openSource(url) {
++    try {
++      chromeWindow.openTrustedLinkIn(url, "tab");
++    } catch (e) {
++      console.error("Kavacha AI sidebar: could not open source", e);
++    }
++  }
++
++  function renderSources(node, sources, { numbered = 0 } = {}) {
++    clear(node);
++    if (!sources.length) {
++      return;
++    }
++    const header = document.createElement("div");
++    header.className = "ai-sources-header";
++    header.textContent = numbered ? "Sources" : "From your history";
++    node.append(header);
++
++    sources.forEach((source, i) => {
++      const item = document.createElement("button");
++      item.className = "ai-source";
++
++      const title = document.createElement("div");
++      title.className = "ai-source-title";
++      // Only the first `numbered` sources were shown to the model, so only
++      // those carry a citation number the answer can refer to.
++      if (i < numbered) {
++        const index = document.createElement("span");
++        index.className = "ai-source-index";
++        index.textContent = `[${i + 1}] `;
++        title.append(index);
++      }
++      title.append(document.createTextNode(source.title || source.url));
++
++      const meta = document.createElement("div");
++      meta.className = "ai-source-meta";
++      meta.textContent = [prettyHost(source.url), prettyDate(source.visitedAt)]
++        .filter(Boolean)
++        .join(" · ");
++
++      item.append(title, meta);
++
++      if (source.snippet) {
++        const snippet = document.createElement("div");
++        snippet.className = "ai-source-snippet";
++        // The index wraps matches in guillemets for its own snippet display;
++        // they are noise here.
++        snippet.textContent = source.snippet.replace(/[«»]/g, "");
++        item.append(snippet);
++      }
++
++      item.addEventListener("click", () => openSource(source.url));
++      node.append(item);
++    });
++  }
++
++  function prettyHost(url) {
++    try {
++      return new URL(url).host.replace(/^www\./, "");
++    } catch (e) {
++      return url || "";
++    }
++  }
++
++  function prettyDate(ms) {
++    if (!ms) {
++      return "";
++    }
++    try {
++      return new Date(ms).toLocaleDateString(undefined, {
++        month: "short",
++        day: "numeric",
++        year: "numeric",
++      });
++    } catch (e) {
++      return "";
++    }
++  }
++
++  /* --------------------------------------------------------------- modes */
++
++  function selectMode(mode) {
++    const summarize = mode === "summarize";
++    $("mode-summarize").setAttribute("aria-selected", String(summarize));
++    $("mode-ask").setAttribute("aria-selected", String(!summarize));
++    $("view-summarize").hidden = !summarize;
++    $("view-ask").hidden = summarize;
++  }
++
++  /* ----------------------------------------------------------- summarize */
++
++  function currentBrowser() {
++    return chromeWindow.gBrowser?.selectedBrowser || null;
++  }
++
++  function refreshPageHeader() {
++    const browser = currentBrowser();
++    const url = browser?.currentURI?.spec || "";
++    $("page-title").textContent =
++      chromeWindow.gBrowser?.selectedTab?.label || url || "—";
++    $("page-host").textContent = prettyHost(url);
++    // about:, file: and PDFs have no readable text for us to send.
++    $("summarize-run").disabled = !/^https?:/.test(url);
++  }
++
++  // The page's readable text. Asking the indexer actor for a LIVE capture
++  // first is what makes summarizing independent of the index: the index is a
++  // storage feature the user may have switched off, and "summarize what I am
++  // looking at" should not require having stored it. The stored text is the
++  // fallback for a page whose actor is gone (bfcache, a torn-down frame).
++  async function pageText(browser) {
++    try {
++      const actor =
++        browser.browsingContext?.currentWindowGlobal?.getActor("KavachaIndexer");
++      const captured = await actor?.sendQuery("KavachaIndexer:Capture");
++      if (captured?.text) {
++        return captured.text;
++      }
++    } catch (e) {
++      // No actor for this page (not http/https), or the frame went away.
++    }
++    try {
++      return await KavachaPersonalIndex.getText(browser.currentURI?.spec || "");
++    } catch (e) {
++      return "";
++    }
++  }
++
++  async function summarizeCurrentPage() {
++    const status = $("summarize-status");
++    const out = $("summarize-out");
++    const button = $("summarize-run");
++
++    inflight.summarize?.abort();
++    const controller = new AbortController();
++    inflight.summarize = controller;
++
++    clear(out);
++    refreshPageHeader();
++    const browser = currentBrowser();
++    const url = browser?.currentURI?.spec || "";
++    if (!/^https?:/.test(url)) {
++      setStatus(status, "This page has no readable text to summarize.");
++      return;
++    }
++
++    button.disabled = true;
++    setStatus(status, "Reading the page…");
++    try {
++      const available = await KavachaAIBridge.isAvailable();
++      if (controller.signal.aborted) {
++        return;
++      }
++      if (!available.available) {
++        setStatus(status, kUnavailable, {
++          action: { label: "Open AI settings", run: openSettings },
++        });
++        return;
++      }
++
++      const text = await pageText(browser);
++      if (controller.signal.aborted) {
++        return;
++      }
++      if (!text) {
++        setStatus(
++          status,
++          "Kavacha could not read any text from this page — it may still be " +
++            "loading, or it may be a document with no text layer."
++        );
++        return;
++      }
++
++      setStatus(status, "Summarizing…");
++      const summary = await KavachaAIBridge.generate(text, {
++        system: kSummarizeSystem,
++        signal: controller.signal,
++      });
++      if (controller.signal.aborted) {
++        return;
++      }
++      if (!summary) {
++        setStatus(status, "The model returned nothing.");
++        return;
++      }
++      setStatus(status, "");
++      renderMarkdown(out, summary);
++    } catch (e) {
++      if (e?.name === "AbortError" || controller.signal.aborted) {
++        return;
++      }
++      console.error("Kavacha AI sidebar: summarize failed", e);
++      setStatus(status, "The local model could not complete the request.");
++    } finally {
++      if (inflight.summarize === controller) {
++        inflight.summarize = null;
++      }
++      button.disabled = false;
++      refreshPageHeader();
++    }
++  }
++
++  /* ----------------------------------------------------------------- ask */
++
++  const kReasonText = {
++    "no-terms":
++      "That question is all common words — try naming something specific you " +
++      "remember seeing.",
++    "no-sources": "Nothing in your history matches that.",
++    disabled: "Local AI is switched off, so here is what your history holds.",
++    unreachable:
++      "No local model is running, so here is what your history holds.",
++    "no-models":
++      "The model server is running but has no models installed, so here is " +
++      "what your history holds.",
++    "no-text":
++      "These pages were visited before their text was indexed, so they can " +
++      "be listed but not read.",
++    empty: "The model returned nothing, so here is what your history holds.",
++    error:
++      "The local model could not answer, so here is what your history holds.",
++  };
++
++  // `exact` and `relaxed` say different things and must not be collapsed: a
++  // question can turn up one page carrying every word AND a pile of near
++  // misses, and telling the user "nothing matched every word" there is simply
++  // false.
++  function relaxationNote({ exact, relaxed }) {
++    if (!relaxed) {
++      return "";
++    }
++    return exact
++      ? "Pages matching only some of your words are included below."
++      : "No page matched every word, so these are the closest ones.";
++  }
++
++  async function runAsk() {
++    const question = $("ask-input").value.trim();
++    if (!question) {
++      return;
++    }
++    const status = $("ask-status");
++    const out = $("ask-out");
++    const sourcesNode = $("ask-sources");
++
++    inflight.ask?.abort();
++    const controller = new AbortController();
++    inflight.ask = controller;
++
++    clear(out);
++    clear(sourcesNode);
++    $("ask-run").disabled = true;
++    $("ask-stop").hidden = false;
++    setStatus(status, "Searching your history…");
++
++    try {
++      const result = await KavachaAskHistory.ask(question, {
++        signal: controller.signal,
++      });
++      if (controller.signal.aborted) {
++        return;
++      }
++
++      if (result.degraded) {
++        if (result.reason !== "aborted") {
++          setStatus(status, kReasonText[result.reason] || kReasonText.error);
++        }
++        renderSources(sourcesNode, result.sources);
++        return;
++      }
++
++      setStatus(status, relaxationNote(result));
++      renderMarkdown(out, result.answer, result.cited || []);
++      renderSources(sourcesNode, result.sources, {
++        numbered: (result.cited || []).length,
++      });
++    } catch (e) {
++      if (e?.name === "AbortError" || controller.signal.aborted) {
++        return;
++      }
++      console.error("Kavacha AI sidebar: ask failed", e);
++      setStatus(status, "The local model could not complete the request.");
++    } finally {
++      if (inflight.ask === controller) {
++        inflight.ask = null;
++      }
++      $("ask-run").disabled = false;
++      $("ask-stop").hidden = true;
++    }
++  }
++
++  function focusAsk(question = "") {
++    selectMode("ask");
++    const input = $("ask-input");
++    if (question) {
++      input.value = question;
++    }
++    input.focus();
++    if (question) {
++      runAsk();
++    }
++  }
++
++  /* -------------------------------------------------------------- footer */
++
++  function openSettings() {
++    try {
++      chromeWindow.openPreferences("paneKavachaPrivacy");
++    } catch (e) {
++      console.error("Kavacha AI sidebar: could not open settings", e);
++    }
++  }
++
++  // Named on demand only. Probing here would put a network request behind
++  // merely opening the sidebar, and R3 (fresh profile makes no requests) plus
++  // ADR 0013's "never in the background" both say no.
++  function refreshFooter() {
++    const enabled = Services.prefs.getBoolPref("kavacha.ai.enabled", true);
++    const model = Services.prefs.getStringPref("kavacha.ai.model", "");
++    $("ai-footer-status").textContent = !enabled
++      ? "Local AI is off"
++      : model
++        ? `Local model: ${model}`
++        : "Local model on this device only";
++  }
++
++  /* ---------------------------------------------------------------- init */
++
++  function init() {
++    $("mode-summarize").addEventListener("click", () =>
++      selectMode("summarize")
++    );
++    $("mode-ask").addEventListener("click", () => selectMode("ask"));
++    $("summarize-run").addEventListener("click", summarizeCurrentPage);
++    $("ask-run").addEventListener("click", runAsk);
++    $("ask-stop").addEventListener("click", () => inflight.ask?.abort());
++    $("ai-settings").addEventListener("click", openSettings);
++    $("ask-input").addEventListener("keydown", event => {
++      // Enter asks; Shift+Enter is a newline, because a question can be long.
++      if (event.key === "Enter" && !event.shiftKey) {
++        event.preventDefault();
++        runAsk();
++      }
++    });
++
++    // Follow the window's current tab, so the Summarize view always names the
++    // page the user is looking at. Deliberately does NOT re-summarize: that
++    // would fire a model request on every tab switch.
++    const onTabChange = () => refreshPageHeader();
++    chromeWindow.addEventListener("TabSelect", onTabChange, true);
++
++    // TabSelect alone would miss navigation WITHIN the selected tab, which is
++    // the common case: read an article, follow a link, hit Summarize, and get
++    // the previous page's title.
++    const progressListener = {
++      QueryInterface: ChromeUtils.generateQI([
++        "nsIWebProgressListener",
++        "nsISupportsWeakReference",
++      ]),
++      onLocationChange: () => refreshPageHeader(),
++    };
++    try {
++      chromeWindow.gBrowser?.addProgressListener(progressListener);
++    } catch (e) {
++      console.error("Kavacha AI sidebar: no progress listener", e);
++    }
++
++    window.addEventListener(
++      "unload",
++      () => {
++        inflight.summarize?.abort();
++        inflight.ask?.abort();
++        chromeWindow.removeEventListener("TabSelect", onTabChange, true);
++        try {
++          chromeWindow.gBrowser?.removeProgressListener(progressListener);
++        } catch (e) {}
++      },
++      { once: true }
++    );
++
++    refreshPageHeader();
++    refreshFooter();
++  }
++
++  // The chrome-side opener (KavachaAISidebar) calls into this once the page
++  // has loaded, rather than the page polling for an intent.
++  window.KavachaAISidebarPage = {
++    summarizeCurrentPage,
++    focusAsk,
++    selectMode,
++  };
++
++  if (document.readyState === "loading") {
++    document.addEventListener("DOMContentLoaded", init, { once: true });
++  } else {
++    init();
++  }
++})();
+diff --git a/src/zen/kavacha-index/KavachaPersonalIndex.sys.mjs b/src/zen/kavacha-index/KavachaPersonalIndex.sys.mjs
+index 5866fd3..e6783af 100644
+--- a/src/zen/kavacha-index/KavachaPersonalIndex.sys.mjs
++++ b/src/zen/kavacha-index/KavachaPersonalIndex.sys.mjs
+@@ -142,6 +142,14 @@ export const KavachaPersonalIndex = {
+ 
+   /* ---------------------------------------------------------------- query */
+ 
++  /** A query string split into the terms searchTerms() matches on. */
++  terms(query) {
++    return String(query || "")
++      .toLowerCase()
++      .split(/\s+/)
++      .filter(Boolean);
++  },
++
+   /**
+    * Matches where every query term appears in title or text (AND). SQL walks
+    * newest-first and stops early once `limit` candidates match — cheap for the
+@@ -152,24 +160,45 @@ export const KavachaPersonalIndex = {
+    * ASCENDING (better first) so it sorts the same way as the other sources.
+    */
+   async search(query, { limit = 10 } = {}) {
++    return this.searchTerms(this.terms(query), { limit });
++  },
++
++  /**
++   * The same search over an already-split term list, with a `mode`:
++   *
++   *   "all" (default) — every term must appear. What the universal-search box
++   *                     wants: the user typed the words they expect to see.
++   *   "any"           — at least one term appears, ranked by how MANY distinct
++   *                     terms a page carries. Ask-your-history (ADR 0014) needs
++   *                     this: a natural-language question carries terms no
++   *                     single page will hold all of, and "all" over eight
++   *                     words reliably matches nothing.
++   *
++   * Results also carry `matched` (distinct terms present) so a caller can tell
++   * a strong hit from an incidental one. Ranking is by distinct terms first,
++   * then occurrences, then recency — which is why `matched` dominates the
++   * score: under "any" a page mentioning three of the terms once each should
++   * beat one that repeats a single common word.
++   *
++   * `withText` returns each page's whole stored text (up to 32k chars each).
++   * Off by default on purpose: the search box needs the snippet only, and 30
++   * candidate rows of full text is about a megabyte per keystroke-driven query.
++   * Ask-your-history turns it on because it has to build passages.
++   */
++  async searchTerms(terms, { limit = 10, mode = "all", withText = false } = {}) {
+     try {
+-      const terms = String(query || "")
+-        .toLowerCase()
+-        .split(/\s+/)
+-        .filter(Boolean);
+-      if (!terms.length) {
++      if (!Array.isArray(terms) || !terms.length) {
+         return [];
+       }
+       const db = await this._getDb();
+-      // Every term must appear (in title OR text). LIKE escapes %/_ so a query
+-      // like "50%" is a literal, not a wildcard.
++      // LIKE escapes %/_ so a query like "50%" is a literal, not a wildcard.
+       const params = { limit: limit * 3 }; // over-fetch, re-rank, then trim
+       const where = terms
+         .map((t, i) => {
+           params[`t${i}`] = "%" + this._likeEscape(t) + "%";
+           return `(lower(title) LIKE :t${i} ESCAPE '\\' OR lower(text) LIKE :t${i} ESCAPE '\\')`;
+         })
+-        .join(" AND ");
++        .join(mode === "any" ? " OR " : " AND ");
+       const rows = await db.execute(
+         `SELECT url, title, text, workspace_uuid, visited_at
+            FROM pages WHERE ${where}
+@@ -182,18 +211,28 @@ export const KavachaPersonalIndex = {
+         const text = r.getResultByName("text") || "";
+         const hay = (title + " " + text).toLowerCase();
+         let occ = 0;
++        let matched = 0;
+         for (const t of terms) {
+-          occ += hay.split(t).length - 1;
++          const n = hay.split(t).length - 1;
++          occ += n;
++          if (n) {
++            matched++;
++          }
+         }
+         return {
+           url,
+           title,
++          text: withText ? text : undefined,
++          matched,
+           snippet: this._snippet(text, terms),
+           workspaceUuid: r.getResultByName("workspace_uuid"),
+           visitedAt: r.getResultByName("visited_at"),
+-          // More occurrences ranks better; ascending score, so negate. Recency
+-          // is the tiebreak via a tiny fractional term.
+-          score: -occ - r.getResultByName("visited_at") / 1e15,
++          // Ascending score, so negate: more distinct terms first, then more
++          // occurrences, then recency as a tiny fractional tiebreak. The
++          // 1e4 weight makes "matched" strictly dominant — occurrence counts
++          // stay well under it for a 32k-char page.
++          score:
++            -(matched * 1e4) - occ - r.getResultByName("visited_at") / 1e15,
+         };
+       });
+       scored.sort((a, b) => a.score - b.score);
+diff --git a/src/zen/kavacha-index/actors/KavachaIndexerChild.sys.mjs b/src/zen/kavacha-index/actors/KavachaIndexerChild.sys.mjs
+index c91b577..4a86117 100644
+--- a/src/zen/kavacha-index/actors/KavachaIndexerChild.sys.mjs
++++ b/src/zen/kavacha-index/actors/KavachaIndexerChild.sys.mjs
+@@ -51,6 +51,29 @@ export class KavachaIndexerChild extends JSWindowActorChild {
+     // their window. Kept explicit so nobody "fixes" a leak that isn't one.
+   }
+ 
++  // On-demand extraction for the AI sidebar (ADR 0014). Returns the text
++  // rather than sending it to the index: summarizing what you are looking at
++  // must not depend on having STORED it, so this path works with the index
++  // switched off and stores nothing by itself.
++  receiveMessage(message) {
++    if (message.name !== "KavachaIndexer:Capture") {
++      return null;
++    }
++    try {
++      const doc = this.document;
++      if (!doc || !/^https?:$/.test(doc.location?.protocol || "")) {
++        return null;
++      }
++      return {
++        url: doc.location.href,
++        title: doc.title || "",
++        text: (doc.body?.innerText || "").slice(0, kMaxChars).trim(),
++      };
++    } catch (e) {
++      return null;
++    }
++  }
++
+   #capture() {
+     if (this.#captured) {
+       return;

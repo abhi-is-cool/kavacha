@@ -34,7 +34,7 @@ anyone — even a developer preview — means shipping something that cannot be 
 |---|---|
 | Everything above | ❌ |
 | Phase 3 complete | ✅ Shipped, ⚠️ partially verified. |
-| Phase 4 complete | ⚠️ **Features shipped, none build-verified.** Patches 0047–0050 (2026-08-02) closed every Phase 4 feature item; one follow-up (blocked-today badge surface) and R3 remain — see [REMAINING_WORK.md](REMAINING_WORK.md) §2. |
+| Phase 4 complete | ⚠️ **Features shipped, none build-verified.** Patches 0047–0050 (2026-08-02) closed every Phase 4 feature item and 0077 closed the blocked-today badge follow-up; R3 remains — see [REMAINING_WORK.md](REMAINING_WORK.md) §2. |
 | Reproducible builds | ❌ Not started — R4. |
 | Disclosure program live | ❌ Not started — R5. |
 

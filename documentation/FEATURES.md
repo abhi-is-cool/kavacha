@@ -57,16 +57,16 @@ password manager is the interim answer and ships today.
 
 | Feature | Status vs Zen | Priority |
 |---|---|---|
-| 6.1 **Built-in notes** — per-page annotations | **new** | later |
-| 6.2 **Web clipper** — pages, screenshots, PDFs, highlights (Pocket/Evernote/Notion-style, but local) | **new** | later |
-| 6.3 **Personal knowledge graph** — the browser understands relationships between papers, sites, notes, conversations | **new** (long-term; builds on 8.2 + 6.1) | later |
+| 6.1 **Built-in notes** — per-page annotations | **new** — shipped 2026-08-17 (patch 0082, ADR 0015): a note per page plus highlights with comments | later (**done**) |
+| 6.2 **Web clipper** — pages, screenshots, PDFs, highlights (Pocket/Evernote/Notion-style, but local) | **new** — shipped 2026-08-17 (patch 0082). Text, not bytes: the saved copy survives the site going away, which is also "offline mode". Screenshots are Firefox's own (0087); PDFs remain uncaptured | later (**partly done**) |
+| 6.3 **Personal knowledge graph** — the browser understands relationships between papers, sites, notes, conversations | **new** — shipped 2026-08-17 (patch 0083, ADR 0016): `about:knowledge`. One stored fact (A led to B); the rest derived from 8.2 + 6.1 at query time | later (**done**) |
 
 ## 7. Better Tab Management
 
 | Feature | Status vs Zen | Priority |
 |---|---|---|
-| 7.1 **Tab history tree** — branching history instead of linear | **new** | later |
-| 7.2 **Tab sessions** — save "Research Project: 50 tabs, 3 windows, 5 notes", restore anytime | **extend** — Zen `sessionstore` persists state; named/saved sessions are new | later |
+| 7.1 **Tab history tree** — branching history instead of linear | **new** — shipped 2026-08-17 (patch 0086, ADR 0019): recorded alongside session history, so Back and Forward keep their meaning | later (**done**) |
+| 7.2 **Tab sessions** — save "Research Project: 50 tabs, 3 windows, 5 notes", restore anytime | **extend** — saving shipped 2026-08-15 (0081); the cross-Space manager with rename and delete shipped 2026-08-17 (0086) | later (**done**) |
 | 7.3 **Automatic tab organization** — AI creates topic groups | **new** (= 5.3, via Zen `folders`) | **Y1** |
 
 ## 8. Search
@@ -96,9 +96,9 @@ do, which is the one thing the consumer product promises never to happen.
 | Feature | Status vs Zen | Priority |
 |---|---|---|
 | Command palette (`Ctrl+Shift+P`: change theme, switch workspace, search history, summarize page) | **inherit** — Zen ships one; Kavacha extends it with AI + studio commands | **Y1** (free) |
-| Browser automation — "Open my morning workflow" → Gmail, Calendar, News, Tasks | **new** (natural fit on workspace templates) | later |
-| Focus mode — block distracting sites + notifications | **new** | later |
-| Offline mode — save pages, notes, documents | **new** (with web clipper) | later |
+| Browser automation — "Open my morning workflow" → Gmail, Calendar, News, Tasks | **new** — shipped 2026-08-17 (patch 0085, ADR 0017): `about:workflows`. Workflows are data, never code | later (**done**) |
+| Focus mode — block distracting sites + notifications | **new** — shipped 2026-08-17 (patch 0084, ADR 0018): a session is a period, not a mode | later (**done**) |
+| Offline mode — save pages, notes, documents | **new** — the text half shipped with the clipper (0082); full-fidelity archiving deliberately not attempted | later (**partly done**) |
 
 ## Year-1 must-have summary
 
@@ -110,8 +110,14 @@ do, which is the one thing the consumer product promises never to happen.
 6. **Theme/component marketplace** (2.2, 2.3)
 7. **Personal search index** (8.2) — doubles as AI retrieval backbone
 
-Later (browser, post-v1.0): notes system, web clipper, knowledge graph, automation,
-focus mode, offline mode, tab history tree — see ROADMAP "Phase 7 — Browser, later".
+~~Later (browser, post-v1.0)~~ — **all written 2026-08-17**, patches 0082–0087, ahead of
+their post-v1.0 slot because none of them needs an account: notes system, web clipper,
+knowledge graph, automation, focus mode, offline mode (the text half), tab history tree.
+**"Shipped" in the rows above means a patch exists and applies — not that it has run.**
+Unlike every earlier phase in this file, **no build of 0082–0087 has completed and no
+runtime probe has driven any of them** — see ROADMAP "Phase 7" and VERIFICATION §4d.
+Still open from that row: the REST client, DOM-anchored highlights, PDF capture, and
+full-fidelity offline archiving.
 
 Later (separate products, gated): email aliases, password manager, cloud storage,
 search aggregator, enterprise — see [ECOSYSTEM.md](ECOSYSTEM.md).

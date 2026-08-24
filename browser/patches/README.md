@@ -56,6 +56,25 @@ overlay/pref could not do it, and which upstream files it touches.
 
 | `0065-compact-mode-reversible.patch` | **"This is what I see when I launch it" — an empty window.** Not a rendering bug: it was Zen's compact mode, with `navigator-toolbox` measured at x = −247 and the tab strip and ⚙ button `visibility: hidden`. One click on `zen-toggle-compact-mode` persists through `zen.view.compact.enable-at-startup` (shipped `false`, commented "do not edit manually"), so every later launch looks empty, and recovery is a hover or a palette command — neither discoverable from an empty window. 0063 made Appearance one home and carried no compact-mode control; this adds one, reading the live `gZenCompactModeManager.preference`. The panel opens even with its anchor hidden, which is what makes it an escape hatch. Also records a correction: 0061's and 0064's headers claim `color-scheme: light` on `browser[type=content]` under a light theme — it computes `dark`, because content follows `browser.theme.content-theme`, not the chrome cascade. That behaviour is correct and kept; the claim was not |
 
+*Rows `0082`–`0087` below are **unbuilt**. Every other patch in this table has been
+through at least one completed build; these six have not — two attempts were made and
+neither finished, the second for lack of memory on the development machine. They apply
+cleanly and round-trip byte-identically, and that is the whole of what is known. See
+[VERIFICATION.md](../../documentation/VERIFICATION.md) §4d.*
+
+| `0082-knowledge-capture.patch` | Per-page notes, highlights with comments, and a web clipper (FEATURES 6.1/6.2; ADR 0015), in `kavacha-knowledge.sqlite` with a Knowledge sidebar and two new universal-search sources. **Deletion is deliberately the inverse of the personal index's**: the index follows Places because it is a derived cache, while a note is a document the user wrote — so clearing history must not destroy it. That is also why per-item delete, "delete everything" and a one-call JSON export ship in v1 |
+| `0083-knowledge-graph.patch` | The personal knowledge graph and `about:knowledge` (FEATURES 6.3; ADR 0016). Stores exactly one new fact — that one page led to another — because Places records both visits and no relationship between them; everything else is derived at query time. Deletion follows Places here, which is why the edges live in their own SQLite file. Entity extraction via the local model is on demand only, so the zero-background-request guarantee (R3) survives |
+| `0084-focus-mode.patch` | Focus mode (FEATURES 11; ADR 0018): a session is a **period with an end time**, not a mode flag, so a crash cannot strand the browser blocked. Sessions survive a restart but ending is one click — a tool for attention, not a lock. Top-level pages only, matched on eTLD+1; the notification default is restored exactly (patch 0066's lesson applied before the bug). `about:focus` is both the block page and the blocklist editor |
+| `0085-automation-workflows.patch` | The automation framework and `about:workflows` (PLATFORM_PLAN row 4; ADR 0017). **A workflow is data, never code**: a fixed allowlist of steps, schema-validated fail-closed at save and again at run, recursion impossible by construction, single-flight runs, capped steps and tabs. Fills the `automation` command domain patch 0027 reserved three phases earlier |
+| `0086-tab-history-tree.patch` | The tab history tree (FEATURES 7.1; ADR 0019) — the branches Gecko truncates when you go back and then follow a different link — recorded *alongside* session history so Back and Forward keep their meaning, persisted per tab through SessionStore, trimmed leaves-only. Also the cross-Space saved-session manager (7.2) that patch 0081 left unbuilt, with the delete that retention's labelled-snapshot exemption made necessary |
+| `0087-power-user-tooling.patch` | Citations (APA/MLA/BibTeX from the page's own `citation_*`/OpenGraph metadata) and writing mode (`about:write`, a view over notes that already exist). The audit came first: capture is Firefox's own Screenshots, annotation shipped in 0082, and the JSON viewer is already on — so this patch builds the two that were genuinely missing and records why the REST client is deliberately not one of them |
+
+**Gap in this table (2026-08-17):** rows for `0066`–`0081` were never added. Those
+patches are documented in [ROADMAP.md](../../documentation/ROADMAP.md) and
+[VERIFICATION.md](../../documentation/VERIFICATION.md); this index is behind, and is
+noted here rather than silently backfilled.
+
+
 Audit note (2026-07-09): Zen's tracked sources contain no analytics/crash SDKs.
 Mozilla telemetry is already compiled out by Zen's build config; remaining automatic
 Mozilla endpoints (region ping, contile, system add-on updates, Windows default-browser

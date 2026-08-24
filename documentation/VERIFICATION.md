@@ -398,6 +398,77 @@ press rather than by invoking the registered command.
 
 ---
 
+## 4d. Phase 7 (0082–0087) — chain-verified, **never built, L4 never run**
+
+<!-- PHASE7-TEST-STATUS: UNTESTED -->
+**Committed untested, deliberately and on the record.** Phase 7 was committed in this
+state so the work is not lost, not because it is done. The next session builds it, runs
+`build/marionette-phase7.py`, fixes what that finds, recommits, and then replaces the
+marker above with `<!-- PHASE7-TEST-STATUS: TESTED <commit-sha> -->` and rewrites this
+section to say what the probe actually showed. See the READ FIRST block at the top of
+[REMAINING_WORK.md](REMAINING_WORK.md).
+
+Written 2026-08-17, corrected 2026-08-23. Stated plainly because this section exists
+to stop us confusing "it applies" with "it works" — and the correction matters: an
+earlier draft of this heading said "built", which was not true and is the exact
+mistake the section is meant to prevent.
+
+**No build of this series has ever completed, so no L4 probe has ever run.** Two
+attempts were made. The first failed outright on the sorted-list defect below. The
+second got past the `moz.build` read and into the C++ compile before it was stopped
+part-way: a full Gecko build exhausts RAM on the development machine and spends its
+time in swap, which makes the ~27-minute build effectively unbounded there. This is a
+*hardware* gate, not a code one — it says nothing about whether the series compiles,
+only that we do not know. `build/marionette-phase7.py` is written, executable and
+syntax-checked, and is waiting for a machine that can produce a build.
+
+**What has been settled**
+
+| Check | Result |
+|---|---|
+| Series round-trip | All six patches reverse-apply newest→oldest and forward-apply oldest→newest in a scratch copy, producing a byte-identical tree over **50 touched files**, zero `.rej` |
+| Syntax | `node --check` on every new and modified `.mjs` / `.js` |
+| Component manifests | The four new `components.conf` files parse and declare distinct cids and contract ids (`knowledge`, `focus`, `workflows`, `write`) |
+| Schema | `automation/workflow.schema.json` parses; its action `enum` matches the engine's `KavachaWorkflowActions` (11 entries) |
+| Build — **attempted, never completed** | The attempt paid for itself anyway: `EXTRA_JS_MODULES` is a `StrictOrderingOnAppendList`, and `KavachaWorkflows.sys.mjs` had been inserted before `KavachaWidgetHost.sys.mjs`, which fails the `moz.build` read outright and which **no** static gate catches. Fixed in the tree *and* in patch 0085's hunk, then the round-trip was re-run. A second attempt then read `moz.build` successfully and began compiling before it was stopped for the memory reason above — so the manifests parse, and **nothing beyond that is established**: not that the C++ links, not that the jar entries land, not that a single new file reaches `dist/` |
+
+**Logic verified without a browser (41 checks, 0 failures).**
+`test/phase7-logic/phase7_logic_test.mjs` imports the **real** modules with Gecko's
+globals stubbed — the technique that reproduced D8 — and exercises citation formatting,
+hostile entity replies, URL keying, the tab-tree classifier and the non-schema half of
+workflow validation. It found two things a static gate could not:
+
+- The tab-tree classifier recognised only a **one-step** back, so the Back button's
+  dropdown (a multi-entry jump) duplicated a node instead of moving the cursor. Fixed
+  by walking the whole ancestor chain; forward stays one level, because the ancestor
+  chain is bounded and descendants are not.
+- The `run-command` recursion refusal ran *after* the command lookup, so it depended on
+  an unrelated lookup succeeding. Moved ahead of it — a security check that only runs
+  when something else happens to succeed is one refactor from not running.
+
+Passing there is **not** L4: it never touches SQLite, the registry, chrome UI, the
+actor or a real navigation.
+
+**What has NOT been settled — the arm list**
+
+Nothing below has been driven at runtime, and nothing below is even *packaged* yet. Given the 0059 saga (four settings panes that
+were present, packaged, and dead), this is the section that matters.
+
+| Patch | Unproven |
+|---|---|
+| 0082 | The Knowledge sidebar registers and opens; a note autosaves and an emptied note deletes; `CaptureSelection` returns a real selection; a clip stores real page text and the saved copy renders offline; the two new universal-search groups appear with their headers |
+| 0083 | `about:knowledge` loads (all four new about: pages share this risk — a JS about-module that registers but does not resolve is exactly the 0024 gap); a `followed` edge is written on an ordinary navigation and an `opened-from` edge on a link-to-new-tab; deleting the graph leaves the notes |
+| 0084 | A blocked site actually reaches the block page rather than a network error; the notification default is restored exactly on end; a session survives a restart and expires on the clock |
+| 0085 | A workflow saves, registers its `Run:` command, and runs; an invalid document is refused at save AND at run; a deleted workflow's command leaves the palette; `run-command` refuses a workflow command; the tab cap stops a runaway |
+| 0086 | Back-then-elsewhere really produces a sibling rather than a truncation; the tree survives a restart through SessionStore; the saved-session manager lists across Spaces and its delete confirms |
+| 0087 | A citation copies with real metadata from a `citation_*` page; `about:write` edits the Space note and the page note and saves both; the Screenshots command fires Firefox's UI |
+
+Two harness notes carried forward from §4c and still in force: a `.sys.mjs` change needs
+`bootstrap.sh fast` **plus** clearing the profile `startupCache`, and JSWindow actor
+child scripts do not load on a local macOS build without
+`MOZ_DISABLE_CONTENT_SANDBOX=1` — which affects 0082's clip/highlight capture and
+0087's citation metadata, since all three go through the `KavachaIndexer` actor.
+
 ## 5. Documentation reconciliation needed
 
 - **ROADMAP.md has zero references to patches 0033–0037.** Five patches of

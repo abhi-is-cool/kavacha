@@ -1,0 +1,768 @@
+# Patch 0086 — Tab history TREE + the saved-session manager (ROADMAP Phase 7;
+# FEATURES 7.1 and 7.2).
+#
+# THE PROBLEM IS ONE SENTENCE. Every browser's session history is a list with
+# a cursor: go back three pages, follow a different link, and the three pages
+# you came from are GONE — silently truncated, with no gesture anywhere that
+# brings them back. That is the most common way people lose their place while
+# researching, and it is a data-model choice, not a law of browsers.
+#
+# THIS DOES NOT REWIRE BACK AND FORWARD. Gecko's session history keeps its
+# exact meaning, because changing what Back does would break muscle memory
+# every user already has. The tree is recorded ALONGSIDE it and offers the
+# abandoned branches back. Jumping to a node is an ORDINARY navigation, which
+# is what keeps the model honest: the next location change is classified by
+# the same rules as any other, so the cursor visibly lands where it should.
+#
+# CLASSIFICATION, in order, against the node the tab currently sits on: same
+# URL is a reload (refresh the title, move nothing); ANY ANCESTOR's URL is a
+# BACK; a child's URL is a FORWARD; anything else is a new node parented at
+# the cursor. Back walks the whole ancestor chain rather than checking only
+# the parent, because jumping several entries at once is a real gesture (the
+# Back button's dropdown, a long press) and checking one level would classify
+# it as a brand new page and duplicate a node the tree already holds. Forward
+# stays one level: the ancestor chain is bounded, descendants are not. That last case is the entire feature — if the cursor had moved
+# up first, the new node is a SECOND CHILD, and the branch that Gecko would
+# have truncated is now simply a sibling.
+#
+# TRIMMING ONLY EVER DROPS LEAVES, oldest first, and never the cursor or
+# anything on its path to the root. Dropping an interior node would orphan a
+# whole branch, which is the one thing this module exists to prevent.
+#
+# PERSISTENCE RIDES SESSIONSTORE (setCustomTabValue), deliberately: per tab,
+# survives a restart, dies when the tab is closed for good. A tree that
+# outlived its tab would be a second and worse history store; one that did not
+# survive a restart would lose the branch exactly when it is most wanted.
+#
+# THE PANEL IS PER-TAB, WHICH IS WHY IT IS A PANEL. An about: page would have
+# to be opened in some other tab and then reach back for the one the user
+# actually meant.
+#
+# SAVED SESSIONS (7.2) close what patch 0081 opened. That patch shipped "Save
+# This Research Session" and stopped: a saved session could only be found
+# through the timeline of the ONE Space it belonged to, which is exactly what
+# a person forgets three weeks later. This lists every saved session across
+# every Space and adds rename and delete. DELETE MATTERS MORE THAN IT LOOKS:
+# retention deliberately exempts labelled snapshots (0081, correctly — silent
+# expiry of something the user named is data loss), so without this a saved
+# session was permanent. It confirms first, for the same reason.
+#
+# Restore still goes through kavachaBranchSpace, so it stays NON-DESTRUCTIVE
+# (ADR 0006): restoring a session forks a branch and never overwrites the
+# present. One mechanism, not two.
+#
+# The two panel titles are ATTRIBUTE-form Fluent messages, because a
+# value-only message on a XUL label renders blank — patch 0067 fixed thirteen
+# of those, every one of which a geometry probe had called present.
+#
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index 88c452a..b4507d6 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -160,3 +160,7 @@ kavacha-action-focus-settings = Focus Settings
+ # automation command; each workflow registers its own "Run: <name>" at runtime
+ # with a rawLabel, because a runtime command cannot add a Fluent key.
+ kavacha-action-open-workflows = Workflows
++
++# Kavacha patch 0086 — the tab history tree and the saved-session manager.
++kavacha-action-tab-tree = Tab History Tree
++kavacha-action-saved-sessions = Saved Sessions
+diff --git a/locales/en-US/browser/browser/zen-workspaces.ftl b/locales/en-US/browser/browser/zen-workspaces.ftl
+index bdbce9b..bbd0e78 100644
+--- a/locales/en-US/browser/browser/zen-workspaces.ftl
++++ b/locales/en-US/browser/browser/zen-workspaces.ftl
+@@ -293,3 +293,23 @@ kavacha-knowledge-sidebar-menu =
+ # Kavacha patch 0082 — universal-search group headers for the knowledge store.
+ kavacha-search-group-pagenotes = Page Notes
+ kavacha-search-group-clips = Highlights & Clips
++
++# Kavacha patch 0086 — the tab history tree panel. These label XUL elements in
++# browser.xhtml, so they belong in this file's Fluent scope.
++# The messages that label a XUL <label> are ATTRIBUTE-form. A value-only
++# message on a XUL label/button/menuitem renders BLANK — patch 0067 fixed
++# thirteen of those, and every geometry probe had reported them as present.
++# The rest are read with formatValue(s) and assigned in JS, so they are values.
++kavacha-tabtree-title =
++    .value = Where this tab has been
++kavacha-tabtree-empty =
++    .value = Nothing recorded in this tab yet. Follow a link and come back.
++kavacha-tabtree-go = Go
++# Kavacha patch 0086 — saved sessions, across every Space.
++kavacha-sessions-title =
++    .value = Saved sessions
++kavacha-sessions-empty =
++    .value = No saved sessions yet. “Save This Research Session” keeps one.
++kavacha-sessions-rename = Rename
++kavacha-sessions-delete = Delete
++kavacha-sessions-rename-prompt = Name this session
+diff --git a/src/browser/base/content/zen-panels/popups.inc b/src/browser/base/content/zen-panels/popups.inc
+index ff75bdd..af2e2b0 100644
+--- a/src/browser/base/content/zen-panels/popups.inc
++++ b/src/browser/base/content/zen-panels/popups.inc
+@@ -208,6 +208,28 @@
+   </vbox>
+ </panel>
+ 
++# Kavacha patch 0086 — the tab history TREE. One list, indented: the branches
++# ordinary Back/Forward silently truncates are the rows with a marker, and
++# they are the only reason this panel exists.
++<panel id="kavacha-tabtree-panel" type="arrow" orient="vertical">
++  <vbox style="width: 420px; padding: 10px; gap: 8px;">
++    <label id="kavacha-tabtree-title" data-l10n-id="kavacha-tabtree-title" style="font-weight: 600;"/>
++    <label id="kavacha-tabtree-empty" data-l10n-id="kavacha-tabtree-empty" hidden="true" style="opacity: 0.7;"/>
++    <vbox id="kavacha-tabtree-list" style="overflow: auto; max-height: 360px; gap: 2px;"/>
++  </vbox>
++</panel>
++
++# Kavacha patch 0086 — saved sessions across every Space. Patch 0081 started
++# recording them and gave no way to find one again except by remembering which
++# Space it belonged to, which is exactly what a person forgets.
++<panel id="kavacha-sessions-panel" type="arrow" orient="vertical">
++  <vbox style="width: 440px; padding: 10px; gap: 8px;">
++    <label id="kavacha-sessions-title" data-l10n-id="kavacha-sessions-title" style="font-weight: 600;"/>
++    <label id="kavacha-sessions-empty" data-l10n-id="kavacha-sessions-empty" hidden="true" style="opacity: 0.7;"/>
++    <vbox id="kavacha-sessions-list" style="overflow: auto; max-height: 380px; gap: 4px;"/>
++  </vbox>
++</panel>
++
+ # Kavacha patch 0052 adds the markdown preview. The textarea stays the source
+ # of truth and is what autosaves; the preview is a sibling that is shown in its
+ # place, never an editable rendering — so there is no round-trip from DOM back
+diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
+index 2d069ec..a601032 100644
+--- a/src/zen/common/modules/ZenStartup.mjs
++++ b/src/zen/common/modules/ZenStartup.mjs
+@@ -191,6 +191,12 @@ class ZenStartup {
+         "resource:///modules/KavachaWorkflows.sys.mjs"
+       ).KavachaWorkflows;
+       kavachaWorkflows.init().then(() => kavachaWorkflows.onStartup(window));
++      // Kavacha: the tab history TREE (patch 0086) — records the branches
++      // ordinary session history truncates. Per window, since it listens to
++      // that window's tab navigations; refuses private windows itself.
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaTabHistory.sys.mjs"
++      ).KavachaTabHistory.attachToWindow(window);
+       // Kavacha: apply the saved layout document to this window's chrome
+       // (process singleton + per-window apply; ADR 0008).
+       const kavachaLayout = ChromeUtils.importESModule(
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+index a1f3d27..46cd039 100644
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -23,6 +23,7 @@ EXTRA_JS_MODULES += [
+   "sys/KavachaSessionCleanup.sys.mjs",
+   "sys/KavachaSpaceHistory.sys.mjs",
+   "sys/KavachaTabAssistant.sys.mjs",
++  "sys/KavachaTabHistory.sys.mjs",
+   "sys/KavachaTabMemory.sys.mjs",
+   "sys/KavachaThemeEngine.sys.mjs",
+   "sys/KavachaUserCSS.sys.mjs",
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+index 79ee230..b242416 100644
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -250,6 +250,24 @@ const BUILTIN = [
+     domain: KavachaCommandDomain.PRODUCTIVITY,
+     isAvailable: kNotPrivate,
+   },
++  // Tab history tree + saved sessions (patch 0086; FEATURES 7.1, 7.2).
++  {
++    l10nId: "kavacha-action-tab-tree",
++    command: window =>
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaTabHistory.sys.mjs"
++      ).KavachaTabHistory.showPanel(window),
++    icon: "chrome://browser/skin/zen-icons/history.svg",
++    domain: KavachaCommandDomain.NAVIGATION,
++    isAvailable: kNotPrivate,
++  },
++  {
++    l10nId: "kavacha-action-saved-sessions",
++    command: window => window.gZenWorkspaces.kavachaOpenSavedSessions(),
++    icon: "chrome://browser/skin/zen-icons/library.svg",
++    domain: KavachaCommandDomain.NAVIGATION,
++    isAvailable: kNotPrivate,
++  },
+   // Automation (patch 0085; ADR 0017). The entry point into the builder; the
+   // per-workflow "Run:" commands are registered at runtime by KavachaWorkflows
+   // itself, in the AUTOMATION domain patch 0027 reserved for them.
+diff --git a/src/zen/common/sys/KavachaSpaceHistory.sys.mjs b/src/zen/common/sys/KavachaSpaceHistory.sys.mjs
+index 2ac4e79..ecce280 100644
+--- a/src/zen/common/sys/KavachaSpaceHistory.sys.mjs
++++ b/src/zen/common/sys/KavachaSpaceHistory.sys.mjs
+@@ -302,6 +302,58 @@ export const KavachaSpaceHistory = {
+     }));
+   },
+ 
++  /**
++   * Every SAVED session, across all Spaces, newest first (patch 0086;
++   * FEATURES 7.2). A saved session is a snapshot with a label — the thing
++   * patch 0081 started recording and gave no way to find again except by
++   * remembering which Space it belonged to, which is exactly the thing a
++   * person forgets. Payloads are never read here: the list is metadata, and
++   * a payload holds every tab's full SessionStore state.
++   */
++  async listSavedSessions() {
++    const db = await this._getDb();
++    const rows = await db.execute(
++      `SELECT id, space_uuid, created_at, reason, tab_count, label
++         FROM snapshots
++        WHERE label IS NOT NULL AND label != ''
++        ORDER BY created_at DESC`
++    );
++    return rows.map(r => ({
++      id: r.getResultByName("id"),
++      spaceUuid: r.getResultByName("space_uuid"),
++      createdAt: r.getResultByName("created_at"),
++      reason: r.getResultByName("reason"),
++      tabCount: r.getResultByName("tab_count"),
++      label: r.getResultByName("label") || "",
++    }));
++  },
++
++  /** Rename a saved session. An empty label would un-save it, so it is refused. */
++  async renameSnapshot(id, label) {
++    const text = String(label || "").trim();
++    if (!text) {
++      return false;
++    }
++    const db = await this._getDb();
++    await db.execute("UPDATE snapshots SET label = :text WHERE id = :id", {
++      text,
++      id,
++    });
++    return true;
++  },
++
++  /**
++   * Delete one snapshot. The only way a saved session can be removed, since
++   * retention deliberately exempts labelled ones (patch 0081) — count-and-age
++   * silently deleting something the user named would be data loss on a
++   * feature whose whole promise is "keep this".
++   */
++  async deleteSnapshot(id) {
++    const db = await this._getDb();
++    await db.execute("DELETE FROM snapshots WHERE id = :id", { id });
++    return true;
++  },
++
+   /** One full snapshot: metadata + parsed payload; null if unknown id. */
+   async getSnapshot(id) {
+     const db = await this._getDb();
+diff --git a/src/zen/common/sys/KavachaTabHistory.sys.mjs b/src/zen/common/sys/KavachaTabHistory.sys.mjs
+new file mode 100644
+index 0000000..15c7de8
+--- /dev/null
++++ b/src/zen/common/sys/KavachaTabHistory.sys.mjs
+@@ -0,0 +1,397 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha tab history TREE (ROADMAP Phase 7; FEATURES 7.1 "branching history
++// instead of linear").
++//
++// THE PROBLEM IS ONE SENTENCE. Every browser's session history is a list with
++// a cursor: go back three pages, follow a different link, and the three pages
++// you came from are GONE — silently truncated, with no gesture anywhere that
++// brings them back. That is the single most common way people lose their
++// place while researching, and it is a data-model choice, not a law.
++//
++// This module keeps the tree Gecko throws away. It does NOT replace session
++// history — Back and Forward keep their normal meaning, because rewiring them
++// would break every muscle memory a user has. It records, alongside, what the
++// shape of the walk actually was, and offers the abandoned branches back.
++//
++// HOW A NAVIGATION IS CLASSIFIED, in order, against the node the tab is
++// currently sitting on:
++//
++//   same URL              → a reload; refresh the title, move nothing.
++//   the parent's URL      → the user went BACK; move the cursor up.
++//   a child's URL         → the user went FORWARD; move the cursor down.
++//   anything else         → a new node, parented at the cursor. If the cursor
++//                           had moved up first, this is a SECOND child, and
++//                           the branch that would have been truncated is now
++//                           simply a sibling.
++//
++// That last line is the whole feature.
++//
++// PERSISTENCE RIDES SESSIONSTORE, deliberately: setCustomTabValue is per tab,
++// survives restart and window-to-window moves, and is dropped when the tab is
++// closed for good. A tree that outlived its tab would be a second, worse
++// history store — and one that did not survive a restart would lose the
++// branch exactly when the user most wants it.
++//
++// Never records in a private window.
++
++const lazy = {};
++ChromeUtils.defineESModuleGetters(lazy, {
++  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
++  SessionStore: "resource:///modules/sessionstore/SessionStore.sys.mjs",
++});
++
++const kEnabledPref = "kavacha.tabhistory.enabled";
++const kMaxNodesPref = "kavacha.tabhistory.max-nodes";
++const kStoreKey = "kavacha-tab-tree";
++
++export const KavachaTabHistory = {
++  // browser -> tree. Weak so a closed tab's tree is collectable; SessionStore
++  // holds the durable copy.
++  _trees: new WeakMap(),
++
++  get enabled() {
++    return Services.prefs.getBoolPref(kEnabledPref, true);
++  },
++
++  /* -------------------------------------------------------------- plumbing */
++
++  attachToWindow(window) {
++    try {
++      if (window.gZenWorkspaces?.privateWindowOrDisabled) {
++        return;
++      }
++      const gBrowser = window.gBrowser;
++      if (!gBrowser) {
++        return;
++      }
++      const listener = {
++        QueryInterface: ChromeUtils.generateQI([
++          "nsIWebProgressListener",
++          "nsISupportsWeakReference",
++        ]),
++        // The browser comes FIRST for a tabs listener (tabbrowser unshifts
++        // it). Reading this signature the window-level way makes
++        // `webProgress` the browser, so isTopLevel is undefined and NOTHING
++        // is ever recorded — silently.
++        onLocationChange: (browser, webProgress, request, uri, flags) => {
++          try {
++            if (!webProgress?.isTopLevel) {
++              return;
++            }
++            const target = browser || gBrowser.selectedBrowser;
++            this.record(gBrowser.getTabForBrowser(target), uri?.spec || "");
++          } catch (e) {
++            // Recording a shape must never break a navigation.
++          }
++        },
++      };
++      gBrowser.addTabsProgressListener(listener);
++      window.addEventListener(
++        "unload",
++        () => {
++          try {
++            gBrowser.removeTabsProgressListener(listener);
++          } catch (e) {}
++        },
++        { once: true }
++      );
++    } catch (e) {
++      console.error("KavachaTabHistory: attachToWindow failed", e);
++    }
++  },
++
++  /* ------------------------------------------------------------------ tree */
++
++  _blank() {
++    return { nodes: {}, root: null, current: null, next: 1 };
++  },
++
++  /**
++   * The tree for a tab, rehydrated from SessionStore on first touch so a
++   * restored tab keeps the branches it had before the restart.
++   */
++  treeFor(tab) {
++    const browser = tab?.linkedBrowser;
++    if (!browser) {
++      return null;
++    }
++    let tree = this._trees.get(browser);
++    if (tree) {
++      return tree;
++    }
++    tree = this._blank();
++    try {
++      const stored = lazy.SessionStore.getCustomTabValue(tab, kStoreKey);
++      if (stored) {
++        const parsed = JSON.parse(stored);
++        if (parsed && typeof parsed === "object" && parsed.nodes) {
++          tree = parsed;
++        }
++      }
++    } catch (e) {
++      // A corrupt value is not worth a broken tab: start a fresh tree.
++    }
++    this._trees.set(browser, tree);
++    return tree;
++  },
++
++  _persist(tab, tree) {
++    try {
++      lazy.SessionStore.setCustomTabValue(tab, kStoreKey, JSON.stringify(tree));
++    } catch (e) {
++      // Losing persistence costs the branch after a restart, not the session.
++    }
++  },
++
++  /** Record one top-level navigation. Returns the current node, or null. */
++  record(tab, url) {
++    if (!this.enabled || !tab || !url) {
++      return null;
++    }
++    if (!/^(https?|about|file):/.test(url)) {
++      return null;
++    }
++    // about:blank is the gap between two real pages, not a place anyone went.
++    if (url === "about:blank") {
++      return null;
++    }
++    try {
++      if (lazy.PrivateBrowsingUtils.isBrowserPrivate(tab.linkedBrowser)) {
++        return null;
++      }
++    } catch (e) {}
++
++    const tree = this.treeFor(tab);
++    if (!tree) {
++      return null;
++    }
++    const title = tab.label || url;
++    const current = tree.current ? tree.nodes[tree.current] : null;
++
++    if (current && current.url === url) {
++      current.title = title;
++      current.at = Date.now();
++      this._persist(tab, tree);
++      return current;
++    }
++    // Back — and back MORE THAN ONE STEP, which is a real gesture: the Back
++    // button's dropdown and a long press both jump several entries at once.
++    // Checking only the immediate parent would classify that as a brand new
++    // page and quietly duplicate a node the tree already has. The ancestor
++    // chain is bounded, so walking it is cheap; descendants are not, which is
++    // why forward is still only checked one level down.
++    let ancestor = current?.parent ?? null;
++    while (ancestor !== null && ancestor !== undefined) {
++      const node = tree.nodes[ancestor];
++      if (!node) {
++        break;
++      }
++      if (node.url === url) {
++        tree.current = node.id;
++        this._persist(tab, tree);
++        return node;
++      }
++      ancestor = node.parent;
++    }
++    if (current) {
++      const child = Object.values(tree.nodes).find(
++        node => node.parent === current.id && node.url === url
++      );
++      if (child) {
++        tree.current = child.id; // forward, down an existing branch
++        this._persist(tab, tree);
++        return child;
++      }
++    }
++
++    const node = {
++      id: tree.next++,
++      url,
++      title,
++      parent: current ? current.id : null,
++      at: Date.now(),
++    };
++    tree.nodes[node.id] = node;
++    tree.current = node.id;
++    if (!tree.root) {
++      tree.root = node.id;
++    }
++    this._trim(tree);
++    this._persist(tab, tree);
++    return node;
++  },
++
++  /**
++   * Keep the tree bounded. Only LEAVES are dropped, oldest first, and never
++   * the cursor or anything on the path back to the root: trimming an interior
++   * node would orphan a whole branch, which is the one thing this module
++   * exists to prevent.
++   */
++  _trim(tree) {
++    const max = Services.prefs.getIntPref(kMaxNodesPref, 200);
++    const ids = Object.keys(tree.nodes);
++    if (ids.length <= max) {
++      return;
++    }
++    const protectedIds = new Set();
++    let walk = tree.current;
++    while (walk) {
++      protectedIds.add(String(walk));
++      walk = tree.nodes[walk]?.parent;
++    }
++    const parents = new Set(
++      Object.values(tree.nodes)
++        .map(node => node.parent)
++        .filter(id => id !== null && id !== undefined)
++        .map(String)
++    );
++    const leaves = ids
++      .filter(id => !parents.has(id) && !protectedIds.has(id))
++      .sort((a, b) => tree.nodes[a].at - tree.nodes[b].at);
++    for (const id of leaves) {
++      if (Object.keys(tree.nodes).length <= max) {
++        break;
++      }
++      delete tree.nodes[id];
++    }
++  },
++
++  /**
++   * The tree as a flat, depth-annotated list in walk order — what a panel
++   * renders. `branch` marks a node whose parent has more than one child:
++   * those are the only rows that would not exist in ordinary Back/Forward,
++   * so they are the rows worth calling out.
++   */
++  outline(tab) {
++    const tree = this.treeFor(tab);
++    if (!tree || !tree.root || !tree.nodes[tree.root]) {
++      return [];
++    }
++    const childrenOf = new Map();
++    for (const node of Object.values(tree.nodes)) {
++      const key = node.parent === null ? "root" : String(node.parent);
++      if (!childrenOf.has(key)) {
++        childrenOf.set(key, []);
++      }
++      childrenOf.get(key).push(node);
++    }
++    for (const list of childrenOf.values()) {
++      list.sort((a, b) => a.at - b.at);
++    }
++    const out = [];
++    const visit = (node, depth) => {
++      const siblings = childrenOf.get(String(node.parent ?? "root")) || [];
++      out.push({
++        id: node.id,
++        url: node.url,
++        title: node.title,
++        depth,
++        at: node.at,
++        current: node.id === tree.current,
++        branch: siblings.length > 1,
++      });
++      for (const child of childrenOf.get(String(node.id)) || []) {
++        visit(child, depth + 1);
++      }
++    };
++    visit(tree.nodes[tree.root], 0);
++    return out;
++  },
++
++  /**
++   * Move a tab to one node of its tree. This is an ORDINARY navigation, which
++   * is what keeps the model honest: the next onLocationChange classifies it
++   * with the same rules as any other, so the cursor lands where the user can
++   * see it did.
++   */
++  goTo(tab, nodeId) {
++    const tree = this.treeFor(tab);
++    const node = tree?.nodes?.[nodeId];
++    if (!node) {
++      return false;
++    }
++    try {
++      tab.ownerGlobal.gBrowser.selectedTab = tab;
++      tab.linkedBrowser.fixupAndLoadURIString(node.url, {
++        triggeringPrincipal:
++          Services.scriptSecurityManager.getSystemPrincipal(),
++      });
++      return true;
++    } catch (e) {
++      console.error("KavachaTabHistory: goTo failed", e);
++      return false;
++    }
++  },
++
++  /**
++   * Populate and open the tree panel for the selected tab.
++   *
++   * The rows are built here rather than in a content page because this is a
++   * per-TAB view: an about: page would have to be opened in some other tab
++   * and then reach back for the one the user actually meant.
++   */
++  async showPanel(window) {
++    const tab = window.gBrowser?.selectedTab;
++    const panel = window.document.getElementById("kavacha-tabtree-panel");
++    if (!tab || !panel) {
++      return;
++    }
++    const outline = this.outline(tab);
++    window.document.getElementById("kavacha-tabtree-empty").hidden =
++      !!outline.length;
++
++    const list = window.document.getElementById("kavacha-tabtree-list");
++    list.textContent = "";
++    for (const row of outline) {
++      const item = window.document.createXULElement("hbox");
++      item.setAttribute("align", "center");
++      item.style.gap = "6px";
++      item.style.paddingInlineStart = Math.min(row.depth, 8) * 12 + "px";
++
++      const label = window.document.createXULElement("label");
++      label.setAttribute("flex", "1");
++      label.setAttribute("crop", "end");
++      // `value` and not textContent: a XUL label renders its value attribute,
++      // and a title from a web page is untrusted text either way.
++      label.value =
++        (row.current ? "● " : row.branch ? "├ " : "· ") +
++        (row.title || row.url);
++      label.style.opacity = row.current ? "1" : "0.85";
++      if (row.current) {
++        label.style.fontWeight = "600";
++      }
++      item.append(label);
++
++      if (!row.current) {
++        const button = window.document.createXULElement("button");
++        button.setAttribute(
++          "label",
++          await window.document.l10n.formatValue("kavacha-tabtree-go")
++        );
++        button.addEventListener("command", () => {
++          panel.hidePopup();
++          this.goTo(tab, row.id);
++        });
++        item.append(button);
++      }
++      list.append(item);
++    }
++
++    const anchor = window.gURLBar?.textbox || window.gBrowser.selectedTab;
++    panel.openPopup(anchor, "after_start", 0, 0, false, false);
++  },
++
++  /** Forget one tab's tree — the branches, not the browsing history. */
++  clear(tab) {
++    try {
++      this._trees.delete(tab.linkedBrowser);
++      lazy.SessionStore.setCustomTabValue(tab, kStoreKey, "");
++      return true;
++    } catch (e) {
++      return false;
++    }
++  },
++};
+diff --git a/src/zen/spaces/ZenSpaceManager.mjs b/src/zen/spaces/ZenSpaceManager.mjs
+index 757bdea..38a7428 100644
+--- a/src/zen/spaces/ZenSpaceManager.mjs
++++ b/src/zen/spaces/ZenSpaceManager.mjs
+@@ -4509,6 +4509,109 @@ class nsZenWorkspaces {
+     panel.openPopup(anchor, "after_start", 0, 0, false, false);
+   }
+ 
++  // ==========================================================================
++  // Kavacha (patch 0086): the saved-session manager (FEATURES 7.2).
++  //
++  // Patch 0081 shipped "Save This Research Session" and stopped there: a
++  // saved session could only be found through the timeline of the ONE Space
++  // it belonged to, which is exactly the thing a person forgets three weeks
++  // later. This lists every saved session across every Space, and adds the
++  // two operations a keeper needs and 0081 had no place for — rename, and
++  // delete. Delete matters more than it looks: retention deliberately exempts
++  // labelled snapshots, so without this a saved session is permanent.
++  //
++  // Restore goes through kavachaBranchSpace, so it stays NON-DESTRUCTIVE
++  // (ADR 0006's decision): restoring a session never overwrites the present,
++  // it forks a branch. One mechanism, not two.
++  async kavachaOpenSavedSessions() {
++    if (this.privateWindowOrDisabled) {
++      return;
++    }
++    const { KavachaSpaceHistory } = ChromeUtils.importESModule(
++      "resource:///modules/KavachaSpaceHistory.sys.mjs"
++    );
++    const sessions = await KavachaSpaceHistory.listSavedSessions();
++
++    const panel = document.getElementById("kavacha-sessions-panel");
++    document.getElementById("kavacha-sessions-empty").hidden = !!sessions.length;
++
++    const list = document.getElementById("kavacha-sessions-list");
++    list.textContent = "";
++    const fmt = new Intl.DateTimeFormat(undefined, {
++      dateStyle: "medium",
++      timeStyle: "short",
++    });
++    const [restoreLabel, renameLabel, deleteLabel, renamePrompt] =
++      await document.l10n.formatValues([
++        { id: "kavacha-timeline-restore" },
++        { id: "kavacha-sessions-rename" },
++        { id: "kavacha-sessions-delete" },
++        { id: "kavacha-sessions-rename-prompt" },
++      ]);
++
++    for (const session of sessions) {
++      const space = this.getWorkspaceFromId(session.spaceUuid);
++      const row = document.createXULElement("hbox");
++      row.setAttribute("align", "center");
++      row.style.gap = "6px";
++
++      const label = document.createXULElement("label");
++      label.setAttribute("flex", "1");
++      label.setAttribute("crop", "end");
++      label.value = `${session.label} · ${space?.name || "—"} · ${session.tabCount} tabs · ${fmt.format(new Date(session.createdAt))}`;
++      row.append(label);
++
++      const restore = document.createXULElement("button");
++      restore.setAttribute("label", restoreLabel);
++      restore.addEventListener("command", () => {
++        panel.hidePopup();
++        this.kavachaBranchSpace(session.id).catch(e =>
++          console.error("kavachaOpenSavedSessions: restore failed", e)
++        );
++      });
++
++      const rename = document.createXULElement("button");
++      rename.setAttribute("label", renameLabel);
++      rename.addEventListener("command", async () => {
++        const value = { value: session.label };
++        const ok = Services.prompt.prompt(
++          window,
++          "Kavacha",
++          renamePrompt,
++          value,
++          null,
++          {}
++        );
++        if (ok && value.value.trim()) {
++          await KavachaSpaceHistory.renameSnapshot(session.id, value.value);
++          this.kavachaOpenSavedSessions();
++        }
++      });
++
++      const remove = document.createXULElement("button");
++      remove.setAttribute("label", deleteLabel);
++      remove.addEventListener("command", async () => {
++        // Confirmed, because retention exempts saved sessions: this is the
++        // only way one goes away, so it must not be a stray click.
++        const ok = Services.prompt.confirm(
++          window,
++          "Kavacha",
++          `Delete the saved session "${session.label}"?`
++        );
++        if (ok) {
++          await KavachaSpaceHistory.deleteSnapshot(session.id);
++          this.kavachaOpenSavedSessions();
++        }
++      });
++
++      row.append(restore, rename, remove);
++      list.append(row);
++    }
++
++    const anchor = this.workspaceIcons || gURLBar.textbox;
++    panel.openPopup(anchor, "after_start", 0, 0, false, false);
++  }
++
+   // ==========================================================================
+   // Kavacha (patch 0054): step-through replay for time travel.
+   //

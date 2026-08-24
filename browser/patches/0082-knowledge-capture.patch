@@ -1,0 +1,1950 @@
+# Patch 0082 — Knowledge capture: per-page notes, highlights, web clipper
+# (ROADMAP Phase 7; FEATURES 6.1 + 6.2; ADR 0015). The first Phase 7 brick and
+# the one the personal knowledge graph is built out of: until now Kavacha
+# remembered what the user READ (patch 0078's index) and nothing about what
+# they THOUGHT.
+#
+# THE DELETION CONTRACT IS DELIBERATELY THE INVERSE OF THE INDEX'S. ADR 0012
+# made the personal index follow Places — clear history, the index goes —
+# because the index is a derived cache of pages the browser happened to see.
+# Nothing in this store is derived: a note is a document the user wrote and a
+# clip is something they chose to keep, so history deletion must NOT touch it.
+# A browser that eats your notes when you clear your history has confused
+# which of the two was precious. The cost is stated rather than discovered:
+# this store therefore outlives history and can surface a page the user
+# believed they had erased, which is why per-item Delete, "forget this page"
+# and a one-call export all exist from the first commit.
+#
+# THREE KINDS, ONE TABLE. `note` is at most one per URL and empty deletes it —
+# clearing the box IS the delete gesture, so there is no second thing to learn.
+# `highlight` is a selected passage plus an optional comment (FEATURES 6.1's
+# annotation). `clip` is the readable text of the whole page at the moment it
+# was saved, which is also the honest half of "offline mode": the words
+# survive the site, the layout does not. A byte-for-byte archive would mean
+# fetching and rewriting subresources — a different feature with a different
+# threat model (ADR 0015 § Offline).
+#
+# URL NORMALIZATION IS PART OF THE PRODUCT, not a detail. The fragment is
+# dropped so a note taken at #section-3 is the page's note when you come back
+# to the top; the query string is KEPT because ?v=… is usually a different
+# document. Non-http(s) URLs return "" from keyFor() and every writer refuses
+# on that, which is how about:/file:/chrome: pages stay out.
+#
+# ONE-NOTE-PER-PAGE IS ENFORCED BY THE DATABASE (a partial UNIQUE index on
+# url WHERE kind='note'), not by read-then-write in JS. Two windows on the
+# same page would both find "no note" and both insert one; the upsert makes
+# that impossible rather than unlikely.
+#
+# THE SIDEBAR IS SEPARATE FROM THE AI SIDEBAR ON PURPOSE. Folding notes into
+# the surface built by patch 0080 was the cheaper option and would have made
+# the browser's note-taking vanish when `kavacha.ai.enabled` went false.
+# Notes need no model, so they do not get a model's master switch. Both
+# register through SidebarController.registerPrefSidebar (ADR 0014's finding),
+# so no upstream file is edited and a Firefox uplift cannot conflict.
+#
+# CHROME DOCUMENT RULES, unchanged and for the same reason as 0080: clipped
+# page text and note text are UNTRUSTED strings rendered with SYSTEM
+# privileges, so they reach the DOM only through textContent or
+# KavachaMarkdown (which builds nodes and never parses HTML). One innerHTML
+# here would turn "clip a page" into "execute that page's markup as chrome".
+# Page content is read only through the KavachaIndexer actor, which already
+# refuses anything that is not an http/https top frame; this patch adds one
+# narrower query to it (CaptureSelection) rather than a second actor, so the
+# policy is stated once and cannot drift.
+#
+# Icons were checked against zen-icons/jar.inc.mn before shipping: patch 0080
+# found five commands pointing at SVGs that are not in the set, and a missing
+# icon renders as nothing at all.
+#
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index fceec1b..02e9afd 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -136,3 +136,11 @@ kavacha-action-group-tabs = Group Tabs by Topic
+ kavacha-action-close-duplicates = Close Duplicate Tabs
+ kavacha-action-save-session = Save This Research Session
+ kavacha-tabs-assistant-title = Tab assistant
++
++# Kavacha patch 0082 — knowledge capture (ADR 0015). Notes and clips are the
++# user's own writing, so none of these needs a model and none is offered in a
++# private window.
++kavacha-action-note-page = Note This Page
++kavacha-action-clip-page = Clip This Page
++kavacha-action-highlight-selection = Highlight Selection
++kavacha-action-open-library = Open Notes & Clips
+diff --git a/locales/en-US/browser/browser/zen-workspaces.ftl b/locales/en-US/browser/browser/zen-workspaces.ftl
+index 3a0b0d2..bdbce9b 100644
+--- a/locales/en-US/browser/browser/zen-workspaces.ftl
++++ b/locales/en-US/browser/browser/zen-workspaces.ftl
+@@ -170,7 +170,7 @@ zen-panel-ui-workspaces-change-back =
+ 
+ kavacha-search-input =
+     .placeholder = Search everything…
+-kavacha-search-hint = Searches your open tabs, history, bookmarks, workspace notes, and downloads. Everything stays on this device.
++kavacha-search-hint = Searches your open tabs, history, bookmarks, notes, clips, downloads, and the text of pages you have read. Everything stays on this device.
+ kavacha-search-group-tabs = Open Tabs
+ kavacha-search-group-notes = Workspace Notes
+ kavacha-search-group-bookmarks = Bookmarks
+@@ -282,3 +282,14 @@ zen-workspaces-panel-context-timeline =
+ # outside that scope and carries literal strings, like the other Kavacha pages.
+ kavacha-ai-sidebar-menu =
+     .label = Kavacha AI
++
++# Kavacha patch 0082 — the Knowledge sidebar's entry in the sidebar switcher
++# (notes, highlights, clips). Same reasoning as the AI entry above: this id
++# labels a XUL menuitem inside browser.xhtml's Fluent scope, while the sidebar
++# page itself carries literal strings.
++kavacha-knowledge-sidebar-menu =
++    .label = Notes & Clips
++
++# Kavacha patch 0082 — universal-search group headers for the knowledge store.
++kavacha-search-group-pagenotes = Page Notes
++kavacha-search-group-clips = Highlights & Clips
+diff --git a/src/browser/base/content/zen-assets.jar.inc.mn b/src/browser/base/content/zen-assets.jar.inc.mn
+index caf6212..19db466 100644
+--- a/src/browser/base/content/zen-assets.jar.inc.mn
++++ b/src/browser/base/content/zen-assets.jar.inc.mn
+@@ -28,3 +28,4 @@
+ #include ../../../zen/kavacha-marketplace/jar.inc.mn
+ #include ../../../zen/kavacha-plugins/jar.inc.mn
+ #include ../../../zen/kavacha-ai/jar.inc.mn
++#include ../../../zen/kavacha-knowledge/jar.inc.mn
+diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
+index a42f086..16bc482 100644
+--- a/src/zen/common/modules/ZenStartup.mjs
++++ b/src/zen/common/modules/ZenStartup.mjs
+@@ -161,6 +161,12 @@ class ZenStartup {
+       ChromeUtils.importESModule(
+         "resource:///modules/KavachaAISidebar.sys.mjs"
+       ).KavachaAISidebar.register(window);
++      // Kavacha: register the Knowledge sidebar — notes, highlights and clips
++      // (ADR 0015). Separate from the AI sidebar because it must keep working
++      // with AI switched off; per window for the same reason.
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaKnowledgeSidebar.sys.mjs"
++      ).KavachaKnowledgeSidebar.register(window);
+       // Kavacha: apply the saved layout document to this window's chrome
+       // (process singleton + per-window apply; ADR 0008).
+       const kavachaLayout = ChromeUtils.importESModule(
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+index d505e04..96b5d56 100644
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -8,6 +8,8 @@ EXTRA_JS_MODULES += [
+   "sys/KavachaAppearancePanel.sys.mjs",
+   "sys/KavachaAskHistory.sys.mjs",
+   "sys/KavachaCommandRegistry.sys.mjs",
++  "sys/KavachaKnowledge.sys.mjs",
++  "sys/KavachaKnowledgeSidebar.sys.mjs",
+   "sys/KavachaLayoutEngine.sys.mjs",
+   "sys/KavachaMarkdown.sys.mjs",
+   "sys/KavachaMarketplace.sys.mjs",
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+index 367ede7..bb730b3 100644
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -219,6 +219,37 @@ const BUILTIN = [
+     domain: KavachaCommandDomain.PRODUCTIVITY,
+     isAvailable: kNotPrivate,
+   },
++  // Knowledge capture (patch 0082; ADR 0015). All four are unavailable in a
++  // private window: writing something down that a private window promised not
++  // to remember is exactly the trust this browser sells.
++  {
++    l10nId: "kavacha-action-note-page",
++    command: window => kavachaKnowledgeSidebar().noteCurrentPage(window),
++    icon: "chrome://browser/skin/zen-icons/page-portrait.svg",
++    domain: KavachaCommandDomain.PRODUCTIVITY,
++    isAvailable: kNotPrivate,
++  },
++  {
++    l10nId: "kavacha-action-clip-page",
++    command: window => kavachaKnowledgeSidebar().clipCurrentPage(window),
++    icon: "chrome://browser/skin/zen-icons/save.svg",
++    domain: KavachaCommandDomain.PRODUCTIVITY,
++    isAvailable: kNotPrivate,
++  },
++  {
++    l10nId: "kavacha-action-highlight-selection",
++    command: window => kavachaKnowledgeSidebar().highlightSelection(window),
++    icon: "chrome://browser/skin/zen-icons/selectable/flag.svg",
++    domain: KavachaCommandDomain.PRODUCTIVITY,
++    isAvailable: kNotPrivate,
++  },
++  {
++    l10nId: "kavacha-action-open-library",
++    command: window => kavachaKnowledgeSidebar().openLibrary(window),
++    icon: "chrome://browser/skin/zen-icons/library.svg",
++    domain: KavachaCommandDomain.PRODUCTIVITY,
++    isAvailable: kNotPrivate,
++  },
+ 
+   // -- Appearance ----------------------------------------------------------
+   {
+@@ -407,6 +438,11 @@ const kavachaAISidebar = () =>
+   ChromeUtils.importESModule("resource:///modules/KavachaAISidebar.sys.mjs")
+     .KavachaAISidebar;
+ 
++const kavachaKnowledgeSidebar = () =>
++  ChromeUtils.importESModule(
++    "resource:///modules/KavachaKnowledgeSidebar.sys.mjs"
++  ).KavachaKnowledgeSidebar;
++
+ // Tab assistant (patch 0081). Each command does its work in the module and
+ // reports one sentence in the AI panel — the surface 0079 built and the
+ // sidebar did NOT take over, because these results are a sentence, not a
+diff --git a/src/zen/common/sys/KavachaKnowledge.sys.mjs b/src/zen/common/sys/KavachaKnowledge.sys.mjs
+new file mode 100644
+index 0000000..2e449ef
+--- /dev/null
++++ b/src/zen/common/sys/KavachaKnowledge.sys.mjs
+@@ -0,0 +1,490 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha knowledge store (ADR 0015; ROADMAP Phase 7) — the things the user
++// WROTE or CHOSE TO KEEP about a page: a note attached to a URL, a highlight
++// pulled from a selection, a clip of the whole readable page.
++//
++// THE DELETION CONTRACT IS THE OPPOSITE OF THE INDEX'S, AND THAT IS THE POINT.
++// KavachaPersonalIndex (ADR 0012) follows Places: clearing history wipes it,
++// because it is a derived cache of pages the browser happened to see. Nothing
++// here is derived. A note is a document the user authored and a clip is
++// something they deliberately saved, so clearing history must NOT destroy
++// them — a browser that eats your notes when you clear your history has
++// misunderstood which of the two is precious. Deletion here is explicit:
++// per item in the sidebar, or "Delete everything" in about:knowledge.
++//
++// Consequence worth stating rather than discovering: this store therefore
++// outlives history, so it is also the only Kavacha store that can reveal a
++// page the user thought they had erased. That is why "Delete everything" is a
++// first-class control and why the export is one call — keeping data means
++// being able to get rid of it and take it with you.
++//
++// SHAPE. One table, three kinds:
++//
++//   note      — at most one per URL (partial UNIQUE index), free text, edited
++//               in place. Empty body deletes the row: a note you cleared is
++//               not a note.
++//   highlight — a passage selected on the page, plus an optional comment.
++//               This is FEATURES 6.1's "annotation": the quote is `body`'s
++//               anchor, the comment is `comment`.
++//   clip      — the readable text of the whole page at the moment it was
++//               saved. This is also the honest half of "offline mode": the
++//               text survives the site going away. It is not a byte-for-byte
++//               archive; see ADR 0015 for why that is deliberate.
++//
++// URLs are normalized (fragment dropped, trailing "?" dropped) so a note
++// written at #section-3 is the same page's note when you come back to the top.
++// The query string is KEPT — ?id=42 is usually a different document.
++//
++// Storage is a separate SQLite file from the index on purpose: different
++// lifetime, different deletion rules, different backup value.
++
++const lazy = {};
++ChromeUtils.defineESModuleGetters(lazy, {
++  Sqlite: "resource://gre/modules/Sqlite.sys.mjs",
++});
++
++const kEnabledPref = "kavacha.knowledge.enabled";
++const kMaxClipCharsPref = "kavacha.knowledge.max-clip-chars";
++const kDbFile = "kavacha-knowledge.sqlite";
++
++export const KavachaKnowledgeKind = Object.freeze({
++  NOTE: "note",
++  HIGHLIGHT: "highlight",
++  CLIP: "clip",
++});
++
++export const KavachaKnowledge = {
++  _dbPromise: null,
++
++  get enabled() {
++    return Services.prefs.getBoolPref(kEnabledPref, true);
++  },
++
++  /* -------------------------------------------------------------- storage */
++
++  _getDb() {
++    if (!this._dbPromise) {
++      this._dbPromise = (async () => {
++        const db = await lazy.Sqlite.openConnection({
++          path: PathUtils.join(PathUtils.profileDir, kDbFile),
++        });
++        await db.execute(`
++          CREATE TABLE IF NOT EXISTS items (
++            id INTEGER PRIMARY KEY,
++            kind TEXT NOT NULL,
++            url TEXT NOT NULL,
++            title TEXT,
++            body TEXT,
++            comment TEXT,
++            workspace_uuid TEXT,
++            created_at INTEGER NOT NULL,
++            updated_at INTEGER NOT NULL
++          )
++        `);
++        // One note per page, enforced by the database rather than by a
++        // read-then-write in JS: two windows open on the same page would
++        // otherwise both find "no note" and both insert one. Partial indexes
++        // are SQLite 3.8+, which every Gecko build ships.
++        await db.execute(
++          `CREATE UNIQUE INDEX IF NOT EXISTS idx_items_note_url
++             ON items(url) WHERE kind = 'note'`
++        );
++        await db.execute(
++          "CREATE INDEX IF NOT EXISTS idx_items_url ON items(url)"
++        );
++        await db.execute(
++          "CREATE INDEX IF NOT EXISTS idx_items_updated ON items(updated_at)"
++        );
++        lazy.Sqlite.shutdown.addBlocker("KavachaKnowledge: close db", () =>
++          db.close()
++        );
++        return db;
++      })();
++    }
++    return this._dbPromise;
++  },
++
++  /**
++   * The key a page is filed under. Fragment-insensitive (a note taken at
++   * #results belongs to the page), query-sensitive (?v=… is a different
++   * video). Returns "" for anything that is not an http(s) URL, which is the
++   * signal every caller uses to refuse: about:, file: and chrome: pages are
++   * not the user's web reading.
++   */
++  keyFor(url) {
++    try {
++      const uri = new URL(String(url || ""));
++      if (uri.protocol !== "http:" && uri.protocol !== "https:") {
++        return "";
++      }
++      uri.hash = "";
++      let spec = uri.href;
++      if (spec.endsWith("?")) {
++        spec = spec.slice(0, -1);
++      }
++      return spec;
++    } catch (e) {
++      return "";
++    }
++  },
++
++  /* --------------------------------------------------------------- writes */
++
++  /**
++   * Create or replace the note for a page. An empty (or whitespace-only) body
++   * DELETES it, so clearing the box in the sidebar is how you remove a note —
++   * there is no second gesture to learn. Returns the stored row, or null when
++   * the note was deleted or the URL was not storable.
++   */
++  async saveNote({ url, title = "", body = "", workspaceUuid = null }) {
++    const key = this.keyFor(url);
++    if (!this.enabled || !key) {
++      return null;
++    }
++    try {
++      const db = await this._getDb();
++      const text = String(body || "").trim();
++      if (!text) {
++        await db.execute(
++          "DELETE FROM items WHERE kind = 'note' AND url = :key",
++          { key }
++        );
++        return null;
++      }
++      const now = Date.now();
++      await db.execute(
++        `INSERT INTO items (kind, url, title, body, workspace_uuid, created_at, updated_at)
++         VALUES ('note', :key, :title, :text, :workspaceUuid, :now, :now)
++         ON CONFLICT(url) WHERE kind = 'note' DO UPDATE SET
++           title = excluded.title, body = excluded.body,
++           workspace_uuid = excluded.workspace_uuid,
++           updated_at = excluded.updated_at`,
++        { key, title, text, workspaceUuid, now }
++      );
++      return this.getNote(key);
++    } catch (e) {
++      console.error("KavachaKnowledge: saveNote failed", e);
++      return null;
++    }
++  },
++
++  /**
++   * Save a highlight (a passage the user selected) or a clip (the readable
++   * text of the whole page). Unlike notes these ACCUMULATE — highlighting two
++   * passages on one page is two highlights, and clipping a page twice records
++   * what it said on each occasion, which is the whole reason a clip beats a
++   * bookmark. Returns the new row's id, or null.
++   */
++  async addItem({
++    kind,
++    url,
++    title = "",
++    body = "",
++    comment = "",
++    workspaceUuid = null,
++  }) {
++    const key = this.keyFor(url);
++    if (!this.enabled || !key) {
++      return null;
++    }
++    if (kind !== KavachaKnowledgeKind.HIGHLIGHT && kind !== KavachaKnowledgeKind.CLIP) {
++      return null;
++    }
++    const text = String(body || "").trim();
++    if (!text) {
++      return null;
++    }
++    try {
++      const db = await this._getDb();
++      const cap = Services.prefs.getIntPref(kMaxClipCharsPref, 64_000);
++      const now = Date.now();
++      await db.execute(
++        `INSERT INTO items (kind, url, title, body, comment, workspace_uuid, created_at, updated_at)
++         VALUES (:kind, :key, :title, :text, :comment, :workspaceUuid, :now, :now)`,
++        {
++          kind,
++          key,
++          title,
++          text: text.slice(0, cap),
++          comment: String(comment || ""),
++          workspaceUuid,
++          now,
++        }
++      );
++      const rows = await db.execute("SELECT last_insert_rowid() AS id");
++      return rows[0].getResultByName("id");
++    } catch (e) {
++      console.error("KavachaKnowledge: addItem failed", e);
++      return null;
++    }
++  },
++
++  /** Attach or replace the comment on an existing highlight. */
++  async setComment(id, comment) {
++    try {
++      const db = await this._getDb();
++      await db.execute(
++        "UPDATE items SET comment = :comment, updated_at = :now WHERE id = :id",
++        { comment: String(comment || ""), now: Date.now(), id: Number(id) }
++      );
++      return true;
++    } catch (e) {
++      console.error("KavachaKnowledge: setComment failed", e);
++      return false;
++    }
++  },
++
++  /* --------------------------------------------------------------- reads */
++
++  _row(r) {
++    return {
++      id: r.getResultByName("id"),
++      kind: r.getResultByName("kind"),
++      url: r.getResultByName("url"),
++      title: r.getResultByName("title") || "",
++      body: r.getResultByName("body") || "",
++      comment: r.getResultByName("comment") || "",
++      workspaceUuid: r.getResultByName("workspace_uuid"),
++      createdAt: r.getResultByName("created_at"),
++      updatedAt: r.getResultByName("updated_at"),
++    };
++  },
++
++  async getNote(url) {
++    const key = this.keyFor(url);
++    if (!key) {
++      return null;
++    }
++    try {
++      const db = await this._getDb();
++      const rows = await db.execute(
++        "SELECT * FROM items WHERE kind = 'note' AND url = :key",
++        { key }
++      );
++      return rows.length ? this._row(rows[0]) : null;
++    } catch (e) {
++      console.error("KavachaKnowledge: getNote failed", e);
++      return null;
++    }
++  },
++
++  /** Everything filed under one page: {note, highlights, clips}. */
++  async forPage(url) {
++    const empty = { note: null, highlights: [], clips: [] };
++    const key = this.keyFor(url);
++    if (!key) {
++      return empty;
++    }
++    try {
++      const db = await this._getDb();
++      const rows = await db.execute(
++        "SELECT * FROM items WHERE url = :key ORDER BY created_at DESC",
++        { key }
++      );
++      const out = { note: null, highlights: [], clips: [] };
++      for (const r of rows) {
++        const item = this._row(r);
++        if (item.kind === KavachaKnowledgeKind.NOTE) {
++          out.note = item;
++        } else if (item.kind === KavachaKnowledgeKind.HIGHLIGHT) {
++          out.highlights.push(item);
++        } else {
++          out.clips.push(item);
++        }
++      }
++      return out;
++    } catch (e) {
++      console.error("KavachaKnowledge: forPage failed", e);
++      return empty;
++    }
++  },
++
++  async get(id) {
++    try {
++      const db = await this._getDb();
++      const rows = await db.execute("SELECT * FROM items WHERE id = :id", {
++        id: Number(id),
++      });
++      return rows.length ? this._row(rows[0]) : null;
++    } catch (e) {
++      return null;
++    }
++  },
++
++  /** Newest first, optionally one kind only. The library view's backing call. */
++  async listRecent({ kind = null, limit = 100 } = {}) {
++    try {
++      const db = await this._getDb();
++      const rows = await db.execute(
++        `SELECT * FROM items ${kind ? "WHERE kind = :kind" : ""}
++          ORDER BY updated_at DESC LIMIT :limit`,
++        kind ? { kind, limit } : { limit }
++      );
++      return rows.map(r => this._row(r));
++    } catch (e) {
++      console.error("KavachaKnowledge: listRecent failed", e);
++      return [];
++    }
++  },
++
++  /**
++   * Substring search over title, body and comment. Same LIKE-plus-JS shape as
++   * the personal index and for the same reason (no FTS in Gecko's SQLite),
++   * and the same ASCENDING score convention so universal search can merge the
++   * two result lists without special-casing either.
++   */
++  async search(query, { limit = 10 } = {}) {
++    const terms = String(query || "")
++      .toLowerCase()
++      .split(/\s+/)
++      .filter(Boolean);
++    if (!terms.length) {
++      return [];
++    }
++    try {
++      const db = await this._getDb();
++      const params = { limit: limit * 3 };
++      const where = terms
++        .map((t, i) => {
++          params[`t${i}`] = "%" + t.replace(/[\\%_]/g, m => "\\" + m) + "%";
++          return `(lower(title) LIKE :t${i} ESCAPE '\\'
++                   OR lower(body) LIKE :t${i} ESCAPE '\\'
++                   OR lower(comment) LIKE :t${i} ESCAPE '\\')`;
++        })
++        .join(" AND ");
++      const rows = await db.execute(
++        `SELECT * FROM items WHERE ${where}
++          ORDER BY updated_at DESC LIMIT :limit`,
++        params
++      );
++      const scored = rows.map(r => {
++        const item = this._row(r);
++        const hay = (
++          item.title +
++          " " +
++          item.body +
++          " " +
++          item.comment
++        ).toLowerCase();
++        let occ = 0;
++        for (const t of terms) {
++          occ += hay.split(t).length - 1;
++        }
++        return {
++          ...item,
++          snippet: this._snippet(item.body || item.comment, terms),
++          score: -occ - item.updatedAt / 1e15,
++        };
++      });
++      scored.sort((a, b) => a.score - b.score);
++      return scored.slice(0, limit);
++    } catch (e) {
++      console.error("KavachaKnowledge: search failed", e);
++      return [];
++    }
++  },
++
++  _snippet(text, terms, window = 90) {
++    if (!text) {
++      return "";
++    }
++    const lower = text.toLowerCase();
++    let at = -1;
++    for (const t of terms) {
++      const i = lower.indexOf(t);
++      if (i !== -1 && (at === -1 || i < at)) {
++        at = i;
++      }
++    }
++    if (at === -1) {
++      return text.slice(0, window).replace(/\s+/g, " ").trim();
++    }
++    const start = Math.max(0, at - Math.floor(window / 3));
++    const end = Math.min(text.length, start + window);
++    return (
++      (start > 0 ? "…" : "") +
++      text.slice(start, end).replace(/\s+/g, " ").trim() +
++      (end < text.length ? "…" : "")
++    );
++  },
++
++  /* ------------------------------------------------------------- deletion */
++
++  async remove(id) {
++    try {
++      const db = await this._getDb();
++      await db.execute("DELETE FROM items WHERE id = :id", { id: Number(id) });
++      return true;
++    } catch (e) {
++      console.error("KavachaKnowledge: remove failed", e);
++      return false;
++    }
++  },
++
++  /** Every item filed under one page. Used by "forget this page" flows. */
++  async removeForUrl(url) {
++    const key = this.keyFor(url);
++    if (!key) {
++      return false;
++    }
++    try {
++      const db = await this._getDb();
++      await db.execute("DELETE FROM items WHERE url = :key", { key });
++      return true;
++    } catch (e) {
++      return false;
++    }
++  },
++
++  async clearAll() {
++    try {
++      const db = await this._getDb();
++      await db.execute("DELETE FROM items");
++      return true;
++    } catch (e) {
++      console.error("KavachaKnowledge: clearAll failed", e);
++      return false;
++    }
++  },
++
++  /* ------------------------------------------------------- own it / stats */
++
++  async stats() {
++    try {
++      const db = await this._getDb();
++      const rows = await db.execute(
++        "SELECT kind, COUNT(*) AS n FROM items GROUP BY kind"
++      );
++      const out = { note: 0, highlight: 0, clip: 0, bytes: 0 };
++      for (const r of rows) {
++        out[r.getResultByName("kind")] = r.getResultByName("n");
++      }
++      try {
++        out.bytes = (
++          await IOUtils.stat(PathUtils.join(PathUtils.profileDir, kDbFile))
++        ).size;
++      } catch (e) {}
++      return out;
++    } catch (e) {
++      return { note: 0, highlight: 0, clip: 0, bytes: 0 };
++    }
++  },
++
++  /**
++   * Everything, as plain JSON. FEATURES 9.2 ("Export My Digital Life") in the
++   * small: a store the user cannot get their writing back out of is not
++   * theirs, and this one predates the Phase 5 export by whole phases.
++   */
++  async exportAll() {
++    const items = await this.listRecent({ limit: 100_000 });
++    return {
++      format: "kavacha-knowledge",
++      version: 1,
++      exportedAt: new Date().toISOString(),
++      items,
++    };
++  },
++};
+diff --git a/src/zen/common/sys/KavachaKnowledgeSidebar.sys.mjs b/src/zen/common/sys/KavachaKnowledgeSidebar.sys.mjs
+new file mode 100644
+index 0000000..ad0de17
+--- /dev/null
++++ b/src/zen/common/sys/KavachaKnowledgeSidebar.sys.mjs
+@@ -0,0 +1,91 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Registers the Kavacha Knowledge sidebar — notes, highlights and clips for
++// the page in front of you (ADR 0015; ROADMAP Phase 7).
++//
++// Same runtime registration as the AI sidebar (ADR 0014): SidebarController's
++// own `registerPrefSidebar`, so no upstream file is edited and a Firefox
++// uplift that reshuffles the sidebar map cannot conflict with us.
++//
++// WHY IT IS NOT A MODE INSIDE THE AI SIDEBAR, which was the cheaper option:
++// that sidebar is gated on `kavacha.ai.enabled`, and writing a note about a
++// page must not require a local model — or any model. Notes and clips work on
++// a machine with no AI runtime, in exactly the same way, and folding them in
++// would have made the browser's note-taking disappear when the user switched
++// AI off. They are two surfaces because they have two dependencies.
++//
++// Gated instead on `kavacha.knowledge.enabled`, which is also the switch that
++// stops the store accepting writes.
++
++const kSidebarId = "viewKavachaKnowledgeSidebar";
++const kEnabledPref = "kavacha.knowledge.enabled";
++const kSidebarUrl = "chrome://browser/content/kavacha-knowledge/knowledge.html";
++
++export const KavachaKnowledgeSidebar = {
++  register(window) {
++    try {
++      const controller = window.SidebarController;
++      if (!controller || controller.sidebars?.has?.(kSidebarId)) {
++        return;
++      }
++      // Read the lazy getter before writing through registerPrefSidebar —
++      // see KavachaAISidebar for why skipping this silently drops the entry.
++      controller.sidebars;
++      controller.registerPrefSidebar(kEnabledPref, kSidebarId, {
++        name: "kavachaknowledge",
++        elementId: "sidebar-switcher-kavacha-knowledge",
++        url: kSidebarUrl,
++        menuId: "menu_kavachaKnowledgeSidebar",
++        menuL10nId: "kavacha-knowledge-sidebar-menu",
++        revampL10nId: "kavacha-knowledge-sidebar-menu",
++        // Every icon here is checked against zen-icons/jar.inc.mn before it
++        // ships: patch 0080 found five Kavacha commands pointing at SVGs that
++        // are not in the set, which render as a missing image and nothing else.
++        iconUrl: "chrome://browser/skin/zen-icons/library.svg",
++      });
++    } catch (e) {
++      console.error("KavachaKnowledgeSidebar: registration failed", e);
++    }
++  },
++
++  /** Open the sidebar and run `job` against its page object. */
++  async open(window, job) {
++    try {
++      if (!Services.prefs.getBoolPref(kEnabledPref, true)) {
++        return null;
++      }
++      this.register(window);
++      await window.SidebarController.show(kSidebarId);
++      const page = window.SidebarController.browser?.contentWindow;
++      if (page?.KavachaKnowledgePage && typeof job === "function") {
++        job(page.KavachaKnowledgePage);
++      }
++      return page;
++    } catch (e) {
++      console.error("KavachaKnowledgeSidebar: open failed", e);
++      return null;
++    }
++  },
++
++  /** Open on the current page's note, with the cursor in it. */
++  noteCurrentPage(window) {
++    return this.open(window, page => page.focusNote());
++  },
++
++  /** Clip the whole readable page, then show what was saved. */
++  clipCurrentPage(window) {
++    return this.open(window, page => page.clipPage());
++  },
++
++  /** Save the current selection as a highlight. */
++  highlightSelection(window) {
++    return this.open(window, page => page.clipSelection());
++  },
++
++  /** Open on the library (everything kept, newest first). */
++  openLibrary(window) {
++    return this.open(window, page => page.selectMode("library"));
++  },
++};
+diff --git a/src/zen/kavacha-index/actors/KavachaIndexerChild.sys.mjs b/src/zen/kavacha-index/actors/KavachaIndexerChild.sys.mjs
+index 4a86117..ac595ec 100644
+--- a/src/zen/kavacha-index/actors/KavachaIndexerChild.sys.mjs
++++ b/src/zen/kavacha-index/actors/KavachaIndexerChild.sys.mjs
+@@ -55,8 +55,17 @@ export class KavachaIndexerChild extends JSWindowActorChild {
+   // rather than sending it to the index: summarizing what you are looking at
+   // must not depend on having STORED it, so this path works with the index
+   // switched off and stores nothing by itself.
++  //
++  // Patch 0082 adds a second, narrower query: the current SELECTION, for the
++  // knowledge sidebar's highlight. Same actor rather than a new one, because
++  // the policy that matters — http/https only, top frame, nothing stored as a
++  // side effect — is already stated here and would otherwise be restated
++  // (and eventually diverge) somewhere else.
+   receiveMessage(message) {
+-    if (message.name !== "KavachaIndexer:Capture") {
++    if (
++      message.name !== "KavachaIndexer:Capture" &&
++      message.name !== "KavachaIndexer:CaptureSelection"
++    ) {
+       return null;
+     }
+     try {
+@@ -64,10 +73,21 @@ export class KavachaIndexerChild extends JSWindowActorChild {
+       if (!doc || !/^https?:$/.test(doc.location?.protocol || "")) {
+         return null;
+       }
++      let text;
++      if (message.name === "KavachaIndexer:CaptureSelection") {
++        // No selection is not an error: the sidebar says "select something
++        // first", which is better than saving an empty highlight.
++        text = String(this.contentWindow?.getSelection?.() || "").trim();
++        if (!text) {
++          return null;
++        }
++      } else {
++        text = (doc.body?.innerText || "").slice(0, kMaxChars).trim();
++      }
+       return {
+         url: doc.location.href,
+         title: doc.title || "",
+-        text: (doc.body?.innerText || "").slice(0, kMaxChars).trim(),
++        text: text.slice(0, kMaxChars),
+       };
+     } catch (e) {
+       return null;
+diff --git a/src/zen/kavacha-knowledge/jar.inc.mn b/src/zen/kavacha-knowledge/jar.inc.mn
+new file mode 100644
+index 0000000..710fa0b
+--- /dev/null
++++ b/src/zen/kavacha-knowledge/jar.inc.mn
+@@ -0,0 +1,7 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++        content/browser/kavacha-knowledge/knowledge.html                       (../../zen/kavacha-knowledge/knowledge.html)
++        content/browser/kavacha-knowledge/knowledge.css                        (../../zen/kavacha-knowledge/knowledge.css)
++        content/browser/kavacha-knowledge/knowledge.js                         (../../zen/kavacha-knowledge/knowledge.js)
+diff --git a/src/zen/kavacha-knowledge/knowledge.css b/src/zen/kavacha-knowledge/knowledge.css
+new file mode 100644
+index 0000000..98e6f69
+--- /dev/null
++++ b/src/zen/kavacha-knowledge/knowledge.css
+@@ -0,0 +1,309 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* Kavacha Knowledge sidebar (ADR 0015). Same token vocabulary and same
++ * literal fallbacks as the AI sidebar: content-theme.js stamps the real
++ * --kavacha-* values onto :root, and the fallback covers the frame before it
++ * runs. The accent stays user-owned (patch 0046/0069 chain). */
++
++:root {
++  --kn-gap: 10px;
++  --kn-radius: 8px;
++  --kn-accent: var(
++    --zen-primary-color,
++    var(--kavacha-accent, var(--kavacha-accent-fallback, #8b7bd8))
++  );
++}
++
++body {
++  margin: 0;
++  padding: var(--kn-gap);
++  display: flex;
++  flex-direction: column;
++  gap: var(--kn-gap);
++  min-height: 100vh;
++  box-sizing: border-box;
++  font: message-box;
++  font-size: 13px;
++  line-height: 1.5;
++  color: var(--kavacha-text, #e8e6f0);
++  background: var(--kavacha-surface, #14111f);
++  overflow-wrap: anywhere;
++}
++
++/* ----------------------------------------------------------------- modes */
++
++.kn-modes {
++  display: flex;
++  gap: 2px;
++  padding: 2px;
++  border-radius: var(--kn-radius);
++  background: var(--kavacha-surface-raised, #1d1930);
++}
++
++.kn-mode {
++  flex: 1;
++  padding: 5px 8px;
++  border: none;
++  border-radius: calc(var(--kn-radius) - 2px);
++  background: transparent;
++  color: inherit;
++  font: inherit;
++  cursor: pointer;
++}
++
++.kn-mode:hover {
++  background: var(--kavacha-surface-hover, #262040);
++}
++
++.kn-mode[aria-selected="true"] {
++  background: var(--kavacha-surface-hover, #262040);
++  box-shadow: inset 0 -2px 0 0 var(--kn-accent);
++}
++
++.kn-view {
++  display: flex;
++  flex-direction: column;
++  gap: var(--kn-gap);
++  flex: 1;
++}
++
++/* ------------------------------------------------------------ page header */
++
++.kn-page {
++  padding: 8px 10px;
++  border-radius: var(--kn-radius);
++  background: var(--kavacha-surface-raised, #1d1930);
++}
++
++.kn-page-title {
++  font-weight: 600;
++}
++
++.kn-page-host {
++  opacity: 0.7;
++  font-size: 12px;
++}
++
++/* --------------------------------------------------------------- controls */
++
++.kn-row {
++  display: flex;
++  gap: 6px;
++  align-items: center;
++}
++
++.kn-primary,
++.kn-secondary {
++  padding: 6px 10px;
++  border-radius: var(--kn-radius);
++  border: 1px solid var(--kavacha-border, #2e2748);
++  font: inherit;
++  cursor: pointer;
++}
++
++.kn-primary {
++  background: var(--kn-accent);
++  color: #fff;
++  border-color: transparent;
++  flex: 1;
++}
++
++.kn-secondary {
++  background: var(--kavacha-surface-raised, #1d1930);
++  color: inherit;
++  flex: 1;
++}
++
++.kn-primary:disabled,
++.kn-secondary:disabled {
++  opacity: 0.45;
++  cursor: default;
++}
++
++.kn-link {
++  padding: 0;
++  border: none;
++  background: none;
++  color: var(--kn-accent);
++  font: inherit;
++  cursor: pointer;
++  text-align: start;
++}
++
++.kn-link:hover {
++  text-decoration: underline;
++}
++
++.kn-danger {
++  color: var(--kavacha-danger, #e06c75);
++}
++
++.kn-label {
++  font-size: 12px;
++  opacity: 0.8;
++}
++
++.kn-note-head {
++  display: flex;
++  justify-content: space-between;
++  align-items: baseline;
++}
++
++.kn-note-tools {
++  display: flex;
++  gap: 8px;
++  align-items: baseline;
++}
++
++.kn-saved {
++  font-size: 11px;
++  opacity: 0.6;
++}
++
++.kn-input {
++  width: 100%;
++  box-sizing: border-box;
++  padding: 8px;
++  border-radius: var(--kn-radius);
++  border: 1px solid var(--kavacha-border, #2e2748);
++  background: var(--kavacha-surface-raised, #1d1930);
++  color: inherit;
++  font: inherit;
++  resize: vertical;
++}
++
++.kn-filter {
++  resize: none;
++}
++
++.kn-status {
++  font-size: 12px;
++  opacity: 0.8;
++}
++
++.kn-heading {
++  margin: 4px 0 0;
++  font-size: 12px;
++  font-weight: 600;
++  opacity: 0.75;
++  text-transform: uppercase;
++  letter-spacing: 0.04em;
++}
++
++/* --------------------------------------------------------------- filters */
++
++.kn-kinds {
++  flex-wrap: wrap;
++}
++
++.kn-chip {
++  padding: 3px 8px;
++  border-radius: 999px;
++  border: 1px solid var(--kavacha-border, #2e2748);
++  background: transparent;
++  color: inherit;
++  font: inherit;
++  font-size: 12px;
++  cursor: pointer;
++}
++
++.kn-chip.is-active {
++  background: var(--kavacha-surface-hover, #262040);
++  border-color: var(--kn-accent);
++}
++
++/* ----------------------------------------------------------------- items */
++
++.kn-items {
++  display: flex;
++  flex-direction: column;
++  gap: 8px;
++}
++
++.kn-item {
++  padding: 8px 10px;
++  border-radius: var(--kn-radius);
++  background: var(--kavacha-surface-raised, #1d1930);
++  border: 1px solid var(--kavacha-border, #2e2748);
++}
++
++.kn-item-head {
++  display: flex;
++  justify-content: space-between;
++  font-size: 11px;
++  opacity: 0.75;
++}
++
++.kn-kind {
++  text-transform: uppercase;
++  letter-spacing: 0.04em;
++}
++
++.kn-kind-highlight {
++  color: var(--kn-accent);
++}
++
++.kn-item-page {
++  font-size: 12px;
++  font-weight: 600;
++  margin-top: 2px;
++}
++
++.kn-item-body {
++  margin-top: 4px;
++  white-space: pre-wrap;
++}
++
++.kn-item-comment {
++  margin-top: 4px;
++  padding-inline-start: 8px;
++  border-inline-start: 2px solid var(--kn-accent);
++  opacity: 0.9;
++}
++
++.kn-item-tools {
++  display: flex;
++  gap: 10px;
++  margin-top: 6px;
++  flex-wrap: wrap;
++  font-size: 12px;
++}
++
++/* ---------------------------------------------------------------- reader */
++
++.kn-reader p {
++  margin: 0 0 0.8em;
++  white-space: pre-wrap;
++}
++
++/* -------------------------------------------------------- preview/footer */
++
++.kn-preview {
++  padding: 8px;
++  border-radius: var(--kn-radius);
++  background: var(--kavacha-surface-raised, #1d1930);
++  border: 1px solid var(--kavacha-border, #2e2748);
++}
++
++.kn-preview :is(h1, h2, h3) {
++  font-size: 1.05em;
++  margin: 0.4em 0;
++}
++
++.kn-footer {
++  margin-top: auto;
++  padding-top: 6px;
++  border-top: 1px solid var(--kavacha-border, #2e2748);
++  display: flex;
++  justify-content: space-between;
++  align-items: baseline;
++  gap: 8px;
++  font-size: 11px;
++}
++
++.kn-footer-status {
++  opacity: 0.7;
++  overflow-wrap: anywhere;
++}
+diff --git a/src/zen/kavacha-knowledge/knowledge.html b/src/zen/kavacha-knowledge/knowledge.html
+new file mode 100644
+index 0000000..e402493
+--- /dev/null
++++ b/src/zen/kavacha-knowledge/knowledge.html
+@@ -0,0 +1,98 @@
++<!-- This Source Code Form is subject to the terms of the Mozilla Public
++   - License, v. 2.0. If a copy of the MPL was not distributed with this
++   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
++<!DOCTYPE html>
++<html lang="en" dir="ltr">
++  <head>
++    <meta charset="utf-8" />
++    <meta
++      http-equiv="Content-Security-Policy"
++      content="default-src chrome:; img-src chrome: data:; style-src chrome: 'unsafe-inline'; object-src 'none'"
++    />
++    <title>Kavacha Knowledge</title>
++    <link
++      rel="stylesheet"
++      href="chrome://browser/content/kavacha-knowledge/knowledge.css"
++    />
++    <!-- Patch 0062's shared theming, before the page script so the first
++         paint is already themed (see the AI sidebar for the full reasoning). -->
++    <script src="chrome://browser/content/kavacha-theme/content-theme.js"></script>
++    <script src="chrome://browser/content/kavacha-knowledge/knowledge.js"></script>
++  </head>
++  <body>
++    <nav class="kn-modes" role="tablist">
++      <button id="mode-page" class="kn-mode" role="tab" aria-selected="true">
++        This page
++      </button>
++      <button id="mode-library" class="kn-mode" role="tab" aria-selected="false">
++        Library
++      </button>
++    </nav>
++
++    <section id="view-page" class="kn-view" role="tabpanel">
++      <div class="kn-page">
++        <div id="page-title" class="kn-page-title">—</div>
++        <div id="page-host" class="kn-page-host"></div>
++      </div>
++
++      <div class="kn-row">
++        <button id="clip-page" class="kn-primary">Clip page</button>
++        <button id="clip-selection" class="kn-secondary">
++          Highlight selection
++        </button>
++      </div>
++      <div id="page-status" class="kn-status" hidden="hidden"></div>
++
++      <div class="kn-note-head">
++        <label class="kn-label" for="note-input">Note</label>
++        <div class="kn-note-tools">
++          <span id="note-saved" class="kn-saved"></span>
++          <button id="note-preview-toggle" class="kn-link">Preview</button>
++        </div>
++      </div>
++      <textarea
++        id="note-input"
++        class="kn-input"
++        rows="7"
++        placeholder="What matters about this page? Markdown works. Saved as you type; empty removes it."
++      ></textarea>
++      <article id="note-preview" class="kn-preview" hidden="hidden"></article>
++
++      <h2 id="page-items-heading" class="kn-heading" hidden="hidden">
++        Saved from this page
++      </h2>
++      <div id="page-items" class="kn-items"></div>
++    </section>
++
++    <section id="view-library" class="kn-view" role="tabpanel" hidden="hidden">
++      <div class="kn-row">
++        <input
++          id="library-filter"
++          class="kn-input kn-filter"
++          type="text"
++          placeholder="Filter your notes, highlights and clips"
++        />
++      </div>
++      <div class="kn-row kn-kinds">
++        <button class="kn-chip is-active" data-kind="">All</button>
++        <button class="kn-chip" data-kind="note">Notes</button>
++        <button class="kn-chip" data-kind="highlight">Highlights</button>
++        <button class="kn-chip" data-kind="clip">Clips</button>
++      </div>
++      <div id="library-status" class="kn-status" hidden="hidden"></div>
++      <div id="library-items" class="kn-items"></div>
++    </section>
++
++    <section id="view-reader" class="kn-view" role="tabpanel" hidden="hidden">
++      <button id="reader-back" class="kn-link">← Back</button>
++      <div id="reader-title" class="kn-page-title"></div>
++      <div id="reader-meta" class="kn-page-host"></div>
++      <article id="reader-body" class="kn-reader"></article>
++    </section>
++
++    <footer class="kn-footer">
++      <span id="kn-footer-status" class="kn-footer-status"></span>
++      <button id="kn-export" class="kn-link">Export</button>
++    </footer>
++  </body>
++</html>
+diff --git a/src/zen/kavacha-knowledge/knowledge.js b/src/zen/kavacha-knowledge/knowledge.js
+new file mode 100644
+index 0000000..7b7411d
+--- /dev/null
++++ b/src/zen/kavacha-knowledge/knowledge.js
+@@ -0,0 +1,588 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha Knowledge sidebar (ADR 0015; ROADMAP Phase 7) — the surface for
++// FEATURES 6.1 (per-page notes and annotations) and 6.2 (the web clipper).
++//
++// Three views, in the order a user meets them:
++//
++//   page    — the note for whatever tab is in front of them, plus everything
++//             already saved from it. The note autosaves; clearing it deletes.
++//   library — everything kept, newest first, filterable. Also where deletion
++//             lives, because the store deliberately does NOT follow history
++//             deletion (ADR 0015) and so must offer its own.
++//   reader  — one clip's saved text, rendered from the store. This is the
++//             offline half: the page can be gone and the words are still here.
++//
++// This is a CHROME document, so the two rules the AI sidebar states apply
++// unchanged and for the same reasons:
++//
++//   * Page text and note text are UNTRUSTED and rendered with SYSTEM
++//     PRIVILEGES. Everything reaches the DOM through textContent or
++//     KavachaMarkdown (which builds nodes and never parses HTML). A single
++//     innerHTML here would turn "clip a page" into "run that page's markup as
++//     chrome".
++//   * Strings are literal English rather than Fluent ids: this document is
++//     not in browser.xhtml's l10n scope, and D0e is the standing reminder of
++//     what a mis-scoped id ships as — a perfectly measurable blank control.
++
++"use strict";
++
++/* global ChromeUtils, Services, Cc, Ci, IOUtils, PathUtils, document, window, console */
++
++(() => {
++  const { KavachaKnowledge } = ChromeUtils.importESModule(
++    "resource:///modules/KavachaKnowledge.sys.mjs"
++  );
++  const { KavachaMarkdown } = ChromeUtils.importESModule(
++    "resource:///modules/KavachaMarkdown.sys.mjs"
++  );
++
++  const chromeWindow =
++    window.browsingContext?.topChromeWindow ||
++    window.docShell?.chromeEventHandler?.ownerGlobal ||
++    window.top;
++
++  const $ = id => document.getElementById(id);
++
++  // Autosave debounce. Long enough that a normal typing burst is one write,
++  // short enough that closing the sidebar right after typing does not lose
++  // the sentence — and the flush on unload covers the rest.
++  const kSaveDebounceMs = 700;
++
++  let saveTimer = null;
++  let filterTimer = null;
++  let currentUrl = "";
++  let libraryKind = "";
++  let previewOn = false;
++
++  /* ------------------------------------------------------------ rendering */
++
++  const clear = node => {
++    while (node.firstChild) {
++      node.firstChild.remove();
++    }
++  };
++
++  function setStatus(node, message) {
++    clear(node);
++    if (!message) {
++      node.hidden = true;
++      return;
++    }
++    node.hidden = false;
++    node.append(document.createTextNode(message));
++  }
++
++  function prettyHost(url) {
++    try {
++      return new URL(url).host.replace(/^www\./, "");
++    } catch (e) {
++      return "";
++    }
++  }
++
++  function whenText(ms) {
++    if (!ms) {
++      return "";
++    }
++    const date = new Date(ms);
++    const days = Math.floor((Date.now() - ms) / 86_400_000);
++    if (days === 0) {
++      return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
++    }
++    if (days === 1) {
++      return "yesterday";
++    }
++    if (days < 7) {
++      return days + " days ago";
++    }
++    return date.toLocaleDateString();
++  }
++
++  const kKindLabel = {
++    note: "Note",
++    highlight: "Highlight",
++    clip: "Clip",
++  };
++
++  /**
++   * One row in a list of saved items. Deliberately built node by node: `item`
++   * carries text the page authored.
++   */
++  function itemRow(item, { showPage = false } = {}) {
++    const row = document.createElement("div");
++    row.className = "kn-item";
++    row.dataset.id = String(item.id);
++
++    const head = document.createElement("div");
++    head.className = "kn-item-head";
++    const kind = document.createElement("span");
++    kind.className = "kn-kind kn-kind-" + item.kind;
++    kind.textContent = kKindLabel[item.kind] || item.kind;
++    const when = document.createElement("span");
++    when.className = "kn-when";
++    when.textContent = whenText(item.updatedAt);
++    head.append(kind, when);
++    row.append(head);
++
++    if (showPage) {
++      const page = document.createElement("div");
++      page.className = "kn-item-page";
++      page.textContent = item.title || prettyHost(item.url) || item.url;
++      page.title = item.url;
++      row.append(page);
++    }
++
++    const body = document.createElement("div");
++    body.className = "kn-item-body";
++    // A clip is thousands of characters; the row shows its opening and the
++    // reader view shows the rest.
++    const preview =
++      item.kind === "clip" ? item.body.slice(0, 220) : item.body.slice(0, 400);
++    body.textContent = preview + (item.body.length > preview.length ? "…" : "");
++    row.append(body);
++
++    if (item.comment) {
++      const comment = document.createElement("div");
++      comment.className = "kn-item-comment";
++      comment.textContent = item.comment;
++      row.append(comment);
++    }
++
++    const tools = document.createElement("div");
++    tools.className = "kn-item-tools";
++
++    if (item.kind === "clip") {
++      const read = document.createElement("button");
++      read.className = "kn-link";
++      read.textContent = "Open saved copy";
++      read.addEventListener("click", () => showReader(item));
++      tools.append(read);
++    }
++
++    const visit = document.createElement("button");
++    visit.className = "kn-link";
++    visit.textContent = "Open page";
++    visit.addEventListener("click", () => openUrl(item.url));
++    tools.append(visit);
++
++    const copy = document.createElement("button");
++    copy.className = "kn-link";
++    copy.textContent = "Copy";
++    copy.addEventListener("click", () => copyText(item.body));
++    tools.append(copy);
++
++    const remove = document.createElement("button");
++    remove.className = "kn-link kn-danger";
++    remove.textContent = "Delete";
++    remove.addEventListener("click", async () => {
++      await KavachaKnowledge.remove(item.id);
++      row.remove();
++      refreshFooter();
++    });
++    tools.append(remove);
++
++    row.append(tools);
++    return row;
++  }
++
++  function renderItems(container, items, options) {
++    clear(container);
++    for (const item of items) {
++      container.append(itemRow(item, options));
++    }
++  }
++
++  /* --------------------------------------------------------- chrome hooks */
++
++  function currentBrowser() {
++    return chromeWindow.gBrowser?.selectedBrowser || null;
++  }
++
++  function openUrl(url) {
++    try {
++      chromeWindow.openTrustedLinkIn(url, "tab");
++    } catch (e) {
++      console.error("KavachaKnowledge: open failed", e);
++    }
++  }
++
++  function copyText(text) {
++    try {
++      Cc["@mozilla.org/widget/clipboardhelper;1"]
++        .getService(Ci.nsIClipboardHelper)
++        .copyString(String(text || ""));
++    } catch (e) {
++      console.error("KavachaKnowledge: copy failed", e);
++    }
++  }
++
++  function activeWorkspaceUuid() {
++    try {
++      return (
++        chromeWindow.gZenWorkspaces?.getActiveWorkspaceFromCache?.()?.uuid ||
++        null
++      );
++    } catch (e) {
++      return null;
++    }
++  }
++
++  /**
++   * Ask the page for text through the KavachaIndexer actor (patch 0078). The
++   * actor is the ONLY way this chrome document touches web content — it never
++   * reaches into a content window directly, and the actor already refuses
++   * anything that is not http/https.
++   */
++  async function askContent(message) {
++    const browser = currentBrowser();
++    if (!browser) {
++      return null;
++    }
++    try {
++      const actor =
++        browser.browsingContext?.currentWindowGlobal?.getActor("KavachaIndexer");
++      return await actor?.sendQuery(message);
++    } catch (e) {
++      // No actor (not a web page), or the frame went away mid-query.
++      return null;
++    }
++  }
++
++  /* -------------------------------------------------------------- actions */
++
++  async function clipPage() {
++    selectMode("page");
++    const captured = await askContent("KavachaIndexer:Capture");
++    if (!captured?.text) {
++      setStatus(
++        $("page-status"),
++        "Nothing to clip — this page has no readable text, or it is not a web page."
++      );
++      return;
++    }
++    const id = await KavachaKnowledge.addItem({
++      kind: "clip",
++      url: captured.url,
++      title: captured.title,
++      body: captured.text,
++      workspaceUuid: activeWorkspaceUuid(),
++    });
++    setStatus(
++      $("page-status"),
++      id
++        ? "Clipped " + captured.text.length.toLocaleString() + " characters."
++        : "Could not clip this page."
++    );
++    await refreshPageItems();
++    refreshFooter();
++  }
++
++  async function clipSelection() {
++    selectMode("page");
++    const captured = await askContent("KavachaIndexer:CaptureSelection");
++    if (!captured?.text) {
++      setStatus(
++        $("page-status"),
++        "Select some text on the page first, then highlight it."
++      );
++      return;
++    }
++    const id = await KavachaKnowledge.addItem({
++      kind: "highlight",
++      url: captured.url,
++      title: captured.title,
++      body: captured.text,
++      workspaceUuid: activeWorkspaceUuid(),
++    });
++    setStatus($("page-status"), id ? "Highlight saved." : "Could not save that.");
++    await refreshPageItems();
++    refreshFooter();
++  }
++
++  function queueNoteSave() {
++    clearTimeout(saveTimer);
++    $("note-saved").textContent = "";
++    saveTimer = setTimeout(saveNoteNow, kSaveDebounceMs);
++  }
++
++  async function saveNoteNow() {
++    clearTimeout(saveTimer);
++    const browser = currentBrowser();
++    const url = browser?.currentURI?.spec || "";
++    if (!KavachaKnowledge.keyFor(url)) {
++      return;
++    }
++    const body = $("note-input").value;
++    await KavachaKnowledge.saveNote({
++      url,
++      title: chromeWindow.gBrowser?.selectedTab?.label || url,
++      body,
++      workspaceUuid: activeWorkspaceUuid(),
++    });
++    $("note-saved").textContent = body.trim() ? "Saved" : "";
++    refreshFooter();
++    if (previewOn) {
++      renderPreview();
++    }
++  }
++
++  function renderPreview() {
++    const target = $("note-preview");
++    clear(target);
++    const text = $("note-input").value.trim();
++    if (!text) {
++      target.append(document.createTextNode("Nothing to preview yet."));
++      return;
++    }
++    // Same renderer as the workspace notes panel (patch 0052): DOM nodes, no
++    // HTML parsing.
++    target.append(KavachaMarkdown.render(text, document));
++  }
++
++  function togglePreview() {
++    previewOn = !previewOn;
++    $("note-preview").hidden = !previewOn;
++    $("note-input").hidden = previewOn;
++    $("note-preview-toggle").textContent = previewOn ? "Edit" : "Preview";
++    if (previewOn) {
++      renderPreview();
++    }
++  }
++
++  /* ---------------------------------------------------------------- views */
++
++  function selectMode(mode) {
++    const known = mode === "library" || mode === "reader" ? mode : "page";
++    for (const name of ["page", "library", "reader"]) {
++      $("view-" + name).hidden = name !== known;
++    }
++    // The reader is reached from a row, not from the tab strip, so it leaves
++    // whichever tab was selected looking selected.
++    if (known !== "reader") {
++      $("mode-page").setAttribute("aria-selected", String(known === "page"));
++      $("mode-library").setAttribute(
++        "aria-selected",
++        String(known === "library")
++      );
++      $("mode-page").classList.toggle("is-active", known === "page");
++      $("mode-library").classList.toggle("is-active", known === "library");
++    }
++    if (known === "library") {
++      refreshLibrary();
++    }
++  }
++
++  function showReader(item) {
++    $("reader-title").textContent = item.title || item.url;
++    $("reader-meta").textContent =
++      prettyHost(item.url) + " · saved " + whenText(item.createdAt);
++    const body = $("reader-body");
++    clear(body);
++    // Paragraph per blank-line block, as text nodes. The saved copy is read
++    // here rather than re-fetched — that is what makes it work offline.
++    for (const para of String(item.body).split(/\n{2,}/)) {
++      const p = document.createElement("p");
++      p.textContent = para.trim();
++      if (p.textContent) {
++        body.append(p);
++      }
++    }
++    selectMode("reader");
++  }
++
++  async function refreshPageHeader() {
++    const browser = currentBrowser();
++    const url = browser?.currentURI?.spec || "";
++    $("page-title").textContent =
++      chromeWindow.gBrowser?.selectedTab?.label || url || "—";
++    $("page-host").textContent = prettyHost(url);
++    const storable = !!KavachaKnowledge.keyFor(url);
++    $("clip-page").disabled = !storable;
++    $("clip-selection").disabled = !storable;
++    $("note-input").disabled = !storable;
++    if (!storable) {
++      setStatus(
++        $("page-status"),
++        "Notes and clips attach to web pages. This is not one."
++      );
++    } else {
++      setStatus($("page-status"), "");
++    }
++    return url;
++  }
++
++  /**
++   * Load the note + saved items for whatever tab is selected. Ordered so a
++   * fast tab switch cannot write the previous page's note onto the new one:
++   * the pending save is flushed for the OLD url first, then the box is
++   * repopulated.
++   */
++  async function onTabChange() {
++    if (saveTimer) {
++      await saveNoteNow();
++    }
++    const url = await refreshPageHeader();
++    currentUrl = url;
++    const note = await KavachaKnowledge.getNote(url);
++    // A slower load may have been superseded while we awaited.
++    if (currentUrl !== url) {
++      return;
++    }
++    $("note-input").value = note?.body || "";
++    $("note-saved").textContent = note ? "Saved" : "";
++    if (previewOn) {
++      renderPreview();
++    }
++    await refreshPageItems();
++  }
++
++  async function refreshPageItems() {
++    const url = currentBrowser()?.currentURI?.spec || "";
++    const { highlights, clips } = await KavachaKnowledge.forPage(url);
++    const items = [...highlights, ...clips].sort(
++      (a, b) => b.createdAt - a.createdAt
++    );
++    $("page-items-heading").hidden = !items.length;
++    renderItems($("page-items"), items);
++  }
++
++  async function refreshLibrary() {
++    const filter = $("library-filter").value.trim();
++    let items = filter
++      ? await KavachaKnowledge.search(filter, { limit: 200 })
++      : await KavachaKnowledge.listRecent({ limit: 200 });
++    if (libraryKind) {
++      items = items.filter(i => i.kind === libraryKind);
++    }
++    setStatus(
++      $("library-status"),
++      items.length
++        ? ""
++        : filter
++          ? "Nothing matches that."
++          : "Nothing saved yet. Clip a page or write a note and it lands here."
++    );
++    renderItems($("library-items"), items, { showPage: true });
++  }
++
++  async function refreshFooter() {
++    const stats = await KavachaKnowledge.stats();
++    $("kn-footer-status").textContent =
++      stats.note +
++      " notes · " +
++      stats.highlight +
++      " highlights · " +
++      stats.clip +
++      " clips";
++  }
++
++  /**
++   * Write the whole store to a JSON file in the downloads folder. Deliberately
++   * a plain file rather than a picker: the sidebar is a narrow surface, the
++   * user asked for their data, and a modal file dialog opened from a sidebar
++   * is a good way to lose the answer behind the browser window.
++   */
++  async function exportAll() {
++    try {
++      const data = await KavachaKnowledge.exportAll();
++      const dir = Services.dirsvc.get("DfltDwnld", Ci.nsIFile).path;
++      const stamp = new Date().toISOString().slice(0, 10);
++      const path = PathUtils.join(dir, `kavacha-knowledge-${stamp}.json`);
++      await IOUtils.writeJSON(path, data);
++      $("kn-footer-status").textContent =
++        "Exported " + data.items.length + " items to " + path;
++    } catch (e) {
++      console.error("KavachaKnowledge: export failed", e);
++      $("kn-footer-status").textContent = "Export failed.";
++    }
++  }
++
++  /* ------------------------------------------------------------------ init */
++
++  function init() {
++    $("mode-page").addEventListener("click", () => selectMode("page"));
++    $("mode-library").addEventListener("click", () => selectMode("library"));
++    $("clip-page").addEventListener("click", clipPage);
++    $("clip-selection").addEventListener("click", clipSelection);
++    $("note-input").addEventListener("input", queueNoteSave);
++    $("note-preview-toggle").addEventListener("click", togglePreview);
++    $("reader-back").addEventListener("click", () => selectMode("library"));
++    $("kn-export").addEventListener("click", exportAll);
++    $("library-filter").addEventListener("input", () => {
++      clearTimeout(filterTimer);
++      filterTimer = setTimeout(refreshLibrary, 150);
++    });
++    for (const chip of document.querySelectorAll(".kn-chip")) {
++      chip.addEventListener("click", () => {
++        libraryKind = chip.dataset.kind || "";
++        for (const other of document.querySelectorAll(".kn-chip")) {
++          other.classList.toggle("is-active", other === chip);
++        }
++        refreshLibrary();
++      });
++    }
++
++    chromeWindow.addEventListener("TabSelect", onTabChange, true);
++    // TabSelect misses navigation within the selected tab, which is the
++    // common case for note-taking: you read on, the note should follow.
++    const progressListener = {
++      QueryInterface: ChromeUtils.generateQI([
++        "nsIWebProgressListener",
++        "nsISupportsWeakReference",
++      ]),
++      onLocationChange: (webProgress, request, uri, flags) => {
++        if (webProgress.isTopLevel) {
++          onTabChange();
++        }
++      },
++    };
++    try {
++      chromeWindow.gBrowser?.addProgressListener(progressListener);
++    } catch (e) {
++      console.error("KavachaKnowledge: no progress listener", e);
++    }
++
++    window.addEventListener(
++      "unload",
++      () => {
++        // Flush, do not queue: the document is going away and the timer with
++        // it. This is why saveNoteNow reads the box directly rather than
++        // trusting state captured when the timer was set.
++        if (saveTimer) {
++          saveNoteNow();
++        }
++        chromeWindow.removeEventListener("TabSelect", onTabChange, true);
++        try {
++          chromeWindow.gBrowser?.removeProgressListener(progressListener);
++        } catch (e) {}
++      },
++      { once: true }
++    );
++
++    onTabChange();
++    refreshFooter();
++  }
++
++  // The chrome callers (KavachaKnowledgeSidebar) drive the page through this.
++  window.KavachaKnowledgePage = {
++    selectMode,
++    clipPage,
++    clipSelection,
++    focusNote() {
++      selectMode("page");
++      if (previewOn) {
++        togglePreview();
++      }
++      $("note-input").focus();
++    },
++  };
++
++  if (document.readyState === "loading") {
++    document.addEventListener("DOMContentLoaded", init, { once: true });
++  } else {
++    init();
++  }
++})();
+diff --git a/src/zen/kavacha-search/KavachaUniversalSearch.mjs b/src/zen/kavacha-search/KavachaUniversalSearch.mjs
+index 9d8571d..9402058 100644
+--- a/src/zen/kavacha-search/KavachaUniversalSearch.mjs
++++ b/src/zen/kavacha-search/KavachaUniversalSearch.mjs
+@@ -83,7 +83,16 @@ class nsKavachaUniversalSearch {
+   async open() {
+     const panel = this.panel;
+     if (!this.#groupLabels) {
+-      const ids = ["tabs", "notes", "bookmarks", "history", "downloads", "pagetext"];
++      const ids = [
++        "tabs",
++        "notes",
++        "bookmarks",
++        "history",
++        "downloads",
++        "pagetext",
++        "pagenotes",
++        "clips",
++      ];
+       const values = await document.l10n.formatValues(
+         ids.map(id => ({ id: `kavacha-search-group-${id}` }))
+       );
+@@ -308,6 +317,43 @@ class nsKavachaUniversalSearch {
+     }
+   }
+ 
++  // Knowledge store (ADR 0015): what the user WROTE or KEPT about a page.
++  // Two groups rather than one, because they answer different questions —
++  // "what did I think about this page" and "what did I save from it" — and a
++  // merged group would bury a three-line note under a 30,000-character clip.
++  // Both open the Knowledge sidebar on the page they belong to, rather than
++  // just navigating: the point of the result is the writing, not the URL.
++  async #searchKnowledge(q) {
++    if (gZenWorkspaces.privateWindowOrDisabled) {
++      return [];
++    }
++    try {
++      const { KavachaKnowledge } = ChromeUtils.importESModule(
++        "resource:///modules/KavachaKnowledge.sys.mjs"
++      );
++      const rows = await KavachaKnowledge.search(q, { limit: kMaxPerSource });
++      const sidebar = ChromeUtils.importESModule(
++        "resource:///modules/KavachaKnowledgeSidebar.sys.mjs"
++      ).KavachaKnowledgeSidebar;
++      return rows.map(r => ({
++        group: r.kind === "note" ? "pagenotes" : "clips",
++        title: r.title || this.#prettyUrl(r.url),
++        detail: r.snippet || this.#prettyUrl(r.url),
++        url: r.url,
++        workspaceId: r.workspaceUuid || null,
++        score: r.score,
++        action: () => {
++          this.close();
++          window.openTrustedLinkIn(r.url, "tab");
++          sidebar.open(window);
++        },
++      }));
++    } catch (e) {
++      console.error("KavachaUniversalSearch: knowledge search failed", e);
++      return [];
++    }
++  }
++
+   /* ------------------------------------------------------------ querying */
+ 
+   async #runQuery(q) {
+@@ -323,6 +369,7 @@ class nsKavachaUniversalSearch {
+       this.#searchHistoryWithBadges(q),
+       this.#searchDownloads(q),
+       this.#searchIndex(q),
++      this.#searchKnowledge(q),
+     ]);
+     if (token !== this.#queryToken) {
+       return; // a newer query superseded this one
+@@ -341,7 +388,14 @@ class nsKavachaUniversalSearch {
+     this.#results = [];
+     for (const group of groups) {
+       for (const r of group) {
+-        const key = r.group === "notes" ? Symbol() : `${r.title}|${r.detail}`;
++        // Notes, page notes and clips are never deduped against a page: they
++        // are the user's own writing ABOUT that page, and dropping a note
++        // because its page is already in the list loses the only result that
++        // was not just a URL.
++        const key =
++          r.group === "notes" || r.group === "pagenotes" || r.group === "clips"
++            ? Symbol()
++            : `${r.title}|${r.detail}`;
+         if (typeof key === "string" && seenDetails.has(key)) {
+           continue;
+         }

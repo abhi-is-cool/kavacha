@@ -100,3 +100,54 @@ pref("kavacha.index.retention-days", 90);
 pref("kavacha.ai.enabled", true);
 pref("kavacha.ai.endpoint", "http://localhost:11434");
 pref("kavacha.ai.model", "");
+
+// Knowledge capture (ADR 0015 / patch 0082): per-page notes, highlights and
+// clips, in kavacha-knowledge.sqlite. Note the deletion contract is the
+// OPPOSITE of the index's above — this store does NOT follow Places, because
+// clearing history must not destroy notes the user wrote. Off means the
+// sidebar still reads what is already stored but accepts no new writes.
+pref("kavacha.knowledge.enabled", true);
+// Cap on one clip's stored text. Higher than the index's 32k per page: a clip
+// is a deliberate save of one document, not a passive capture of everything.
+pref("kavacha.knowledge.max-clip-chars", 64000);
+
+// Knowledge graph (ADR 0016 / patch 0083): record that one page led to
+// another, which Places never stores — it remembers both visits and no
+// relationship between them. Deletion FOLLOWS Places here (unlike the notes
+// store above): an edge is a record of where you went, so clearing history
+// clears it. Off means no new edges; what is already recorded still reads.
+pref("kavacha.knowledge.record-links", true);
+
+// Focus mode (patch 0084): a session is a PERIOD, and this pref holds when it
+// ends (unix SECONDS — prefs are 32-bit signed, and a millisecond timestamp
+// overflows into a negative number). 0 means no session. It lives in a pref
+// rather than memory so a session survives a restart: quitting the browser is
+// the most obvious way to defeat a self-imposed block, and a focus feature a
+// restart switches off is decoration.
+pref("kavacha.focus.session-ends-at", 0);
+pref("kavacha.focus.default-minutes", 50);
+// While a session runs, websites cannot ask to send notifications. The value
+// that was there before is parked in the second pref and written back when the
+// session ends — explicit ownership, which is what patch 0066 cost us to learn.
+pref("kavacha.focus.block-notifications", true);
+pref("kavacha.focus.saved-notification-default", 0);
+
+// Automation (ADR 0017 / patch 0085): workflows are documents — a trigger and
+// a list of steps from a fixed allowlist — never code. The caps are the
+// guardrails that make an imported or hand-edited workflow safe to run: a
+// bounded number of steps, and a bounded number of tabs one run may open.
+pref("kavacha.workflows.enabled", true);
+pref("kavacha.workflows.max-actions", 25);
+pref("kavacha.workflows.max-tabs-per-run", 10);
+
+// Tab history tree (patch 0086; FEATURES 7.1): record the branches ordinary
+// session history truncates — go back three pages, follow a different link,
+// and every browser silently throws the first three away. The tree rides
+// SessionStore per tab, so it survives a restart and dies with the tab.
+pref("kavacha.tabhistory.enabled", true);
+pref("kavacha.tabhistory.max-nodes", 200);
+
+// Citations (patch 0087): the style "Copy Citation" uses. The command asks
+// and remembers the answer here, so the second citation is one keystroke.
+// apa | mla | bibtex.
+pref("kavacha.citation.style", "apa");

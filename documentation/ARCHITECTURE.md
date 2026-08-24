@@ -58,6 +58,24 @@ Rust client core + Rust server (PostgreSQL, Redis).
 Local-first via Ollama/llama.cpp; narrow auditable API to browser state; features
 disappear gracefully when no model is installed.
 
+### Knowledge (`kavacha-knowledge.sqlite` + `kavacha-graph.sqlite`)
+Two stores with **deliberately opposite deletion contracts**, which is why they are two
+files. What the user *wrote or kept* — notes, highlights, clips (ADR 0015) — does NOT
+follow history deletion: clearing history must not destroy a document the user authored.
+What the browser *observed* — the trail from one page to the next (ADR 0016) — does
+follow Places, exactly like the personal index (ADR 0012), because it is a record of
+where you went. The graph stores only that one fact and derives everything else at
+query time from the index, the knowledge store and Space attribution, so there is never
+a second copy that can disagree with the first.
+
+### Automation (`automation/`)
+Workflows are **documents, not code**: a trigger and an ordered list of steps from a
+fixed allowlist, schema-validated fail-closed at save and again at run (ADR 0017).
+There is no script step and no expression language — a workflow arrives from imports
+and one day from the marketplace, and arbitrary JS with chrome privileges would end the
+plugin security model (ADR 0011). Adding a capability means adding an allowlist entry,
+which is the review checkpoint that keeps the boundary meaningful.
+
 ## Decision log
 
 Significant choices are ADRs in [decisions/](decisions/):
@@ -73,3 +91,11 @@ Significant choices are ADRs in [decisions/](decisions/):
 - [0009 — Customization Studio (about:studio)](decisions/0009-customization-studio.md)
 - [0010 — Component marketplace](decisions/0010-component-marketplace.md)
 - [0011 — Kavacha SDK + plugin permission model](decisions/0011-kavacha-sdk-plugins.md)
+- [0012 — Personal search index](decisions/0012-personal-search-index.md)
+- [0013 — Local AI runtime bridge](decisions/0013-local-ai-bridge.md)
+- [0014 — AI surfaces: sidebar, ask-your-history, tab assistant](decisions/0014-ai-surfaces-and-ask-history.md)
+- [0015 — Knowledge capture: notes, highlights and clips, and why they do not follow history](decisions/0015-knowledge-capture.md)
+- [0016 — The personal knowledge graph: one stored fact, everything else derived](decisions/0016-personal-knowledge-graph.md)
+- [0017 — Automation: workflows are data, never code](decisions/0017-automation-workflows.md)
+- [0018 — Focus sessions: a period, not a mode](decisions/0018-focus-sessions.md)
+- [0019 — The tab history tree: keeping the branches Gecko truncates](decisions/0019-tab-history-tree.md)

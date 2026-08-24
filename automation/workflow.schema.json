@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kavacha.app/schemas/workflow.schema.json",
+  "title": "Kavacha workflow",
+  "description": "A workflow is a trigger and an ordered list of steps. It is DATA, never code: every step is one entry from a fixed allowlist with typed parameters, so importing a workflow can never run anything the browser could not already do. The engine carries an embedded copy of this schema (KavachaWorkflows.sys.mjs) because sideloaded and imported documents are not packaged with this file; the two must stay in sync.",
+  "type": "object",
+  "required": ["id", "name", "trigger", "actions"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Stable identifier. Generated as a UUID rather than from the name, so renaming a workflow does not orphan its command."
+    },
+    "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "A disabled workflow keeps its document but registers no command and arms no timer."
+    },
+    "trigger": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["manual", "startup", "space-switch", "interval"]
+        },
+        "spaceId": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Required for space-switch: the Space whose activation runs this workflow."
+        },
+        "minutes": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 10080,
+          "description": "Required for interval. The engine enforces a 15-minute floor. Timers are NOT persisted across restarts: missed windows are not caught up, because a scheduler that fires for the week you were away is a different feature."
+        }
+      }
+    },
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Ordered steps. The engine caps the count (kavacha.workflows.max-actions) and the number of tabs one run may open (kavacha.workflows.max-tabs-per-run).",
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "open-url",
+              "switch-space",
+              "close-duplicate-tabs",
+              "group-tabs",
+              "snapshot-space",
+              "save-session",
+              "clip-page",
+              "start-focus",
+              "end-focus",
+              "run-command",
+              "wait"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "open-url. Must be http(s): the engine re-checks this beyond the schema, because a javascript: or data: URL in an automated navigation is the classic way to turn a config file into code execution."
+          },
+          "spaceId": { "type": "string", "maxLength": 64 },
+          "name": {
+            "type": "string",
+            "maxLength": 120,
+            "description": "save-session. When set, the session is saved under this name; when absent, the tab assistant suggests one (and falls back to <Space> — <date> with no model)."
+          },
+          "commandId": {
+            "type": "string",
+            "maxLength": 120,
+            "description": "run-command. Any command in the Kavacha command registry EXCEPT one registered by a workflow — that refusal is what makes recursion impossible."
+          },
+          "minutes": { "type": "number", "minimum": 1, "maximum": 1440 },
+          "seconds": { "type": "number", "minimum": 1, "maximum": 300 }
+        }
+      }
+    }
+  }
+}

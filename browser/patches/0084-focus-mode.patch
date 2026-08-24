@@ -1,0 +1,1122 @@
+# Patch 0084 — Focus mode (ROADMAP Phase 7; FEATURES 11 "block distracting
+# sites + notifications").
+#
+# A SESSION IS A PERIOD, NOT A MODE FLAG. Everything reads one end time, and
+# that single decision settles the awkward cases without extra machinery: a
+# crash cannot strand the browser in a permanently blocked state (the session
+# is over when the clock says so, whether or not a timer survived), and the
+# request check never has to trust that some earlier cleanup ran. The end time
+# is stored in SECONDS because prefs are 32-bit signed and a millisecond
+# timestamp overflows into a negative number — which is precisely the shape of
+# bug that ships as "focus mode randomly does nothing".
+#
+# SESSIONS SURVIVE A RESTART, deliberately. Quitting is the most obvious way
+# to defeat a self-imposed block, and a focus feature a restart switches off is
+# decoration. What it is NOT is a lock: ending early is one click, and the
+# block page says so in as many words. The point is to make the distraction
+# deliberate, not impossible.
+#
+# TOP-LEVEL PAGES ONLY, NOT SUBRESOURCES. Kavacha already ships tracking
+# protection for the other job; quietly breaking embeds inside pages the user
+# deliberately opened would make "focus mode" mean "the web is subtly broken
+# now". Matching is on eTLD+1, so a rule for youtube.com covers m.youtube.com
+# and does not cover notyoutube.com.
+#
+# THE NOTIFICATION DEFAULT IS RESTORED EXACTLY, and this is patch 0066's
+# lesson applied BEFORE the bug rather than after. That patch armed a shared
+# shutdown pref, could not tell "I set this" from "the user set this", and
+# wiped browsing history on every quit for two weeks. Here the pre-session
+# value is parked in its own pref (so it outlives the process, as the session
+# does), and it is written back only if the current value is still the one we
+# set — if it moved underneath us, the user's value wins and we drop our
+# bookkeeping.
+#
+# CANCEL-THEN-REDIRECT IS DONE OFF THE NOTIFICATION STACK. The blocked channel
+# is cancelled inside http-on-modify-request, but the block page is loaded
+# from dispatchToMainThread: navigating a docshell from inside the observer
+# re-enters the very machinery that is mid-flight.
+#
+# ONE PAGE IS BOTH THE WALL AND THE SETTINGS. about:focus leads with the block
+# when it was reached by being blocked (?url=) and is the blocklist editor
+# otherwise, because the moment someone most wants to change a rule is the
+# moment they just hit it — and sending them elsewhere is how a rule that no
+# longer makes sense survives for months. A blocked page whose session has
+# since ended says that instead of showing a wall with nothing behind it.
+#
+# Per-Space lists are additive ("also block these"), not scoped ("only here"):
+# asking which Space a request belongs to at http-on-modify-request time is
+# neither cheap nor reliable, and a session is one span of attention anyway.
+# Stated in the code as well, because the other reading is reasonable.
+#
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index 32d5eb7..465f5fb 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -148,3 +148,10 @@ kavacha-action-open-library = Open Notes & Clips
+ # Kavacha patch 0083 — the personal knowledge graph (ADR 0016).
+ kavacha-action-open-knowledge = Open Knowledge
+ kavacha-action-page-connections = What Does This Page Connect To?
++
++# Kavacha patch 0084 — focus mode. Start/end are separate commands rather than
++# one toggle: a palette entry whose meaning depends on hidden state is how you
++# end a session you meant to start.
++kavacha-action-focus-start = Start a Focus Session
++kavacha-action-focus-end = End Focus Session
++kavacha-action-focus-settings = Focus Settings
+diff --git a/src/browser/base/content/zen-assets.jar.inc.mn b/src/browser/base/content/zen-assets.jar.inc.mn
+index 19db466..b5ecdb3 100644
+--- a/src/browser/base/content/zen-assets.jar.inc.mn
++++ b/src/browser/base/content/zen-assets.jar.inc.mn
+@@ -29,3 +29,4 @@
+ #include ../../../zen/kavacha-plugins/jar.inc.mn
+ #include ../../../zen/kavacha-ai/jar.inc.mn
+ #include ../../../zen/kavacha-knowledge/jar.inc.mn
++#include ../../../zen/kavacha-focus/jar.inc.mn
+diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
+index a0405a9..2939923 100644
+--- a/src/zen/common/modules/ZenStartup.mjs
++++ b/src/zen/common/modules/ZenStartup.mjs
+@@ -176,6 +176,13 @@ class ZenStartup {
+       ).KavachaKnowledgeGraph;
+       kavachaGraph.init();
+       kavachaGraph.attachToWindow(window);
++      // Kavacha: focus mode (Phase 7). A process singleton, and it must come
++      // up even with no session running — init() is what ENDS a session whose
++      // clock ran out while the browser was closed, restoring the
++      // notification default it changed.
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaFocusMode.sys.mjs"
++      ).KavachaFocusMode.init();
+       // Kavacha: apply the saved layout document to this window's chrome
+       // (process singleton + per-window apply; ADR 0008).
+       const kavachaLayout = ChromeUtils.importESModule(
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+index 96b5d56..ba25cd4 100644
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -8,6 +8,7 @@ EXTRA_JS_MODULES += [
+   "sys/KavachaAppearancePanel.sys.mjs",
+   "sys/KavachaAskHistory.sys.mjs",
+   "sys/KavachaCommandRegistry.sys.mjs",
++  "sys/KavachaFocusMode.sys.mjs",
+   "sys/KavachaKnowledge.sys.mjs",
+   "sys/KavachaKnowledgeSidebar.sys.mjs",
+   "sys/KavachaLayoutEngine.sys.mjs",
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+index 9976135..7941495 100644
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -250,6 +250,33 @@ const BUILTIN = [
+     domain: KavachaCommandDomain.PRODUCTIVITY,
+     isAvailable: kNotPrivate,
+   },
++  // Focus mode (patch 0084). Start uses the default length so the command is
++  // one keystroke and done; about:focus is where a different length, the
++  // blocklist and "end early" live. Ending is a separate command rather than
++  // a toggle on the same one, because a palette entry that means two
++  // different things depending on hidden state is how you end a session you
++  // meant to start.
++  {
++    l10nId: "kavacha-action-focus-start",
++    command: () => kavachaFocus().start(),
++    icon: "chrome://browser/skin/zen-icons/selectable/time.svg",
++    domain: KavachaCommandDomain.PRODUCTIVITY,
++    isAvailable: window => kNotPrivate(window) && !kavachaFocus().isActive,
++  },
++  {
++    l10nId: "kavacha-action-focus-end",
++    command: () => kavachaFocus().end(),
++    icon: "chrome://browser/skin/zen-icons/close.svg",
++    domain: KavachaCommandDomain.PRODUCTIVITY,
++    isAvailable: () => kavachaFocus().isActive,
++  },
++  {
++    l10nId: "kavacha-action-focus-settings",
++    command: window => window.openTrustedLinkIn("about:focus", "tab"),
++    icon: "chrome://browser/skin/zen-icons/block.svg",
++    domain: KavachaCommandDomain.PRODUCTIVITY,
++    isAvailable: kNotPrivate,
++  },
+   // Knowledge graph (patch 0083; ADR 0016).
+   {
+     l10nId: "kavacha-action-open-knowledge",
+@@ -465,6 +492,10 @@ const kavachaAISidebar = () =>
+   ChromeUtils.importESModule("resource:///modules/KavachaAISidebar.sys.mjs")
+     .KavachaAISidebar;
+ 
++const kavachaFocus = () =>
++  ChromeUtils.importESModule("resource:///modules/KavachaFocusMode.sys.mjs")
++    .KavachaFocusMode;
++
+ const kavachaKnowledgeSidebar = () =>
+   ChromeUtils.importESModule(
+     "resource:///modules/KavachaKnowledgeSidebar.sys.mjs"
+diff --git a/src/zen/common/sys/KavachaFocusMode.sys.mjs b/src/zen/common/sys/KavachaFocusMode.sys.mjs
+new file mode 100644
+index 0000000..cd3e7dc
+--- /dev/null
++++ b/src/zen/common/sys/KavachaFocusMode.sys.mjs
+@@ -0,0 +1,399 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha focus mode (ROADMAP Phase 7; FEATURES 11 "Focus mode — block
++// distracting sites + notifications").
++//
++// A focus session is a PERIOD, not a mode flag: it has an end time, and the
++// end time is what everything reads. That one decision settles the awkward
++// cases without extra machinery — a crash or a restart cannot strand the
++// browser in a permanently blocked state (the session is over when the clock
++// says so, whether or not a timer survived), and the block check never has to
++// trust that some earlier cleanup ran.
++//
++// SESSIONS SURVIVE A RESTART, on purpose. Quitting the browser is the most
++// obvious way to defeat a self-imposed block, and a focus feature that a
++// restart switches off is decoration. The end time lives in a pref, so it
++// outlives the process; the user can still end a session deliberately, which
++// is the difference between a tool and a lock.
++//
++// WHAT IS BLOCKED IS TOP-LEVEL PAGES, NOT SUBRESOURCES. This is a
++// concentration tool, not a content blocker: Kavacha already ships tracking
++// protection for the other job, and quietly breaking embeds inside pages the
++// user deliberately opened would make "focus mode" mean "the web is subtly
++// broken now". Matching is on the base domain (eTLD+1), so blocking
++// `youtube.com` covers `m.youtube.com` and does not cover `notyoutube.com`.
++//
++// NOTIFICATIONS: the desktop-notification permission default is switched to
++// DENY for the session and RESTORED EXACTLY at the end — including the case
++// where the user had already set it to something themselves. That is patch
++// 0066's lesson applied before the bug rather than after: the shutdown-cookie
++// feature armed a shared pref, could not tell "I set this" from "the user set
++// this", and wiped browsing history for two weeks. Here the previous value is
++// recorded when the session starts and written back when it ends, and if the
++// pref moved underneath us we leave it alone.
++
++const lazy = {};
++ChromeUtils.defineESModuleGetters(lazy, {
++  JSONFile: "resource://gre/modules/JSONFile.sys.mjs",
++  setTimeout: "resource://gre/modules/Timer.sys.mjs",
++  clearTimeout: "resource://gre/modules/Timer.sys.mjs",
++});
++
++const kEndsAtPref = "kavacha.focus.session-ends-at";
++const kDefaultMinutesPref = "kavacha.focus.default-minutes";
++const kBlockNotificationsPref = "kavacha.focus.block-notifications";
++// Where the pre-session notification default is parked so it can be restored.
++// A pref rather than memory: the session outlives the process, so the thing
++// needed to undo it has to as well.
++const kSavedNotificationPref = "kavacha.focus.saved-notification-default";
++const kNotificationDefaultPref = "permissions.default.desktop-notification";
++const kStoreFile = "kavacha-focus.json";
++const kBlockPage = "about:focus";
++
++export const KavachaFocusMode = {
++  _initialized: false,
++  _store: null,
++  _timer: null,
++  _observing: false,
++
++  async init() {
++    if (this._initialized) {
++      return;
++    }
++    this._initialized = true;
++    await this._load();
++    // A session that was running when the browser closed is still running if
++    // its end time has not passed. Re-arm; otherwise clean up whatever the
++    // last run left behind.
++    if (this.isActive) {
++      this._arm();
++    } else if (Services.prefs.prefHasUserValue(kEndsAtPref)) {
++      this.end({ silent: true });
++    }
++  },
++
++  async _load() {
++    if (!this._store) {
++      this._store = new lazy.JSONFile({
++        path: PathUtils.join(PathUtils.profileDir, kStoreFile),
++      });
++      await this._store.load();
++      if (!this._store.data.global) {
++        this._store.data.global = [];
++      }
++      if (!this._store.data.spaces) {
++        this._store.data.spaces = {};
++      }
++    }
++    return this._store;
++  },
++
++  /* --------------------------------------------------------------- session */
++
++  get endsAt() {
++    return Services.prefs.getIntPref(kEndsAtPref, 0);
++  },
++
++  get isActive() {
++    const ends = this.endsAt;
++    return ends > 0 && ends * 1000 > Date.now();
++  },
++
++  /** Whole minutes left, 0 when no session is running. */
++  get minutesLeft() {
++    if (!this.isActive) {
++      return 0;
++    }
++    return Math.max(1, Math.ceil((this.endsAt * 1000 - Date.now()) / 60_000));
++  },
++
++  /**
++   * Start (or extend) a focus session.
++   *
++   * Seconds are stored rather than milliseconds because prefs are 32-bit
++   * signed integers: a millisecond timestamp overflows and would read back as
++   * a negative number, which is exactly the shape of bug that ships as "focus
++   * mode randomly does nothing".
++   */
++  start(minutes = 0) {
++    const length =
++      Number(minutes) > 0
++        ? Number(minutes)
++        : Services.prefs.getIntPref(kDefaultMinutesPref, 50);
++    const endsAt = Math.floor((Date.now() + length * 60_000) / 1000);
++    Services.prefs.setIntPref(kEndsAtPref, endsAt);
++    this._muteNotifications();
++    this._arm();
++    return { endsAt, minutes: length };
++  },
++
++  /** End the session now. `silent` skips the notification restore chatter. */
++  end({ silent = false } = {}) {
++    Services.prefs.clearUserPref(kEndsAtPref);
++    if (this._timer) {
++      lazy.clearTimeout(this._timer);
++      this._timer = null;
++    }
++    this._restoreNotifications();
++    this._stopObserving();
++    if (!silent) {
++      Services.obs.notifyObservers(null, "kavacha-focus-changed");
++    }
++    return true;
++  },
++
++  _arm() {
++    this._startObserving();
++    if (this._timer) {
++      lazy.clearTimeout(this._timer);
++    }
++    const ms = Math.max(1000, this.endsAt * 1000 - Date.now());
++    // The timer is a courtesy — it makes the session END on time rather than
++    // at the next request. Correctness does not depend on it: every check
++    // compares the clock.
++    this._timer = lazy.setTimeout(() => this.end(), ms);
++    Services.obs.notifyObservers(null, "kavacha-focus-changed");
++  },
++
++  /* --------------------------------------------------------- notifications */
++
++  _muteNotifications() {
++    try {
++      if (!Services.prefs.getBoolPref(kBlockNotificationsPref, true)) {
++        return;
++      }
++      // Already muted by an earlier session? Do not overwrite the saved value
++      // with our own, or ending the session would restore "blocked" forever.
++      if (Services.prefs.prefHasUserValue(kSavedNotificationPref)) {
++        return;
++      }
++      const previous = Services.prefs.getIntPref(kNotificationDefaultPref, 0);
++      Services.prefs.setIntPref(kSavedNotificationPref, previous);
++      Services.prefs.setIntPref(kNotificationDefaultPref, 2); // DENY
++    } catch (e) {
++      console.error("KavachaFocusMode: could not mute notifications", e);
++    }
++  },
++
++  _restoreNotifications() {
++    try {
++      if (!Services.prefs.prefHasUserValue(kSavedNotificationPref)) {
++        return;
++      }
++      const saved = Services.prefs.getIntPref(kSavedNotificationPref, 0);
++      const current = Services.prefs.getIntPref(kNotificationDefaultPref, 0);
++      // If it is not what we set, the user (or something else) changed it
++      // during the session. Their value wins; we just drop our bookkeeping.
++      if (current === 2) {
++        if (saved === 0) {
++          Services.prefs.clearUserPref(kNotificationDefaultPref);
++        } else {
++          Services.prefs.setIntPref(kNotificationDefaultPref, saved);
++        }
++      }
++      Services.prefs.clearUserPref(kSavedNotificationPref);
++    } catch (e) {
++      console.error("KavachaFocusMode: could not restore notifications", e);
++    }
++  },
++
++  /* -------------------------------------------------------------- blocking */
++
++  _startObserving() {
++    if (this._observing) {
++      return;
++    }
++    Services.obs.addObserver(this, "http-on-modify-request");
++    this._observing = true;
++  },
++
++  _stopObserving() {
++    if (!this._observing) {
++      return;
++    }
++    try {
++      Services.obs.removeObserver(this, "http-on-modify-request");
++    } catch (e) {}
++    this._observing = false;
++  },
++
++  observe(subject, topic) {
++    if (topic !== "http-on-modify-request") {
++      return;
++    }
++    try {
++      if (!this.isActive) {
++        // The clock, not the timer, is the authority. An expired session
++        // stops blocking on the next request even if nothing cleaned up.
++        this.end();
++        return;
++      }
++      const channel = subject.QueryInterface(Ci.nsIHttpChannel);
++      const loadInfo = channel.loadInfo;
++      // Top-level page loads only — see the header on why subresources are
++      // deliberately untouched.
++      if (
++        loadInfo.externalContentPolicyType !==
++        Ci.nsIContentPolicy.TYPE_DOCUMENT
++      ) {
++        return;
++      }
++      const uri = channel.URI;
++      if (!this.isBlockedUri(uri)) {
++        return;
++      }
++      const context =
++        loadInfo.targetBrowsingContext || loadInfo.browsingContext || null;
++      const browser = context?.top?.embedderElement;
++      channel.cancel(Cr.NS_BINDING_ABORTED);
++      if (!browser) {
++        return;
++      }
++      // Off the notification stack before touching the docshell: loading
++      // inside http-on-modify-request re-enters the very machinery that is
++      // mid-flight.
++      Services.tm.dispatchToMainThread(() => {
++        try {
++          browser.fixupAndLoadURIString(
++            kBlockPage + "?url=" + encodeURIComponent(uri.spec),
++            {
++              triggeringPrincipal:
++                Services.scriptSecurityManager.getSystemPrincipal(),
++            }
++          );
++        } catch (e) {
++          console.error("KavachaFocusMode: could not show the block page", e);
++        }
++      });
++    } catch (e) {
++      // Never break a load because focus mode had an opinion about it.
++    }
++  },
++
++  /* ------------------------------------------------------------- blocklist */
++
++  /** eTLD+1, so a rule for youtube.com covers m.youtube.com. */
++  baseDomain(uriOrString) {
++    try {
++      const uri =
++        typeof uriOrString === "string"
++          ? Services.io.newURI(uriOrString)
++          : uriOrString;
++      if (uri.scheme !== "http" && uri.scheme !== "https") {
++        return "";
++      }
++      try {
++        return Services.eTLD.getBaseDomain(uri);
++      } catch (e) {
++        // Single-label hosts and IP literals throw; the host itself is then
++        // the only sensible key.
++        return uri.host;
++      }
++    } catch (e) {
++      return "";
++    }
++  },
++
++  /** The blocked set for right now: the global list plus the active Space's. */
++  blockedFor(spaceUuid = null) {
++    const data = this._store?.data || { global: [], spaces: {} };
++    const list = [...(data.global || [])];
++    if (spaceUuid && Array.isArray(data.spaces?.[spaceUuid])) {
++      list.push(...data.spaces[spaceUuid]);
++    }
++    return new Set(list);
++  },
++
++  isBlockedUri(uri) {
++    const domain = this.baseDomain(uri);
++    if (!domain) {
++      return false;
++    }
++    const data = this._store?.data;
++    if (!data) {
++      return false;
++    }
++    if ((data.global || []).includes(domain)) {
++      return true;
++    }
++    // Per-Space rules apply wherever the user is: a session is one span of
++    // attention, and asking which Space a request came from at
++    // http-on-modify-request time is neither cheap nor reliable. A Space
++    // list is therefore "also block these", not "only block these here" —
++    // stated because a user could reasonably expect the other reading.
++    for (const list of Object.values(data.spaces || {})) {
++      if (Array.isArray(list) && list.includes(domain)) {
++        return true;
++      }
++    }
++    return false;
++  },
++
++  isBlocked(url) {
++    try {
++      return this.isBlockedUri(Services.io.newURI(String(url)));
++    } catch (e) {
++      return false;
++    }
++  },
++
++  async listBlocked() {
++    await this._load();
++    return {
++      global: [...(this._store.data.global || [])],
++      spaces: { ...(this._store.data.spaces || {}) },
++    };
++  },
++
++  /** Add a site. Accepts a URL or a bare domain; stores the base domain. */
++  async block(site, { spaceUuid = null } = {}) {
++    await this._load();
++    let domain = this.baseDomain(site);
++    if (!domain) {
++      // A bare "youtube.com" is not a URI; give it a scheme and retry, which
++      // is what a user typing into a settings box will always do.
++      domain = this.baseDomain("https://" + String(site || "").trim());
++    }
++    if (!domain) {
++      return null;
++    }
++    const list = spaceUuid
++      ? (this._store.data.spaces[spaceUuid] ||= [])
++      : this._store.data.global;
++    if (!list.includes(domain)) {
++      list.push(domain);
++      list.sort();
++      this._store.saveSoon();
++    }
++    return domain;
++  },
++
++  async unblock(domain, { spaceUuid = null } = {}) {
++    await this._load();
++    const list = spaceUuid
++      ? this._store.data.spaces[spaceUuid]
++      : this._store.data.global;
++    if (!Array.isArray(list)) {
++      return false;
++    }
++    const at = list.indexOf(domain);
++    if (at === -1) {
++      return false;
++    }
++    list.splice(at, 1);
++    this._store.saveSoon();
++    return true;
++  },
++
++  /** State for the block page, the settings page and the palette. */
++  status() {
++    return {
++      active: this.isActive,
++      endsAt: this.endsAt * 1000,
++      minutesLeft: this.minutesLeft,
++      blocked: this._store ? [...this.blockedFor()] : [],
++    };
++  },
++};
+diff --git a/src/zen/kavacha-focus/KavachaAboutFocus.sys.mjs b/src/zen/kavacha-focus/KavachaAboutFocus.sys.mjs
+new file mode 100644
+index 0000000..206dfaa
+--- /dev/null
++++ b/src/zen/kavacha-focus/KavachaAboutFocus.sys.mjs
+@@ -0,0 +1,43 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha: nsIAboutModule for about:focus — both the block page a focus
++// session shows in place of a distracting site, and the place the blocklist
++// is edited (ROADMAP Phase 7; FEATURES 11).
++//
++// ONE PAGE FOR BOTH JOBS, deliberately. The moment a user is most motivated
++// to change what is blocked is the moment they just hit the block, and
++// sending them somewhere else to do it is how a rule that no longer makes
++// sense survives for months.
++//
++// Same JS about-module pattern as about:studio / about:knowledge, fresh cid,
++// registered through components.conf so no Gecko C++ redirector is edited.
++// Privileged chrome UI: the page drives KavachaFocusMode directly, and it is
++// never web content.
++
++const kChromeURL = "chrome://browser/content/kavacha-focus/focus.html";
++
++export class AboutFocus {
++  QueryInterface = ChromeUtils.generateQI(["nsIAboutModule"]);
++
++  newChannel(aURI, aLoadInfo) {
++    const chromeURI = Services.io.newURI(kChromeURL);
++    const channel = Services.io.newChannelFromURIWithLoadInfo(
++      chromeURI,
++      aLoadInfo
++    );
++    channel.originalURI = aURI;
++    return channel;
++  }
++
++  getURIFlags() {
++    return (
++      Ci.nsIAboutModule.ALLOW_SCRIPT | Ci.nsIAboutModule.IS_SECURE_CHROME_UI
++    );
++  }
++
++  getChromeURI() {
++    return Services.io.newURI(kChromeURL);
++  }
++}
+diff --git a/src/zen/kavacha-focus/components.conf b/src/zen/kavacha-focus/components.conf
+new file mode 100644
+index 0000000..7b6643a
+--- /dev/null
++++ b/src/zen/kavacha-focus/components.conf
+@@ -0,0 +1,15 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++# Kavacha: register about:focus (focus-mode block page + blocklist editor) as
++# a JS nsIAboutModule. Mirrors src/zen/kavacha-studio/components.conf; the cid
++# is fresh and distinct from the other Kavacha about: pages.
++Classes = [
++    {
++        "cid": "{b71c4d92-6e3a-4f57-9a08-51d2c7e8f4a6}",
++        "contract_ids": ["@mozilla.org/network/protocol/about;1?what=focus"],
++        "esModule": "resource:///modules/KavachaAboutFocus.sys.mjs",
++        "constructor": "AboutFocus",
++    },
++]
+diff --git a/src/zen/kavacha-focus/focus.css b/src/zen/kavacha-focus/focus.css
+new file mode 100644
+index 0000000..0728172
+--- /dev/null
++++ b/src/zen/kavacha-focus/focus.css
+@@ -0,0 +1,154 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* about:focus. Same token vocabulary and literal fallbacks as the other
++ * Kavacha content pages — they are not in the chrome token cascade. */
++
++:root {
++  --kf-radius: 12px;
++  --kf-accent: var(
++    --zen-primary-color,
++    var(--kavacha-accent, var(--kavacha-accent-fallback, #8b7bd8))
++  );
++}
++
++body {
++  margin: 0;
++  padding: 40px 20px;
++  font: message-box;
++  font-size: 14px;
++  line-height: 1.6;
++  color: var(--kavacha-text, #e8e6f0);
++  background: var(--kavacha-surface, #14111f);
++  display: flex;
++  justify-content: center;
++}
++
++.kf-card {
++  width: min(620px, 100%);
++  display: flex;
++  flex-direction: column;
++  gap: 28px;
++}
++
++.kf-title {
++  margin: 0 0 6px;
++  font-size: 26px;
++}
++
++.kf-lead {
++  margin: 0;
++  font-size: 15px;
++}
++
++.kf-site {
++  font-weight: 600;
++}
++
++.kf-remaining {
++  margin: 6px 0 0;
++  opacity: 0.75;
++}
++
++.kf-row {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 8px;
++  align-items: center;
++  margin-top: 16px;
++}
++
++.kf-primary,
++.kf-secondary {
++  padding: 8px 14px;
++  border-radius: var(--kf-radius);
++  border: 1px solid var(--kavacha-border, #2e2748);
++  font: inherit;
++  cursor: pointer;
++}
++
++.kf-primary {
++  background: var(--kf-accent);
++  border-color: transparent;
++  color: #fff;
++}
++
++.kf-secondary {
++  background: var(--kavacha-surface-raised, #1d1930);
++  color: inherit;
++}
++
++.kf-input {
++  flex: 1;
++  min-width: 180px;
++  padding: 8px 12px;
++  border-radius: var(--kf-radius);
++  border: 1px solid var(--kavacha-border, #2e2748);
++  background: var(--kavacha-surface-raised, #1d1930);
++  color: inherit;
++  font: inherit;
++}
++
++.kf-fine {
++  margin: 14px 0 0;
++  font-size: 12px;
++  opacity: 0.7;
++}
++
++.kf-heading {
++  margin: 0 0 8px;
++  font-size: 12px;
++  font-weight: 600;
++  text-transform: uppercase;
++  letter-spacing: 0.05em;
++  opacity: 0.7;
++}
++
++.kf-list {
++  display: flex;
++  flex-direction: column;
++  gap: 6px;
++  margin-top: 12px;
++}
++
++.kf-item {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  padding: 8px 12px;
++  border-radius: var(--kf-radius);
++  background: var(--kavacha-surface-raised, #1d1930);
++  border: 1px solid var(--kavacha-border, #2e2748);
++}
++
++.kf-item-name {
++  flex: 1;
++  overflow-wrap: anywhere;
++}
++
++.kf-badge {
++  padding: 1px 8px;
++  border-radius: 999px;
++  border: 1px solid var(--kavacha-border, #2e2748);
++  font-size: 11px;
++  opacity: 0.8;
++}
++
++.kf-link {
++  padding: 0;
++  border: none;
++  background: none;
++  color: var(--kf-accent);
++  font: inherit;
++  font-size: 12px;
++  cursor: pointer;
++}
++
++.kf-link:hover {
++  text-decoration: underline;
++}
++
++.kf-danger {
++  color: var(--kavacha-danger, #e06c75);
++}
+diff --git a/src/zen/kavacha-focus/focus.html b/src/zen/kavacha-focus/focus.html
+new file mode 100644
+index 0000000..9a601f8
+--- /dev/null
++++ b/src/zen/kavacha-focus/focus.html
+@@ -0,0 +1,78 @@
++<!-- This Source Code Form is subject to the terms of the Mozilla Public
++   - License, v. 2.0. If a copy of the MPL was not distributed with this
++   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
++<!DOCTYPE html>
++<html lang="en" dir="ltr">
++  <head>
++    <meta charset="utf-8" />
++    <meta
++      http-equiv="Content-Security-Policy"
++      content="default-src chrome:; img-src chrome: data:; style-src chrome: 'unsafe-inline'; object-src 'none'"
++    />
++    <title>Focus</title>
++    <link
++      rel="stylesheet"
++      href="chrome://browser/content/kavacha-focus/focus.css"
++    />
++    <script src="chrome://browser/content/kavacha-theme/content-theme.js"></script>
++    <script src="chrome://browser/content/kavacha-focus/focus.js"></script>
++  </head>
++  <body>
++    <main class="kf-card">
++      <section id="kf-blocked" class="kf-blocked" hidden="hidden">
++        <h1 class="kf-title">Not right now</h1>
++        <p class="kf-lead">
++          <span id="kf-blocked-site" class="kf-site"></span> is set aside while
++          you focus.
++        </p>
++        <p id="kf-remaining" class="kf-remaining"></p>
++        <div class="kf-row">
++          <button id="kf-back" class="kf-primary">Back to what I was doing</button>
++          <button id="kf-end" class="kf-secondary">End focus session</button>
++        </div>
++        <p class="kf-fine">
++          Ending a session is one click on purpose. This is a tool for
++          attention, not a lock — the point is to make the distraction
++          deliberate, not impossible.
++        </p>
++      </section>
++
++      <section id="kf-idle" class="kf-idle">
++        <h1 class="kf-title">Focus</h1>
++        <p id="kf-state" class="kf-lead"></p>
++        <div class="kf-row">
++          <button class="kf-primary kf-start" data-minutes="25">25 min</button>
++          <button class="kf-primary kf-start" data-minutes="50">50 min</button>
++          <button class="kf-primary kf-start" data-minutes="90">90 min</button>
++          <button id="kf-end-2" class="kf-secondary" hidden="hidden">
++            End session
++          </button>
++        </div>
++        <p class="kf-fine">
++          While a session runs, the sites below are set aside and websites
++          cannot ask to send you notifications. Nothing is uninstalled and
++          nothing is reported anywhere.
++        </p>
++      </section>
++
++      <section class="kf-list-section">
++        <h2 class="kf-heading">Set aside during focus</h2>
++        <div class="kf-row">
++          <input
++            id="kf-add-input"
++            class="kf-input"
++            type="text"
++            placeholder="youtube.com"
++            autocomplete="off"
++          />
++          <button id="kf-add" class="kf-secondary">Add</button>
++        </div>
++        <div id="kf-list" class="kf-list"></div>
++        <p id="kf-list-empty" class="kf-fine" hidden="hidden">
++          Nothing is set aside yet, so a focus session will only mute
++          notifications.
++        </p>
++      </section>
++    </main>
++  </body>
++</html>
+diff --git a/src/zen/kavacha-focus/focus.js b/src/zen/kavacha-focus/focus.js
+new file mode 100644
+index 0000000..9fb82e9
+--- /dev/null
++++ b/src/zen/kavacha-focus/focus.js
+@@ -0,0 +1,196 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// about:focus (ROADMAP Phase 7; FEATURES 11) — the block page AND the
++// blocklist editor, for the reason stated in KavachaAboutFocus.sys.mjs: the
++// moment someone most wants to change a rule is the moment they just hit it.
++//
++// The page has two faces and picks one from its own URL: with ?url= it was
++// reached by being blocked, and leads with that; without, it is the settings
++// page. Chrome-privileged, so every string that came from outside — the
++// blocked URL, a domain in the list — goes in through textContent.
++
++"use strict";
++
++/* global ChromeUtils, Services, document, window, console */
++
++(() => {
++  const { KavachaFocusMode } = ChromeUtils.importESModule(
++    "resource:///modules/KavachaFocusMode.sys.mjs"
++  );
++
++  const $ = id => document.getElementById(id);
++  const clear = node => {
++    while (node.firstChild) {
++      node.firstChild.remove();
++    }
++  };
++
++  const params = new URLSearchParams(
++    (window.location.search || "").replace(/^\?/, "")
++  );
++  const blockedUrl = params.get("url") || "";
++
++  function prettyHost(url) {
++    try {
++      return new URL(url).host.replace(/^www\./, "");
++    } catch (e) {
++      return url;
++    }
++  }
++
++  function endsAtText(status) {
++    if (!status.active) {
++      return "No session running.";
++    }
++    const end = new Date(status.endsAt);
++    return (
++      status.minutesLeft +
++      (status.minutesLeft === 1 ? " minute left" : " minutes left") +
++      " — until " +
++      end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
++    );
++  }
++
++  function render() {
++    const status = KavachaFocusMode.status();
++
++    // A blocked page whose session has since ended is just a page: say so
++    // rather than showing a wall with nothing behind it.
++    const showBlock = !!blockedUrl && status.active;
++    $("kf-blocked").hidden = !showBlock;
++    $("kf-idle").hidden = showBlock;
++
++    if (showBlock) {
++      $("kf-blocked-site").textContent = prettyHost(blockedUrl);
++      $("kf-remaining").textContent = endsAtText(status);
++    }
++
++    $("kf-state").textContent = status.active
++      ? endsAtText(status)
++      : "Start a session and the sites below are set aside until it ends.";
++    $("kf-end-2").hidden = !status.active;
++
++    renderList();
++  }
++
++  async function renderList() {
++    const { global: globals, spaces } = await KavachaFocusMode.listBlocked();
++    const list = $("kf-list");
++    clear(list);
++
++    const rows = [
++      ...globals.map(domain => ({ domain, spaceUuid: null })),
++      // Per-Space entries are shown with their Space's name so a rule that
++      // only makes sense in one project is legible here, where it is edited.
++      ...Object.entries(spaces).flatMap(([uuid, domains]) =>
++        (domains || []).map(domain => ({ domain, spaceUuid: uuid }))
++      ),
++    ];
++
++    $("kf-list-empty").hidden = !!rows.length;
++
++    for (const row of rows) {
++      const item = document.createElement("div");
++      item.className = "kf-item";
++      const name = document.createElement("span");
++      name.className = "kf-item-name";
++      name.textContent = row.domain;
++      item.append(name);
++
++      if (row.spaceUuid) {
++        const badge = document.createElement("span");
++        badge.className = "kf-badge";
++        badge.textContent = spaceName(row.spaceUuid);
++        item.append(badge);
++      }
++
++      const remove = document.createElement("button");
++      remove.className = "kf-link kf-danger";
++      remove.textContent = "Remove";
++      remove.addEventListener("click", async () => {
++        await KavachaFocusMode.unblock(row.domain, {
++          spaceUuid: row.spaceUuid,
++        });
++        renderList();
++      });
++      item.append(remove);
++      list.append(item);
++    }
++  }
++
++  function spaceName(uuid) {
++    try {
++      const chromeWindow = Services.wm.getMostRecentWindow("navigator:browser");
++      return (
++        chromeWindow?.gZenWorkspaces?.getWorkspaceFromId?.(uuid)?.name || "Space"
++      );
++    } catch (e) {
++      return "Space";
++    }
++  }
++
++  async function addSite() {
++    const value = $("kf-add-input").value.trim();
++    if (!value) {
++      return;
++    }
++    const stored = await KavachaFocusMode.block(value);
++    $("kf-add-input").value = "";
++    if (!stored) {
++      $("kf-add-input").placeholder = "That is not a site address";
++    }
++    renderList();
++  }
++
++  function goBack() {
++    // The blocked load was cancelled, so there is usually a real previous
++    // page. If there is not, the new tab page is the honest destination —
++    // better than leaving the block page as the only thing in the tab.
++    if (window.history.length > 1) {
++      window.history.back();
++      return;
++    }
++    try {
++      const chromeWindow = Services.wm.getMostRecentWindow("navigator:browser");
++      chromeWindow?.BrowserCommands?.home?.();
++    } catch (e) {}
++  }
++
++  function init() {
++    $("kf-back").addEventListener("click", goBack);
++    for (const id of ["kf-end", "kf-end-2"]) {
++      $(id).addEventListener("click", () => {
++        KavachaFocusMode.end();
++        render();
++      });
++    }
++    for (const button of document.querySelectorAll(".kf-start")) {
++      button.addEventListener("click", () => {
++        KavachaFocusMode.start(Number(button.dataset.minutes));
++        render();
++      });
++    }
++    $("kf-add").addEventListener("click", addSite);
++    $("kf-add-input").addEventListener("keydown", event => {
++      if (event.key === "Enter") {
++        addSite();
++      }
++    });
++
++    // The module is a process singleton, but this page can be the first thing
++    // to touch it in a session that started before the browser restarted.
++    KavachaFocusMode.init().then(render, render);
++
++    // The countdown is the only live thing on the page; a minute is the
++    // resolution the copy promises, so a minute is what it costs.
++    window.setInterval(render, 60_000);
++  }
++
++  if (document.readyState === "loading") {
++    document.addEventListener("DOMContentLoaded", init, { once: true });
++  } else {
++    init();
++  }
++})();
+diff --git a/src/zen/kavacha-focus/jar.inc.mn b/src/zen/kavacha-focus/jar.inc.mn
+new file mode 100644
+index 0000000..defc7eb
+--- /dev/null
++++ b/src/zen/kavacha-focus/jar.inc.mn
+@@ -0,0 +1,7 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++        content/browser/kavacha-focus/focus.html                               (../../zen/kavacha-focus/focus.html)
++        content/browser/kavacha-focus/focus.css                                (../../zen/kavacha-focus/focus.css)
++        content/browser/kavacha-focus/focus.js                                 (../../zen/kavacha-focus/focus.js)
+diff --git a/src/zen/kavacha-focus/moz.build b/src/zen/kavacha-focus/moz.build
+new file mode 100644
+index 0000000..b938617
+--- /dev/null
++++ b/src/zen/kavacha-focus/moz.build
+@@ -0,0 +1,17 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++# Kavacha focus mode (about:focus). The session logic lives in
++# common/sys/KavachaFocusMode.sys.mjs with the other cross-cutting modules;
++# this directory holds the about: page — its JS about-module, the
++# components.conf that registers the contract, and (via jar.inc.mn) the
++# focus.html/css/js chrome content.
++
++EXTRA_JS_MODULES += [
++    "KavachaAboutFocus.sys.mjs",
++]
++
++XPCOM_MANIFESTS += [
++    "components.conf",
++]
+diff --git a/src/zen/moz.build b/src/zen/moz.build
+index f7028e8..67a6189 100644
+--- a/src/zen/moz.build
++++ b/src/zen/moz.build
+@@ -11,6 +11,7 @@ DIRS += [
+     "common",
+     "drag-and-drop",
+     "glance",
++    "kavacha-focus",
+     "kavacha-index",
+     "kavacha-knowledge",
+     "kavacha-marketplace",

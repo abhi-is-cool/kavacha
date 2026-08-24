@@ -1,0 +1,833 @@
+# Patch 0087 — Power-user tooling (ROADMAP Phase 7: "capture, annotation,
+# citations, REST client, JSON viewer, writing mode").
+#
+# THE FIRST THING THIS PATCH DID WAS AUDIT THE LIST, and half of it turned out
+# to be already shipped or already someone else's job. Recorded here so the
+# roadmap line stops reading as six missing features:
+#
+#   capture      — Firefox ships Screenshots and it is ON in this build
+#                  (screenshots.browser.component.enabled). Kavacha adds a
+#                  palette entry that calls it. A reimplementation would have
+#                  been a second, worse screenshot tool.
+#   annotation   — shipped in patch 0082: highlights with comments.
+#   JSON viewer  — Firefox's is on by default (devtools.jsonview.enabled=true
+#                  in all.js, verified against this build's engine tree, not
+#                  assumed). Nothing to build and nothing to pin; a redundant
+#                  pref would only be one more thing to keep true.
+#   citations    — genuinely missing. Built here.
+#   writing mode — genuinely missing. Built here.
+#   REST client  — genuinely missing and deliberately NOT built. It is a
+#                  developer tool with its own request store, auth handling
+#                  and history, which is a product inside a product; the
+#                  roadmap already calls this row a marketplace-bundle
+#                  candidate, and this is the item that row was about. Left
+#                  open in REMAINING_WORK rather than half-built in core.
+#
+# CITATIONS READ WHAT THE PAGE DECLARES ABOUT ITSELF. Scholarly sites publish
+# citation_* meta tags and most others publish OpenGraph, so the metadata
+# comes through the indexer actor (one more narrow query on the same content
+# channel, rather than a second way for chrome to touch a page), with the tab
+# title and URL as the fallback that always works. Best effort, and honest
+# where it matters: with no author declared, APA correctly leads with the
+# TITLE rather than inventing "Anonymous" — the rule people most often get
+# wrong by hand, which is half the reason this exists — and the BibTeX key is
+# derived from host+year, because an author is the field most often missing
+# and a key of "undefined2026" is worse than one that is merely unlovely.
+# TeX syntax characters in a title are escaped, so a page called "Cost & Risk"
+# does not silently break someone's build hours later.
+#
+# It is NOT a reference manager: no library, no BibTeX database, no author
+# de-duplication. Kavacha's answer to "manage my references" is Zotero, which
+# the Student template already recommends (patch 0053). This is the
+# thirty-second job that sending someone to a reference manager makes worse.
+#
+# ONE COMMAND WITH A PROMPT, not three palette rows. Three near-identical
+# entries is how a palette stops being worth opening; the chosen style becomes
+# the default, so the second citation is one keystroke.
+#
+# WRITING MODE IS A VIEW, NOT A STORE. about:write edits notes that already
+# exist — the active Space's note (patch 0008) or one page's note (patch
+# 0082, via ?url=) — so there is never a copy of the user's words that only
+# writing mode knows about. That is precisely the failure that makes
+# "distraction-free editors" bolted onto other apps untrustworthy. It is
+# Reader Mode pointed the other way: one tab, one column, nothing else on
+# screen, Escape to leave.
+#
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index b4507d6..8ac47fd 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -164,3 +164,10 @@ kavacha-action-open-workflows = Workflows
+ # Kavacha patch 0086 — the tab history tree and the saved-session manager.
+ kavacha-action-tab-tree = Tab History Tree
+ kavacha-action-saved-sessions = Saved Sessions
++
++# Kavacha patch 0087 — power-user tooling. "Capture This Page" drives
++# Firefox's own Screenshots component: the browser already ships the feature,
++# and reimplementing it would be a second, worse one.
++kavacha-action-copy-citation = Copy Citation
++kavacha-action-screenshot = Capture This Page
++kavacha-action-writing-mode = Writing Mode
+diff --git a/src/browser/base/content/zen-assets.jar.inc.mn b/src/browser/base/content/zen-assets.jar.inc.mn
+index 7165250..d038820 100644
+--- a/src/browser/base/content/zen-assets.jar.inc.mn
++++ b/src/browser/base/content/zen-assets.jar.inc.mn
+@@ -31,3 +31,4 @@
+ #include ../../../zen/kavacha-knowledge/jar.inc.mn
+ #include ../../../zen/kavacha-focus/jar.inc.mn
+ #include ../../../zen/kavacha-workflows/jar.inc.mn
++#include ../../../zen/kavacha-write/jar.inc.mn
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+index 46cd039..a81e49e 100644
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -7,6 +7,7 @@ EXTRA_JS_MODULES += [
+   "sys/KavachaAISidebar.sys.mjs",
+   "sys/KavachaAppearancePanel.sys.mjs",
+   "sys/KavachaAskHistory.sys.mjs",
++  "sys/KavachaCitations.sys.mjs",
+   "sys/KavachaCommandRegistry.sys.mjs",
+   "sys/KavachaFocusMode.sys.mjs",
+   "sys/KavachaKnowledge.sys.mjs",
+diff --git a/src/zen/common/sys/KavachaCitations.sys.mjs b/src/zen/common/sys/KavachaCitations.sys.mjs
+new file mode 100644
+index 0000000..06965ba
+--- /dev/null
++++ b/src/zen/common/sys/KavachaCitations.sys.mjs
+@@ -0,0 +1,218 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha citations (ROADMAP Phase 7, "power-user tooling — … citations").
++//
++// One job: turn the page in front of you into a citation you can paste,
++// without retyping what the page already declares about itself. Scholarly
++// sites publish `citation_*` meta tags and most others publish OpenGraph, so
++// the metadata comes from the page (through the indexer actor, the same
++// narrow content channel everything else uses) with the tab title and URL as
++// the fallback that always works.
++//
++// WHAT IT DELIBERATELY IS NOT: a reference manager. There is no library, no
++// BibTeX database, no sync, no de-duplication of authors. Kavacha's answer to
++// "manage my references" is Zotero, which the Student template already
++// recommends (patch 0053); this is the thirty-second job that sending someone
++// to a reference manager makes worse — quote a page, cite it, move on.
++//
++// Three styles, because three cover almost everyone who asks: APA and MLA for
++// prose, BibTeX for LaTeX. Each is BEST EFFORT and says so where it matters —
++// with no author declared, APA correctly leads with the title rather than
++// inventing "Anonymous", and the BibTeX key is derived from the host and year
++// rather than from an author who may not exist.
++
++export const KavachaCitationStyles = Object.freeze({
++  APA: "apa",
++  MLA: "mla",
++  BIBTEX: "bibtex",
++});
++
++const kStylePref = "kavacha.citation.style";
++
++export const KavachaCitations = {
++  get defaultStyle() {
++    const value = Services.prefs.getCharPref(
++      kStylePref,
++      KavachaCitationStyles.APA
++    );
++    return Object.values(KavachaCitationStyles).includes(value)
++      ? value
++      : KavachaCitationStyles.APA;
++  },
++
++  set defaultStyle(value) {
++    if (Object.values(KavachaCitationStyles).includes(value)) {
++      Services.prefs.setCharPref(kStylePref, value);
++    }
++  },
++
++  /** Read what the page says about itself; fall back to the tab. */
++  async metadataFor(window) {
++    const browser = window.gBrowser?.selectedBrowser;
++    const url = browser?.currentURI?.spec || "";
++    const fallback = {
++      url,
++      title: window.gBrowser?.selectedTab?.label || url,
++      author: "",
++      site: this._host(url),
++      published: "",
++    };
++    if (!/^https?:/.test(url)) {
++      return fallback;
++    }
++    try {
++      const actor =
++        browser.browsingContext?.currentWindowGlobal?.getActor("KavachaIndexer");
++      const meta = await actor?.sendQuery("KavachaIndexer:CaptureMeta");
++      if (!meta) {
++        return fallback;
++      }
++      return {
++        url: meta.url || url,
++        title: meta.title || fallback.title,
++        author: meta.author || "",
++        site: meta.site || this._host(meta.url || url),
++        published: meta.published || "",
++      };
++    } catch (e) {
++      return fallback;
++    }
++  },
++
++  _host(url) {
++    try {
++      return new URL(url).host.replace(/^www\./, "");
++    } catch (e) {
++      return "";
++    }
++  },
++
++  _year(published) {
++    const match = /\d{4}/.exec(String(published || ""));
++    return match ? match[0] : "";
++  },
++
++  _accessed(date = new Date()) {
++    return date.toLocaleDateString(undefined, {
++      year: "numeric",
++      month: "long",
++      day: "numeric",
++    });
++  },
++
++  /** Format metadata in one style. Pure — which is what makes it testable. */
++  format(meta, style = KavachaCitationStyles.APA, now = new Date()) {
++    const title = (meta.title || meta.url || "").trim();
++    const site = (meta.site || this._host(meta.url)).trim();
++    const author = (meta.author || "").trim();
++    const year = this._year(meta.published);
++
++    switch (style) {
++      case KavachaCitationStyles.MLA: {
++        // "Author. "Title." Site, Date, URL."
++        const parts = [];
++        if (author) {
++          parts.push(author + ".");
++        }
++        parts.push(`"${title}."`);
++        if (site) {
++          parts.push(site + ",");
++        }
++        if (year) {
++          parts.push(year + ",");
++        }
++        parts.push(meta.url + ".");
++        parts.push(`Accessed ${this._accessed(now)}.`);
++        return parts.join(" ");
++      }
++
++      case KavachaCitationStyles.BIBTEX: {
++        // The key is host+year, not author+year: an author is the field most
++        // often missing, and a key of "undefined2026" is worse than one that
++        // is merely unlovely.
++        const key =
++          (site || "web").replace(/[^a-z0-9]/gi, "").toLowerCase() +
++          (year || String(now.getFullYear()));
++        const lines = [
++          `@misc{${key},`,
++          `  title = {${this._tex(title)}},`,
++        ];
++        if (author) {
++          lines.push(`  author = {${this._tex(author)}},`);
++        }
++        if (site) {
++          lines.push(`  howpublished = {${this._tex(site)}},`);
++        }
++        if (year) {
++          lines.push(`  year = {${year}},`);
++        }
++        lines.push(`  url = {${meta.url}},`);
++        lines.push(`  note = {Accessed ${this._accessed(now)}}`);
++        lines.push("}");
++        return lines.join("\n");
++      }
++
++      default: {
++        // APA. With no author, APA leads with the TITLE rather than inventing
++        // "Anonymous" — the rule people get wrong by hand, which is half the
++        // reason this exists.
++        const head = author ? `${author}.` : `${title}.`;
++        const dated = year ? ` (${year}).` : " (n.d.).";
++        const body = author ? ` ${title}.` : "";
++        const where = site ? ` ${site}.` : "";
++        return `${head}${dated}${body}${where} ${meta.url}`.replace(/\s+/g, " ").trim();
++      }
++    }
++  },
++
++  // Escape the characters TeX treats as syntax, so a title containing & or %
++  // does not silently break someone's build hours later.
++  _tex(text) {
++    return String(text).replace(/([&%$#_{}])/g, "\\$1");
++  },
++
++  /** Read the page, format, copy. Returns the citation text. */
++  async copyForWindow(window, style = null) {
++    const chosen = style || this.defaultStyle;
++    const meta = await this.metadataFor(window);
++    const citation = this.format(meta, chosen);
++    try {
++      Cc["@mozilla.org/widget/clipboardhelper;1"]
++        .getService(Ci.nsIClipboardHelper)
++        .copyString(citation);
++    } catch (e) {
++      console.error("KavachaCitations: copy failed", e);
++    }
++    return citation;
++  },
++
++  /**
++   * The palette entry: ask which style (remembering the answer as the new
++   * default), then copy. A prompt rather than three separate commands,
++   * because three near-identical rows in the palette is how a palette stops
++   * being useful.
++   */
++  async promptAndCopy(window) {
++    const styles = [
++      { id: KavachaCitationStyles.APA, label: "APA" },
++      { id: KavachaCitationStyles.MLA, label: "MLA" },
++      { id: KavachaCitationStyles.BIBTEX, label: "BibTeX" },
++    ];
++    const selected = { value: styles.findIndex(s => s.id === this.defaultStyle) };
++    const ok = Services.prompt.select(
++      window,
++      "Kavacha",
++      "Copy a citation for this page as:",
++      styles.map(s => s.label),
++      selected
++    );
++    if (!ok) {
++      return null;
++    }
++    const style = styles[selected.value]?.id || KavachaCitationStyles.APA;
++    this.defaultStyle = style;
++    return this.copyForWindow(window, style);
++  },
++};
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+index b242416..4eebaa0 100644
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -250,6 +250,36 @@ const BUILTIN = [
+     domain: KavachaCommandDomain.PRODUCTIVITY,
+     isAvailable: kNotPrivate,
+   },
++  // Power-user tooling (patch 0087). Capture is Firefox's own Screenshots
++  // component surfaced in the palette rather than a Kavacha reimplementation
++  // — the honest answer when the browser already ships the feature.
++  {
++    l10nId: "kavacha-action-copy-citation",
++    command: window =>
++      ChromeUtils.importESModule(
++        "resource:///modules/KavachaCitations.sys.mjs"
++      ).KavachaCitations.promptAndCopy(window),
++    icon: "chrome://browser/skin/zen-icons/edit-copy.svg",
++    domain: KavachaCommandDomain.PRODUCTIVITY,
++    isAvailable: window =>
++      /^https?:/.test(window.gBrowser?.selectedBrowser?.currentURI?.spec || ""),
++  },
++  {
++    l10nId: "kavacha-action-screenshot",
++    command: window => window.ScreenshotsUtils?.notify(window, "Kavacha"),
++    icon: "chrome://browser/skin/zen-icons/screenshot.svg",
++    domain: KavachaCommandDomain.PRODUCTIVITY,
++    isAvailable: window =>
++      !!window.ScreenshotsUtils &&
++      /^https?:/.test(window.gBrowser?.selectedBrowser?.currentURI?.spec || ""),
++  },
++  {
++    l10nId: "kavacha-action-writing-mode",
++    command: window => window.openTrustedLinkIn("about:write", "tab"),
++    icon: "chrome://browser/skin/zen-icons/text-size.svg",
++    domain: KavachaCommandDomain.PRODUCTIVITY,
++    isAvailable: kNotPrivate,
++  },
+   // Tab history tree + saved sessions (patch 0086; FEATURES 7.1, 7.2).
+   {
+     l10nId: "kavacha-action-tab-tree",
+diff --git a/src/zen/kavacha-index/actors/KavachaIndexerChild.sys.mjs b/src/zen/kavacha-index/actors/KavachaIndexerChild.sys.mjs
+index ac595ec..db1291a 100644
+--- a/src/zen/kavacha-index/actors/KavachaIndexerChild.sys.mjs
++++ b/src/zen/kavacha-index/actors/KavachaIndexerChild.sys.mjs
+@@ -64,7 +64,8 @@ export class KavachaIndexerChild extends JSWindowActorChild {
+   receiveMessage(message) {
+     if (
+       message.name !== "KavachaIndexer:Capture" &&
+-      message.name !== "KavachaIndexer:CaptureSelection"
++      message.name !== "KavachaIndexer:CaptureSelection" &&
++      message.name !== "KavachaIndexer:CaptureMeta"
+     ) {
+       return null;
+     }
+@@ -73,6 +74,29 @@ export class KavachaIndexerChild extends JSWindowActorChild {
+       if (!doc || !/^https?:$/.test(doc.location?.protocol || "")) {
+         return null;
+       }
++      // Patch 0087: the metadata a citation is built from. Scholarly sites
++      // publish `citation_*` meta tags and most others publish OpenGraph, so
++      // reading them beats asking the user to retype what the page already
++      // says. Returned raw — the citation formatter does the deciding.
++      if (message.name === "KavachaIndexer:CaptureMeta") {
++        const meta = name => {
++          const node =
++            doc.querySelector(`meta[name="${name}" i]`) ||
++            doc.querySelector(`meta[property="${name}" i]`);
++          return (node?.getAttribute("content") || "").trim();
++        };
++        return {
++          url: doc.location.href,
++          title: meta("citation_title") || meta("og:title") || doc.title || "",
++          author:
++            meta("citation_author") || meta("author") || meta("article:author"),
++          site: meta("og:site_name") || meta("citation_journal_title"),
++          published:
++            meta("citation_publication_date") ||
++            meta("article:published_time") ||
++            meta("date"),
++        };
++      }
+       let text;
+       if (message.name === "KavachaIndexer:CaptureSelection") {
+         // No selection is not an error: the sidebar says "select something
+diff --git a/src/zen/kavacha-write/KavachaAboutWrite.sys.mjs b/src/zen/kavacha-write/KavachaAboutWrite.sys.mjs
+new file mode 100644
+index 0000000..e01ef7c
+--- /dev/null
++++ b/src/zen/kavacha-write/KavachaAboutWrite.sys.mjs
+@@ -0,0 +1,42 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha: nsIAboutModule for about:write — writing mode (ROADMAP Phase 7,
++// "power-user tooling — … writing mode").
++//
++// Firefox ships Reader Mode: one page, stripped of everything that is not the
++// text. This is the same idea pointed the other way — a whole tab containing
++// nothing but what you are writing. It is not a new store: it edits the notes
++// that already exist (a Space's note from patch 0008, or a page's note from
++// patch 0082), which is what keeps writing mode a VIEW rather than a fourth
++// place your words could be.
++//
++// Same JS about-module pattern and a fresh cid; privileged chrome UI because
++// it drives gZenWorkspaces' note store and KavachaKnowledge directly.
++
++const kChromeURL = "chrome://browser/content/kavacha-write/write.html";
++
++export class AboutWrite {
++  QueryInterface = ChromeUtils.generateQI(["nsIAboutModule"]);
++
++  newChannel(aURI, aLoadInfo) {
++    const chromeURI = Services.io.newURI(kChromeURL);
++    const channel = Services.io.newChannelFromURIWithLoadInfo(
++      chromeURI,
++      aLoadInfo
++    );
++    channel.originalURI = aURI;
++    return channel;
++  }
++
++  getURIFlags() {
++    return (
++      Ci.nsIAboutModule.ALLOW_SCRIPT | Ci.nsIAboutModule.IS_SECURE_CHROME_UI
++    );
++  }
++
++  getChromeURI() {
++    return Services.io.newURI(kChromeURL);
++  }
++}
+diff --git a/src/zen/kavacha-write/components.conf b/src/zen/kavacha-write/components.conf
+new file mode 100644
+index 0000000..2f5252e
+--- /dev/null
++++ b/src/zen/kavacha-write/components.conf
+@@ -0,0 +1,14 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++# Kavacha: register about:write (writing mode) as a JS nsIAboutModule.
++# Mirrors src/zen/kavacha-studio/components.conf; fresh cid.
++Classes = [
++    {
++        "cid": "{9a2e7c60-4d15-4b83-8e21-6f0b39d7c418}",
++        "contract_ids": ["@mozilla.org/network/protocol/about;1?what=write"],
++        "esModule": "resource:///modules/KavachaAboutWrite.sys.mjs",
++        "constructor": "AboutWrite",
++    },
++]
+diff --git a/src/zen/kavacha-write/jar.inc.mn b/src/zen/kavacha-write/jar.inc.mn
+new file mode 100644
+index 0000000..0765bd5
+--- /dev/null
++++ b/src/zen/kavacha-write/jar.inc.mn
+@@ -0,0 +1,7 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++        content/browser/kavacha-write/write.html                               (../../zen/kavacha-write/write.html)
++        content/browser/kavacha-write/write.css                                (../../zen/kavacha-write/write.css)
++        content/browser/kavacha-write/write.js                                 (../../zen/kavacha-write/write.js)
+diff --git a/src/zen/kavacha-write/moz.build b/src/zen/kavacha-write/moz.build
+new file mode 100644
+index 0000000..db2c7e6
+--- /dev/null
++++ b/src/zen/kavacha-write/moz.build
+@@ -0,0 +1,14 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++# Kavacha writing mode (about:write). A VIEW over notes that already exist —
++# the Space note (patch 0008) and the page note (patch 0082) — not a new store.
++
++EXTRA_JS_MODULES += [
++    "KavachaAboutWrite.sys.mjs",
++]
++
++XPCOM_MANIFESTS += [
++    "components.conf",
++]
+diff --git a/src/zen/kavacha-write/write.css b/src/zen/kavacha-write/write.css
+new file mode 100644
+index 0000000..b9ccc75
+--- /dev/null
++++ b/src/zen/kavacha-write/write.css
+@@ -0,0 +1,101 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* about:write — writing mode. The whole design brief is "nothing else on
++ * screen": one measure-width column, a bar that stays quiet, and no borders
++ * around the thing being written. Same token vocabulary and fallbacks as the
++ * other Kavacha content pages. */
++
++:root {
++  --kwr-accent: var(
++    --zen-primary-color,
++    var(--kavacha-accent, var(--kavacha-accent-fallback, #8b7bd8))
++  );
++}
++
++body {
++  margin: 0;
++  height: 100vh;
++  display: flex;
++  flex-direction: column;
++  font: message-box;
++  color: var(--kavacha-text, #e8e6f0);
++  background: var(--kavacha-surface, #14111f);
++}
++
++.kwr-bar {
++  display: flex;
++  align-items: center;
++  gap: 14px;
++  padding: 10px 18px;
++  font-size: 12px;
++  opacity: 0.65;
++}
++
++.kwr-bar:hover {
++  opacity: 1;
++}
++
++.kwr-spacer {
++  flex: 1;
++}
++
++.kwr-target {
++  font-weight: 600;
++  overflow-wrap: anywhere;
++}
++
++.kwr-link {
++  padding: 0;
++  border: none;
++  background: none;
++  color: var(--kwr-accent);
++  font: inherit;
++  cursor: pointer;
++}
++
++.kwr-link:hover {
++  text-decoration: underline;
++}
++
++.kwr-stage {
++  flex: 1;
++  display: flex;
++  justify-content: center;
++  overflow: auto;
++  padding: 0 18px 40px;
++}
++
++.kwr-input,
++.kwr-rendered {
++  width: min(70ch, 100%);
++  font-size: 17px;
++  line-height: 1.7;
++}
++
++.kwr-input {
++  border: none;
++  outline: none;
++  resize: none;
++  background: transparent;
++  color: inherit;
++  font-family: inherit;
++  padding: 8px 0 120px;
++}
++
++.kwr-rendered {
++  padding-bottom: 120px;
++  overflow-wrap: anywhere;
++}
++
++.kwr-rendered :is(h1, h2, h3) {
++  line-height: 1.3;
++}
++
++.kwr-rendered blockquote {
++  margin-inline: 0;
++  padding-inline-start: 14px;
++  border-inline-start: 3px solid var(--kwr-accent);
++  opacity: 0.9;
++}
+diff --git a/src/zen/kavacha-write/write.html b/src/zen/kavacha-write/write.html
+new file mode 100644
+index 0000000..a42a275
+--- /dev/null
++++ b/src/zen/kavacha-write/write.html
+@@ -0,0 +1,39 @@
++<!-- This Source Code Form is subject to the terms of the Mozilla Public
++   - License, v. 2.0. If a copy of the MPL was not distributed with this
++   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
++<!DOCTYPE html>
++<html lang="en" dir="ltr">
++  <head>
++    <meta charset="utf-8" />
++    <meta
++      http-equiv="Content-Security-Policy"
++      content="default-src chrome:; img-src chrome: data:; style-src chrome: 'unsafe-inline'; object-src 'none'"
++    />
++    <title>Write</title>
++    <link
++      rel="stylesheet"
++      href="chrome://browser/content/kavacha-write/write.css"
++    />
++    <script src="chrome://browser/content/kavacha-theme/content-theme.js"></script>
++    <script src="chrome://browser/content/kavacha-write/write.js"></script>
++  </head>
++  <body>
++    <header class="kwr-bar">
++      <span id="kwr-target" class="kwr-target"></span>
++      <span class="kwr-spacer"></span>
++      <span id="kwr-count" class="kwr-count"></span>
++      <span id="kwr-saved" class="kwr-saved"></span>
++      <button id="kwr-preview" class="kwr-link">Preview</button>
++    </header>
++
++    <main class="kwr-stage">
++      <textarea
++        id="kwr-input"
++        class="kwr-input"
++        spellcheck="true"
++        placeholder="Just write. Saved as you go."
++      ></textarea>
++      <article id="kwr-rendered" class="kwr-rendered" hidden="hidden"></article>
++    </main>
++  </body>
++</html>
+diff --git a/src/zen/kavacha-write/write.js b/src/zen/kavacha-write/write.js
+new file mode 100644
+index 0000000..3d829a9
+--- /dev/null
++++ b/src/zen/kavacha-write/write.js
+@@ -0,0 +1,162 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// about:write — writing mode (ROADMAP Phase 7).
++//
++// A VIEW, NOT A STORE. Everything typed here goes into a note that already
++// exists: the active Space's note (patch 0008) by default, or one page's note
++// (patch 0082) when opened as about:write?url=…. Nothing is written anywhere
++// else, so there is never a copy of your words that only writing mode knows
++// about — which is the failure that makes "distraction-free editors" inside
++// other apps untrustworthy.
++//
++// Autosave with a flush on unload, same contract as the sidebar: what you can
++// see in the box is what is in the store within a second of you stopping.
++
++"use strict";
++
++/* global ChromeUtils, Services, document, window, console */
++
++(() => {
++  const { KavachaKnowledge } = ChromeUtils.importESModule(
++    "resource:///modules/KavachaKnowledge.sys.mjs"
++  );
++  const { KavachaMarkdown } = ChromeUtils.importESModule(
++    "resource:///modules/KavachaMarkdown.sys.mjs"
++  );
++
++  const $ = id => document.getElementById(id);
++  const kSaveDebounceMs = 700;
++
++  const params = new URLSearchParams(
++    (window.location.search || "").replace(/^\?/, "")
++  );
++  const pageUrl = params.get("url") || "";
++
++  let saveTimer = null;
++  let previewOn = false;
++  let target = null; // {kind: "space"|"page", id, label}
++
++  function chromeWindow() {
++    return Services.wm.getMostRecentWindow("navigator:browser");
++  }
++
++  function counts(text) {
++    const words = text.trim() ? text.trim().split(/\s+/).length : 0;
++    return (
++      words +
++      (words === 1 ? " word · " : " words · ") +
++      text.length +
++      " characters"
++    );
++  }
++
++  async function resolveTarget() {
++    if (pageUrl) {
++      const note = await KavachaKnowledge.getNote(pageUrl);
++      return {
++        kind: "page",
++        id: pageUrl,
++        label: note?.title || pageUrl,
++        body: note?.body || "",
++      };
++    }
++    const win = chromeWindow();
++    const space = win?.gZenWorkspaces?.getActiveWorkspaceFromCache?.();
++    if (!space) {
++      return { kind: "none", id: "", label: "Nothing to write in", body: "" };
++    }
++    const notes = await win.gZenWorkspaces.kavachaGetAllNotes();
++    return {
++      kind: "space",
++      id: space.uuid,
++      label: space.name,
++      body: notes[space.uuid]?.content || "",
++    };
++  }
++
++  function queueSave() {
++    clearTimeout(saveTimer);
++    $("kwr-saved").textContent = "";
++    saveTimer = setTimeout(saveNow, kSaveDebounceMs);
++  }
++
++  async function saveNow() {
++    clearTimeout(saveTimer);
++    saveTimer = null;
++    if (!target || target.kind === "none") {
++      return;
++    }
++    const body = $("kwr-input").value;
++    if (target.kind === "space") {
++      await chromeWindow()?.gZenWorkspaces?.kavachaSetNote(target.id, body);
++    } else {
++      await KavachaKnowledge.saveNote({
++        url: target.id,
++        title: target.label,
++        body,
++      });
++    }
++    $("kwr-saved").textContent = "Saved";
++  }
++
++  function togglePreview() {
++    previewOn = !previewOn;
++    const rendered = $("kwr-rendered");
++    $("kwr-input").hidden = previewOn;
++    rendered.hidden = !previewOn;
++    $("kwr-preview").textContent = previewOn ? "Edit" : "Preview";
++    if (previewOn) {
++      while (rendered.firstChild) {
++        rendered.firstChild.remove();
++      }
++      // KavachaMarkdown builds DOM nodes and never parses HTML — mandatory
++      // here, because this is a chrome document rendering the user's text.
++      rendered.append(KavachaMarkdown.render($("kwr-input").value, document));
++    }
++  }
++
++  async function init() {
++    target = await resolveTarget();
++    $("kwr-target").textContent =
++      target.kind === "page"
++        ? "Note on " + target.label
++        : target.kind === "space"
++          ? "Notes — " + target.label
++          : target.label;
++    const input = $("kwr-input");
++    input.value = target.body;
++    input.disabled = target.kind === "none";
++    $("kwr-count").textContent = counts(input.value);
++
++    input.addEventListener("input", () => {
++      $("kwr-count").textContent = counts(input.value);
++      queueSave();
++    });
++    $("kwr-preview").addEventListener("click", togglePreview);
++    document.addEventListener("keydown", event => {
++      // Escape leaves writing mode the way Reader Mode's shortcut leaves it:
++      // the tab goes back to whatever it was showing before.
++      if (event.key === "Escape" && window.history.length > 1) {
++        window.history.back();
++      }
++    });
++    window.addEventListener(
++      "unload",
++      () => {
++        if (saveTimer) {
++          saveNow();
++        }
++      },
++      { once: true }
++    );
++    input.focus();
++  }
++
++  if (document.readyState === "loading") {
++    document.addEventListener("DOMContentLoaded", init, { once: true });
++  } else {
++    init();
++  }
++})();
+diff --git a/src/zen/moz.build b/src/zen/moz.build
+index 2a3138e..43629b2 100644
+--- a/src/zen/moz.build
++++ b/src/zen/moz.build
+@@ -18,6 +18,7 @@ DIRS += [
+     "kavacha-plugins",
+     "kavacha-studio",
+     "kavacha-workflows",
++    "kavacha-write",
+     "live-folders",
+     "mods",
+     "tests",

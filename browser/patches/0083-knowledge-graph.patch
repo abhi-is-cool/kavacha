@@ -1,0 +1,1711 @@
+# Patch 0083 — Personal knowledge graph + about:knowledge (ROADMAP Phase 7;
+# FEATURES 6.3; ADR 0016). The north-star line this closes: "the browser
+# understands relationships between papers, sites, notes, conversations".
+#
+# WHAT IS NEW IS ONE FACT, AND IT IS THE ONLY ONE NO OTHER STORE HAS. Places
+# records that you visited page A and page B. It does not record that A led to
+# B. That single edge — plus "B was opened in a new tab FROM A" — is the
+# research trail, and it is all this patch materializes:
+#
+#   edges     — followed / opened-from, deduplicated into one row with a
+#               weight, so "I keep coming back here from there" is visible.
+#   entities  — names a local model pulled out of a page, ON DEMAND ONLY.
+#
+# EVERYTHING ELSE IS DERIVED AT QUERY TIME from stores that already exist: the
+# personal index (ADR 0012) for page text and term overlap, the knowledge
+# store (ADR 0015) for notes/highlights/clips, the Places attribution table
+# (ADR 0005) for which Space a page belongs to. Materializing those as edges
+# would create a second copy that can disagree with the first, and a graph
+# that disagrees with your notes reads as the browser being wrong about your
+# own work.
+#
+# DELETION FOLLOWS PLACES HERE — the opposite of the store it sits next to,
+# and deliberately. An edge records WHERE YOU WENT, so clearing history must
+# clear it; a note records what you WROTE, so clearing history must not. One
+# SQLite file cannot hold two deletion contracts, which is the whole reason
+# kavacha-graph.sqlite is separate from kavacha-knowledge.sqlite.
+#
+# NO EDGE IS GUESSED. `opened-from` is written only when tabbrowser actually
+# set `owner` on the new tab; if it did not, nothing is recorded rather than
+# inferring "whatever was selected at the time". A wrong edge is worse than a
+# missing one, because the graph is read as a record of what happened. Leaving
+# the web (about:, file:) forgets the trail instead of stitching the next page
+# onto the last one across it, and a self-edge is a reload, not a relationship.
+#
+# NO BACKGROUND MODEL CALLS. Entity extraction runs when the user presses
+# "Find names on this page" — never on load, never on a timer. Patch 0079's
+# guarantee (a fresh profile makes zero AI requests until a feature is
+# invoked; SHIPPING R3) therefore survives this patch, and the reply is parsed
+# as a hostile string exactly like patch 0081's tab grouping: find the array,
+# keep entries with a plausible name, drop everything else. A confused model
+# leaves a page un-enriched; it cannot write anything else into the store.
+#
+# THE PAGE IS NOT A FORCE-DIRECTED BALL OF DOTS, on purpose. A spring layout
+# over a few thousand pages is a screensaver: it looks like understanding and
+# answers no question. about:knowledge answers the three questions a person
+# actually asks of a page — what led me here, what did I write about it, what
+# else is like it — and the module API carries no presentation, so a different
+# view can be built on the same data later.
+#
+# SIMILARITY IS LEXICAL, and the patch says so where a user can see it: it
+# finds the paper that also says "flood mapping" and misses the one that says
+# "inundation modelling". ADR 0012's optional local embeddings are what would
+# close that gap, and this is the first caller that would benefit.
+#
+diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
+index 02e9afd..32d5eb7 100644
+--- a/locales/en-US/browser/browser/zen-command-palette.ftl
++++ b/locales/en-US/browser/browser/zen-command-palette.ftl
+@@ -144,3 +144,7 @@ kavacha-action-note-page = Note This Page
+ kavacha-action-clip-page = Clip This Page
+ kavacha-action-highlight-selection = Highlight Selection
+ kavacha-action-open-library = Open Notes & Clips
++
++# Kavacha patch 0083 — the personal knowledge graph (ADR 0016).
++kavacha-action-open-knowledge = Open Knowledge
++kavacha-action-page-connections = What Does This Page Connect To?
+diff --git a/src/zen/common/modules/ZenStartup.mjs b/src/zen/common/modules/ZenStartup.mjs
+index 16bc482..a0405a9 100644
+--- a/src/zen/common/modules/ZenStartup.mjs
++++ b/src/zen/common/modules/ZenStartup.mjs
+@@ -167,6 +167,15 @@ class ZenStartup {
+       ChromeUtils.importESModule(
+         "resource:///modules/KavachaKnowledgeSidebar.sys.mjs"
+       ).KavachaKnowledgeSidebar.register(window);
++      // Kavacha: the personal knowledge graph (ADR 0016). init() is a process
++      // singleton (it owns the Places deletion contract); attachToWindow
++      // records the two relationships Places never stores — page A led to
++      // page B, and page B was opened FROM page A. Refuses private windows.
++      const kavachaGraph = ChromeUtils.importESModule(
++        "resource:///modules/KavachaKnowledgeGraph.sys.mjs"
++      ).KavachaKnowledgeGraph;
++      kavachaGraph.init();
++      kavachaGraph.attachToWindow(window);
+       // Kavacha: apply the saved layout document to this window's chrome
+       // (process singleton + per-window apply; ADR 0008).
+       const kavachaLayout = ChromeUtils.importESModule(
+diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+index bb730b3..9976135 100644
+--- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
++++ b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
+@@ -250,6 +250,33 @@ const BUILTIN = [
+     domain: KavachaCommandDomain.PRODUCTIVITY,
+     isAvailable: kNotPrivate,
+   },
++  // Knowledge graph (patch 0083; ADR 0016).
++  {
++    l10nId: "kavacha-action-open-knowledge",
++    command: window => window.openTrustedLinkIn("about:knowledge", "tab"),
++    icon: "chrome://browser/skin/zen-icons/algorithm.svg",
++    domain: KavachaCommandDomain.NAVIGATION,
++    isAvailable: kNotPrivate,
++  },
++  {
++    // Opens the graph already focused on the page in front of you, which is
++    // the only question worth asking from a page: "what does this connect to".
++    l10nId: "kavacha-action-page-connections",
++    command: window => {
++      const url = window.gBrowser?.selectedBrowser?.currentURI?.spec || "";
++      window.openTrustedLinkIn(
++        "about:knowledge?url=" + encodeURIComponent(url),
++        "tab"
++      );
++    },
++    icon: "chrome://browser/skin/zen-icons/link.svg",
++    domain: KavachaCommandDomain.NAVIGATION,
++    isAvailable: window =>
++      kNotPrivate(window) &&
++      /^https?:/.test(
++        window.gBrowser?.selectedBrowser?.currentURI?.spec || ""
++      ),
++  },
+ 
+   // -- Appearance ----------------------------------------------------------
+   {
+diff --git a/src/zen/common/sys/KavachaKnowledgeGraph.sys.mjs b/src/zen/common/sys/KavachaKnowledgeGraph.sys.mjs
+new file mode 100644
+index 0000000..9314456
+--- /dev/null
++++ b/src/zen/common/sys/KavachaKnowledgeGraph.sys.mjs
+@@ -0,0 +1,671 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha personal knowledge graph (ADR 0016; ROADMAP Phase 7; FEATURES 6.3)
++// — the north-star item: "the browser understands relationships between
++// papers, sites, notes, conversations".
++//
++// WHAT IS ACTUALLY STORED IS SMALL, AND THAT IS THE DESIGN. Two tables:
++//
++//   edges    — how you got from one page to another. `followed` (you
++//              navigated A → B in the same tab) and `opened-from` (B opened
++//              in a new tab from A). This is the research trail, and it is
++//              the one thing no other store in Kavacha holds: Places records
++//              that you visited both pages, never that one led to the other.
++//   entities — names a local model pulled out of a page, ON DEMAND ONLY.
++//
++// Everything else the graph shows is DERIVED AT QUERY TIME from stores that
++// already exist: the personal index (ADR 0012) supplies page text and term
++// overlap, the knowledge store (ADR 0015) supplies notes/highlights/clips,
++// and the Places attribution table (ADR 0005) supplies which Space a page
++// belongs to. Materializing those as edges would mean a second copy that can
++// disagree with the first, and disagreement in a graph reads as the browser
++// being wrong about your own work.
++//
++// DELETION FOLLOWS PLACES, unlike the knowledge store next door and for the
++// exact reason that one does not: an edge is a record of WHERE YOU WENT, so
++// clearing history has to clear it. That difference in lifetime is why this
++// is a separate SQLite file rather than two more tables in
++// kavacha-knowledge.sqlite — one file cannot have two deletion contracts.
++//
++// NO BACKGROUND MODEL CALLS. Entity extraction happens when the user invokes
++// it on a page, never on a timer and never on page load. Patch 0079's
++// guarantee — a fresh profile makes zero AI requests until a feature is
++// actually invoked (SHIPPING R3) — survives this patch, and the verification
++// for it is the same mock-Ollama request count.
++
++const lazy = {};
++ChromeUtils.defineESModuleGetters(lazy, {
++  KavachaAIBridge: "resource:///modules/KavachaAIBridge.sys.mjs",
++  KavachaKnowledge: "resource:///modules/KavachaKnowledge.sys.mjs",
++  KavachaPersonalIndex: "resource:///modules/KavachaPersonalIndex.sys.mjs",
++  KavachaPlacesAttribution:
++    "resource:///modules/KavachaPlacesAttribution.sys.mjs",
++  Sqlite: "resource://gre/modules/Sqlite.sys.mjs",
++});
++
++const kEnabledPref = "kavacha.knowledge.enabled";
++const kRecordLinksPref = "kavacha.knowledge.record-links";
++const kDbFile = "kavacha-graph.sqlite";
++
++export const KavachaGraphEdge = Object.freeze({
++  FOLLOWED: "followed",
++  OPENED_FROM: "opened-from",
++});
++
++// Words that carry no relationship signal. Same spirit as the ask-history
++// stop list (patch 0080): a graph edge built on "the" is noise wearing the
++// costume of a finding.
++const kStopWords = new Set(
++  ("the a an and or but of in on at to for with from by as is are was were be " +
++    "been this that these those it its their his her our your my we you they " +
++    "i he she them us not no yes if then than so such can could would should " +
++    "will may might must have has had do does did about into over under more " +
++    "most other some any all each new use used using page site web home read")
++    .split(" ")
++);
++
++// Kept next to the parser it feeds, so the shape asked for and the shape
++// validated cannot drift apart.
++const kEntitySystem =
++  "List the people, organizations, places and topics the page below is " +
++  'about. Reply with ONLY a JSON array of {"name": string, "kind": ' +
++  '"person"|"organization"|"place"|"topic"} — at most 12 entries, no ' +
++  "commentary, no code fence. Use only names the text actually contains.";
++
++export const KavachaKnowledgeGraph = {
++  _initialized: false,
++  _dbPromise: null,
++  // browser -> last top-level URL, so a navigation can be recorded as an edge
++  // from where the tab WAS. Weak because it must not keep a browser alive.
++  _lastUrl: new WeakMap(),
++  // browser -> the URL a tab was opened from, held until that tab's first
++  // real load. At TabOpen the new tab is still about:blank, so the edge
++  // cannot be written yet.
++  _pendingOpener: new WeakMap(),
++
++  get enabled() {
++    return Services.prefs.getBoolPref(kEnabledPref, true);
++  },
++
++  get recordingLinks() {
++    return this.enabled && Services.prefs.getBoolPref(kRecordLinksPref, true);
++  },
++
++  init() {
++    if (this._initialized) {
++      return;
++    }
++    this._initialized = true;
++    try {
++      PlacesObservers.addListener(
++        ["history-cleared", "page-removed"],
++        this._onPlacesEvents
++      );
++    } catch (e) {
++      console.error("KavachaKnowledgeGraph: Places listener failed", e);
++    }
++  },
++
++  _onPlacesEvents: events => {
++    for (const event of events) {
++      if (event.type === "history-cleared") {
++        KavachaKnowledgeGraph.clearAll();
++      } else if (event.type === "page-removed" && event.url) {
++        KavachaKnowledgeGraph.removeUrl(event.url);
++      }
++    }
++  },
++
++  /* -------------------------------------------------------------- storage */
++
++  _getDb() {
++    if (!this._dbPromise) {
++      this._dbPromise = (async () => {
++        const db = await lazy.Sqlite.openConnection({
++          path: PathUtils.join(PathUtils.profileDir, kDbFile),
++        });
++        await db.execute(`
++          CREATE TABLE IF NOT EXISTS edges (
++            id INTEGER PRIMARY KEY,
++            source_url TEXT NOT NULL,
++            target_url TEXT NOT NULL,
++            kind TEXT NOT NULL,
++            weight INTEGER NOT NULL DEFAULT 1,
++            workspace_uuid TEXT,
++            created_at INTEGER NOT NULL,
++            updated_at INTEGER NOT NULL
++          )
++        `);
++        // The same trail walked twice is one edge with weight 2, not two
++        // edges: "I keep coming back to this from there" is the signal.
++        await db.execute(
++          `CREATE UNIQUE INDEX IF NOT EXISTS idx_edges_triple
++             ON edges(source_url, target_url, kind)`
++        );
++        await db.execute(
++          "CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_url)"
++        );
++        await db.execute(
++          "CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_url)"
++        );
++        await db.execute(`
++          CREATE TABLE IF NOT EXISTS entities (
++            id INTEGER PRIMARY KEY,
++            url TEXT NOT NULL,
++            name TEXT NOT NULL,
++            kind TEXT,
++            created_at INTEGER NOT NULL
++          )
++        `);
++        await db.execute(
++          `CREATE UNIQUE INDEX IF NOT EXISTS idx_entities_pair
++             ON entities(url, name)`
++        );
++        await db.execute(
++          "CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name)"
++        );
++        lazy.Sqlite.shutdown.addBlocker("KavachaKnowledgeGraph: close db", () =>
++          db.close()
++        );
++        return db;
++      })();
++    }
++    return this._dbPromise;
++  },
++
++  /** http/https only, fragment dropped — the same key space as the store. */
++  keyFor(url) {
++    return lazy.KavachaKnowledge.keyFor(url);
++  },
++
++  /* -------------------------------------------------------------- writing */
++
++  async recordEdge({ sourceUrl, targetUrl, kind, workspaceUuid = null }) {
++    try {
++      if (!this.recordingLinks) {
++        return false;
++      }
++      const source = this.keyFor(sourceUrl);
++      const target = this.keyFor(targetUrl);
++      // A self-edge is a reload, not a relationship.
++      if (!source || !target || source === target) {
++        return false;
++      }
++      const db = await this._getDb();
++      const now = Date.now();
++      await db.execute(
++        `INSERT INTO edges (source_url, target_url, kind, weight, workspace_uuid, created_at, updated_at)
++         VALUES (:source, :target, :kind, 1, :workspaceUuid, :now, :now)
++         ON CONFLICT(source_url, target_url, kind) DO UPDATE SET
++           weight = weight + 1, updated_at = excluded.updated_at`,
++        { source, target, kind, workspaceUuid, now }
++      );
++      return true;
++    } catch (e) {
++      console.error("KavachaKnowledgeGraph: recordEdge failed", e);
++      return false;
++    }
++  },
++
++  /* ------------------------------------------------------- window plumbing */
++
++  /**
++   * Watch one chrome window for the two relationships worth recording.
++   *
++   * Never records in a private window: a graph is memory, and a private
++   * window's whole promise is that there is none.
++   */
++  attachToWindow(window) {
++    try {
++      if (window.gZenWorkspaces?.privateWindowOrDisabled) {
++        return;
++      }
++      const gBrowser = window.gBrowser;
++      if (!gBrowser) {
++        return;
++      }
++
++      const spaceOf = browser => {
++        try {
++          return (
++            gBrowser.getTabForBrowser(browser)?.getAttribute("zen-workspace-id") ||
++            null
++          );
++        } catch (e) {
++          return null;
++        }
++      };
++
++      const onTabOpen = event => {
++        // `owner` is what tabbrowser sets when a tab is opened FROM another
++        // tab. If it is not there we record nothing rather than guessing from
++        // "whatever was selected" — a wrong edge is worse than a missing one,
++        // because the graph is read as a record of what actually happened.
++        const opener = event.target?.owner || event.target?.openerTab || null;
++        const from = opener?.linkedBrowser?.currentURI?.spec || "";
++        const browser = event.target?.linkedBrowser;
++        if (from && browser) {
++          this._pendingOpener.set(browser, from);
++        }
++      };
++      gBrowser.tabContainer.addEventListener("TabOpen", onTabOpen);
++
++      const listener = {
++        QueryInterface: ChromeUtils.generateQI([
++          "nsIWebProgressListener",
++          "nsISupportsWeakReference",
++        ]),
++        onLocationChange: (browser, webProgress, request, uri, flags) => {
++          try {
++            if (!webProgress?.isTopLevel) {
++              return;
++            }
++            // A TabsProgressListener receives the browser FIRST — tabbrowser
++            // unshifts it in _callProgressListeners — unlike a window-level
++            // listener, which receives none. Guarded either way.
++            const target = browser || gBrowser.selectedBrowser;
++            const url = uri?.spec || "";
++            if (!this.keyFor(url)) {
++              // Left the web (about:, file:). Forget the trail rather than
++              // stitching the next web page onto the last one across it.
++              this._lastUrl.delete(target);
++              return;
++            }
++            const pending = this._pendingOpener.get(target);
++            if (pending) {
++              this._pendingOpener.delete(target);
++              this.recordEdge({
++                sourceUrl: pending,
++                targetUrl: url,
++                kind: KavachaGraphEdge.OPENED_FROM,
++                workspaceUuid: spaceOf(target),
++              });
++            } else {
++              const previous = this._lastUrl.get(target);
++              if (previous) {
++                this.recordEdge({
++                  sourceUrl: previous,
++                  targetUrl: url,
++                  kind: KavachaGraphEdge.FOLLOWED,
++                  workspaceUuid: spaceOf(target),
++                });
++              }
++            }
++            this._lastUrl.set(target, url);
++          } catch (e) {
++            // Recording a relationship must never break a navigation.
++          }
++        },
++      };
++      gBrowser.addTabsProgressListener(listener);
++
++      window.addEventListener(
++        "unload",
++        () => {
++          try {
++            gBrowser.tabContainer.removeEventListener("TabOpen", onTabOpen);
++            gBrowser.removeTabsProgressListener(listener);
++          } catch (e) {}
++        },
++        { once: true }
++      );
++    } catch (e) {
++      console.error("KavachaKnowledgeGraph: attachToWindow failed", e);
++    }
++  },
++
++  /* -------------------------------------------------------------- reading */
++
++  /** Edges touching a URL, in both directions, heaviest first. */
++  async links(url, { limit = 20 } = {}) {
++    const key = this.keyFor(url);
++    if (!key) {
++      return [];
++    }
++    try {
++      const db = await this._getDb();
++      const rows = await db.execute(
++        `SELECT source_url, target_url, kind, weight, updated_at
++           FROM edges WHERE source_url = :key OR target_url = :key
++          ORDER BY weight DESC, updated_at DESC LIMIT :limit`,
++        { key, limit }
++      );
++      return rows.map(r => {
++        const source = r.getResultByName("source_url");
++        const target = r.getResultByName("target_url");
++        const outgoing = source === key;
++        return {
++          url: outgoing ? target : source,
++          direction: outgoing ? "to" : "from",
++          kind: r.getResultByName("kind"),
++          weight: r.getResultByName("weight"),
++          at: r.getResultByName("updated_at"),
++        };
++      });
++    } catch (e) {
++      console.error("KavachaKnowledgeGraph: links failed", e);
++      return [];
++    }
++  },
++
++  /**
++   * Pages that share vocabulary with this one, from the personal index.
++   *
++   * Lexical, not semantic: it finds the paper that also says "flood mapping"
++   * and misses the one that says "inundation modelling". ADR 0012's optional
++   * local embeddings are what would close that, and this is the caller that
++   * would benefit first — recorded here rather than hidden in a backlog.
++   */
++  async related(url, { limit = 8 } = {}) {
++    const key = this.keyFor(url);
++    if (!key) {
++      return [];
++    }
++    try {
++      const text = await lazy.KavachaPersonalIndex.getText(key);
++      const terms = this.topTerms(text, 8);
++      if (!terms.length) {
++        return [];
++      }
++      const rows = await lazy.KavachaPersonalIndex.searchTerms(terms, {
++        limit: limit + 4,
++        mode: "any",
++      });
++      return rows
++        .filter(r => this.keyFor(r.url) !== key)
++        .slice(0, limit)
++        .map(r => ({
++          url: r.url,
++          title: r.title,
++          matched: r.matched,
++          snippet: r.snippet,
++        }));
++    } catch (e) {
++      console.error("KavachaKnowledgeGraph: related failed", e);
++      return [];
++    }
++  },
++
++  /** The most distinctive words in a page's text, by frequency. */
++  topTerms(text, count = 8) {
++    const seen = new Map();
++    for (const raw of String(text || "")
++      .toLowerCase()
++      .split(/[^a-z0-9'-]+/)) {
++      const word = raw.replace(/^[-']+|[-']+$/g, "");
++      if (word.length < 4 || kStopWords.has(word)) {
++        continue;
++      }
++      seen.set(word, (seen.get(word) || 0) + 1);
++    }
++    return [...seen.entries()]
++      .filter(([, n]) => n > 1)
++      .sort((a, b) => b[1] - a[1])
++      .slice(0, count)
++      .map(([word]) => word);
++  },
++
++  /**
++   * Everything Kavacha knows about one page, assembled from the four stores.
++   * This is what about:knowledge renders and what the sidebar's "related"
++   * strip would consume.
++   */
++  async describe(url) {
++    const key = this.keyFor(url);
++    const out = {
++      url: key,
++      title: "",
++      indexed: false,
++      spaces: [],
++      note: null,
++      highlights: [],
++      clips: [],
++      links: [],
++      related: [],
++      entities: [],
++    };
++    if (!key) {
++      return out;
++    }
++    const [text, page, links, related, entities] = await Promise.all([
++      lazy.KavachaPersonalIndex.getText(key),
++      lazy.KavachaKnowledge.forPage(key),
++      this.links(key),
++      this.related(key),
++      this.entitiesFor(key),
++    ]);
++    out.indexed = !!text;
++    out.note = page.note;
++    out.highlights = page.highlights;
++    out.clips = page.clips;
++    out.links = links;
++    out.related = related;
++    out.entities = entities;
++    out.title =
++      page.note?.title ||
++      page.clips[0]?.title ||
++      page.highlights[0]?.title ||
++      "";
++    try {
++      const byUrl = await lazy.KavachaPlacesAttribution.latestWorkspaceForUrls([
++        key,
++      ]);
++      const space = byUrl.get(key);
++      if (space) {
++        out.spaces = [space];
++      }
++    } catch (e) {}
++    return out;
++  },
++
++  /**
++   * Start points for a graph with no selected page: the pages with the most
++   * relationships. A knowledge graph whose front door is an empty search box
++   * is a knowledge graph nobody opens twice.
++   */
++  async hubs({ limit = 15 } = {}) {
++    try {
++      const db = await this._getDb();
++      const rows = await db.execute(
++        `SELECT url, SUM(weight) AS degree, MAX(updated_at) AS at FROM (
++           SELECT source_url AS url, weight, updated_at FROM edges
++           UNION ALL
++           SELECT target_url AS url, weight, updated_at FROM edges
++         ) GROUP BY url ORDER BY degree DESC, at DESC LIMIT :limit`,
++        { limit }
++      );
++      return rows.map(r => ({
++        url: r.getResultByName("url"),
++        degree: r.getResultByName("degree"),
++        at: r.getResultByName("at"),
++      }));
++    } catch (e) {
++      console.error("KavachaKnowledgeGraph: hubs failed", e);
++      return [];
++    }
++  },
++
++  /* ------------------------------------------------------------- entities */
++
++  async entitiesFor(url) {
++    const key = this.keyFor(url);
++    if (!key) {
++      return [];
++    }
++    try {
++      const db = await this._getDb();
++      const rows = await db.execute(
++        "SELECT name, kind FROM entities WHERE url = :key ORDER BY name",
++        { key }
++      );
++      return rows.map(r => ({
++        name: r.getResultByName("name"),
++        kind: r.getResultByName("kind") || "",
++      }));
++    } catch (e) {
++      return [];
++    }
++  },
++
++  /** Pages that mention the same entity. The "who else wrote about X" query. */
++  async pagesForEntity(name) {
++    try {
++      const db = await this._getDb();
++      const rows = await db.execute(
++        "SELECT DISTINCT url FROM entities WHERE lower(name) = :name LIMIT 50",
++        { name: String(name || "").toLowerCase() }
++      );
++      return rows.map(r => r.getResultByName("url"));
++    } catch (e) {
++      return [];
++    }
++  },
++
++  /**
++   * Ask the local model which people, organizations and topics a page is
++   * about, and store the answer.
++   *
++   * ON DEMAND ONLY (see the header): nothing calls this on a timer or on
++   * load. With no runtime it returns {available:false} and the graph simply
++   * has no entities for that page — every other view still works, because
++   * entities are an enrichment and never a dependency.
++   *
++   * The reply is treated as a hostile string, the same way patch 0081 treats
++   * tab grouping: find a JSON array, keep the entries that are objects with a
++   * plausible name, drop everything else. A confused model can leave the page
++   * un-enriched; it cannot write anything else into the store.
++   */
++  async extractEntities(url, { signal } = {}) {
++    const key = this.keyFor(url);
++    if (!key) {
++      return { available: false, reason: "not-a-page", entities: [] };
++    }
++    const status = await lazy.KavachaAIBridge.isAvailable();
++    if (!status.available) {
++      return {
++        available: false,
++        reason: status.reason || "unavailable",
++        entities: [],
++      };
++    }
++    const text = await lazy.KavachaPersonalIndex.getText(key);
++    if (!text) {
++      return { available: false, reason: "no-text", entities: [] };
++    }
++    let reply = "";
++    try {
++      reply = await lazy.KavachaAIBridge.generate(text.slice(0, 8000), {
++        system: kEntitySystem,
++        signal,
++      });
++    } catch (e) {
++      return { available: false, reason: "error", entities: [] };
++    }
++    const entities = this.parseEntities(reply);
++    if (entities.length) {
++      try {
++        const db = await this._getDb();
++        const now = Date.now();
++        for (const entity of entities) {
++          await db.execute(
++            `INSERT INTO entities (url, name, kind, created_at)
++             VALUES (:key, :name, :kind, :now)
++             ON CONFLICT(url, name) DO UPDATE SET kind = excluded.kind`,
++            { key, name: entity.name, kind: entity.kind, now }
++          );
++        }
++      } catch (e) {
++        console.error("KavachaKnowledgeGraph: entity write failed", e);
++      }
++    }
++    return { available: true, entities };
++  },
++
++  /** Exported for the same reason 0081 exports its parser: it is testable. */
++  parseEntities(reply) {
++    const text = String(reply || "");
++    const start = text.indexOf("[");
++    const end = text.lastIndexOf("]");
++    if (start === -1 || end <= start) {
++      return [];
++    }
++    let parsed;
++    try {
++      parsed = JSON.parse(text.slice(start, end + 1));
++    } catch (e) {
++      return [];
++    }
++    if (!Array.isArray(parsed)) {
++      return [];
++    }
++    const kinds = new Set(["person", "organization", "place", "topic"]);
++    const seen = new Set();
++    const out = [];
++    for (const raw of parsed) {
++      const name = String(raw?.name || "").trim().slice(0, 80);
++      if (!name || name.length < 2 || seen.has(name.toLowerCase())) {
++        continue;
++      }
++      seen.add(name.toLowerCase());
++      const kind = String(raw?.kind || "").toLowerCase();
++      out.push({ name, kind: kinds.has(kind) ? kind : "topic" });
++      if (out.length >= 12) {
++        break;
++      }
++    }
++    return out;
++  },
++
++  /* ------------------------------------------------------------- deletion */
++
++  async removeUrl(url) {
++    try {
++      const key = this.keyFor(url);
++      if (!key) {
++        return;
++      }
++      const db = await this._getDb();
++      await db.execute(
++        "DELETE FROM edges WHERE source_url = :key OR target_url = :key",
++        { key }
++      );
++      await db.execute("DELETE FROM entities WHERE url = :key", { key });
++    } catch (e) {
++      console.error("KavachaKnowledgeGraph: removeUrl failed", e);
++    }
++  },
++
++  async clearAll() {
++    try {
++      const db = await this._getDb();
++      await db.execute("DELETE FROM edges");
++      await db.execute("DELETE FROM entities");
++      return true;
++    } catch (e) {
++      console.error("KavachaKnowledgeGraph: clearAll failed", e);
++      return false;
++    }
++  },
++
++  async stats() {
++    try {
++      const db = await this._getDb();
++      const edges = await db.execute("SELECT COUNT(*) AS n FROM edges");
++      const entities = await db.execute("SELECT COUNT(*) AS n FROM entities");
++      const nodes = await db.execute(
++        `SELECT COUNT(*) AS n FROM (
++           SELECT source_url AS u FROM edges UNION SELECT target_url FROM edges
++         )`
++      );
++      return {
++        edges: edges[0].getResultByName("n"),
++        entities: entities[0].getResultByName("n"),
++        nodes: nodes[0].getResultByName("n"),
++      };
++    } catch (e) {
++      return { edges: 0, entities: 0, nodes: 0 };
++    }
++  },
++};
+diff --git a/src/zen/kavacha-knowledge/KavachaAboutKnowledge.sys.mjs b/src/zen/kavacha-knowledge/KavachaAboutKnowledge.sys.mjs
+new file mode 100644
+index 0000000..f7558eb
+--- /dev/null
++++ b/src/zen/kavacha-knowledge/KavachaAboutKnowledge.sys.mjs
+@@ -0,0 +1,43 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// Kavacha: nsIAboutModule for about:knowledge — the personal knowledge graph
++// (ADR 0016; ROADMAP Phase 7; FEATURES 6.3).
++//
++// Same JS about-module pattern as about:studio / about:marketplace /
++// about:plugins, with a fresh cid: registered through components.conf against
++// `@mozilla.org/network/protocol/about;1?what=knowledge`, so no Gecko C++
++// redirector is edited (MASTER_PLAN Principle 1).
++//
++// Privileged chrome UI (IS_SECURE_CHROME_UI) for the same reason about:studio
++// is: the page calls KavachaKnowledgeGraph, KavachaKnowledge and
++// KavachaPersonalIndex directly through ChromeUtils.importESModule. It shows
++// nothing but the user's own local data and never loads a remote resource —
++// its CSP is default-src chrome:.
++
++const kChromeURL = "chrome://browser/content/kavacha-knowledge/graph.html";
++
++export class AboutKnowledge {
++  QueryInterface = ChromeUtils.generateQI(["nsIAboutModule"]);
++
++  newChannel(aURI, aLoadInfo) {
++    const chromeURI = Services.io.newURI(kChromeURL);
++    const channel = Services.io.newChannelFromURIWithLoadInfo(
++      chromeURI,
++      aLoadInfo
++    );
++    channel.originalURI = aURI;
++    return channel;
++  }
++
++  getURIFlags() {
++    return (
++      Ci.nsIAboutModule.ALLOW_SCRIPT | Ci.nsIAboutModule.IS_SECURE_CHROME_UI
++    );
++  }
++
++  getChromeURI() {
++    return Services.io.newURI(kChromeURL);
++  }
++}
+diff --git a/src/zen/kavacha-knowledge/components.conf b/src/zen/kavacha-knowledge/components.conf
+new file mode 100644
+index 0000000..ab69a64
+--- /dev/null
++++ b/src/zen/kavacha-knowledge/components.conf
+@@ -0,0 +1,16 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++# Kavacha: register about:knowledge (the personal knowledge graph) as a JS
++# nsIAboutModule. Mirrors src/zen/kavacha-studio/components.conf so no Gecko
++# C++ redirector edit is needed (ADR 0016). The cid is fresh and distinct from
++# about:studio's, about:marketplace's and about:plugins'.
++Classes = [
++    {
++        "cid": "{3f2a55d1-9c7e-4b18-8d40-2c9f1a6e4b73}",
++        "contract_ids": ["@mozilla.org/network/protocol/about;1?what=knowledge"],
++        "esModule": "resource:///modules/KavachaAboutKnowledge.sys.mjs",
++        "constructor": "AboutKnowledge",
++    },
++]
+diff --git a/src/zen/kavacha-knowledge/graph.css b/src/zen/kavacha-knowledge/graph.css
+new file mode 100644
+index 0000000..73cd784
+--- /dev/null
++++ b/src/zen/kavacha-knowledge/graph.css
+@@ -0,0 +1,241 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* about:knowledge (ADR 0016). Same token vocabulary and literal fallbacks as
++ * the other Kavacha content pages: these documents are not in the chrome
++ * token cascade, which is why every var() here carries its own fallback
++ * (see the note in REMAINING_WORK about why they are declared twice). */
++
++:root {
++  --kg-gap: 16px;
++  --kg-radius: 10px;
++  --kg-accent: var(
++    --zen-primary-color,
++    var(--kavacha-accent, var(--kavacha-accent-fallback, #8b7bd8))
++  );
++}
++
++body {
++  margin: 0;
++  padding: var(--kg-gap);
++  font: message-box;
++  font-size: 14px;
++  line-height: 1.55;
++  color: var(--kavacha-text, #e8e6f0);
++  background: var(--kavacha-surface, #14111f);
++  display: flex;
++  flex-direction: column;
++  gap: var(--kg-gap);
++  min-height: 100vh;
++  box-sizing: border-box;
++}
++
++h1 {
++  margin: 0;
++  font-size: 22px;
++}
++
++.kg-sub {
++  margin: 4px 0 0;
++  opacity: 0.75;
++}
++
++.kg-stats {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 8px;
++  margin-top: 10px;
++}
++
++.kg-stat {
++  padding: 3px 10px;
++  border-radius: 999px;
++  background: var(--kavacha-surface-raised, #1d1930);
++  border: 1px solid var(--kavacha-border, #2e2748);
++  font-size: 12px;
++}
++
++.kg-input {
++  width: 100%;
++  box-sizing: border-box;
++  padding: 10px 12px;
++  border-radius: var(--kg-radius);
++  border: 1px solid var(--kavacha-border, #2e2748);
++  background: var(--kavacha-surface-raised, #1d1930);
++  color: inherit;
++  font: inherit;
++}
++
++.kg-main {
++  display: grid;
++  grid-template-columns: minmax(220px, 320px) 1fr;
++  gap: var(--kg-gap);
++  align-items: start;
++  flex: 1;
++}
++
++@media (max-width: 720px) {
++  .kg-main {
++    grid-template-columns: 1fr;
++  }
++}
++
++.kg-heading,
++.kg-section-title {
++  margin: 0 0 8px;
++  font-size: 12px;
++  font-weight: 600;
++  text-transform: uppercase;
++  letter-spacing: 0.05em;
++  opacity: 0.7;
++}
++
++.kg-list {
++  display: flex;
++  flex-direction: column;
++  gap: 4px;
++}
++
++.kg-row,
++.kg-link-row {
++  display: flex;
++  flex-direction: column;
++  gap: 2px;
++  width: 100%;
++  padding: 8px 10px;
++  border-radius: var(--kg-radius);
++  border: 1px solid transparent;
++  background: var(--kavacha-surface-raised, #1d1930);
++  color: inherit;
++  font: inherit;
++  text-align: start;
++  cursor: pointer;
++}
++
++.kg-row:hover,
++.kg-link-row:hover {
++  border-color: var(--kg-accent);
++}
++
++.kg-row-title,
++.kg-link-label {
++  font-weight: 600;
++  overflow-wrap: anywhere;
++}
++
++.kg-row-meta,
++.kg-link-url {
++  font-size: 12px;
++  opacity: 0.7;
++  overflow-wrap: anywhere;
++}
++
++.kg-detail {
++  display: flex;
++  flex-direction: column;
++  gap: var(--kg-gap);
++  padding: var(--kg-gap);
++  border-radius: var(--kg-radius);
++  background: var(--kavacha-surface-raised, #1d1930);
++  border: 1px solid var(--kavacha-border, #2e2748);
++  min-height: 240px;
++}
++
++.kg-detail-title {
++  margin: 0;
++  font-size: 18px;
++}
++
++.kg-detail-url {
++  font-size: 12px;
++  opacity: 0.7;
++  overflow-wrap: anywhere;
++}
++
++.kg-detail-tools {
++  display: flex;
++  gap: 14px;
++  margin-top: 8px;
++}
++
++.kg-section {
++  display: flex;
++  flex-direction: column;
++  gap: 6px;
++}
++
++.kg-note-body,
++.kg-quote-body {
++  margin: 0;
++  white-space: pre-wrap;
++  overflow-wrap: anywhere;
++}
++
++.kg-quote-body {
++  padding-inline-start: 10px;
++  border-inline-start: 3px solid var(--kg-accent);
++  opacity: 0.92;
++}
++
++.kg-kind {
++  font-size: 11px;
++  text-transform: uppercase;
++  letter-spacing: 0.05em;
++  opacity: 0.65;
++}
++
++.kg-chip {
++  display: inline-block;
++  margin: 0 6px 6px 0;
++  padding: 3px 10px;
++  border-radius: 999px;
++  border: 1px solid var(--kavacha-border, #2e2748);
++  background: transparent;
++  color: inherit;
++  font: inherit;
++  font-size: 12px;
++  cursor: pointer;
++}
++
++.kg-chip:hover {
++  border-color: var(--kg-accent);
++}
++
++.kg-muted,
++.kg-empty {
++  opacity: 0.7;
++  margin: 0;
++}
++
++.kg-link {
++  padding: 0;
++  border: none;
++  background: none;
++  color: var(--kg-accent);
++  font: inherit;
++  cursor: pointer;
++}
++
++.kg-link:hover {
++  text-decoration: underline;
++}
++
++.kg-danger {
++  color: var(--kavacha-danger, #e06c75);
++}
++
++.kg-footer {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 16px;
++  align-items: baseline;
++  padding-top: 10px;
++  border-top: 1px solid var(--kavacha-border, #2e2748);
++  font-size: 12px;
++}
++
++.kg-footer-status {
++  opacity: 0.7;
++  overflow-wrap: anywhere;
++}
+diff --git a/src/zen/kavacha-knowledge/graph.html b/src/zen/kavacha-knowledge/graph.html
+new file mode 100644
+index 0000000..b823c98
+--- /dev/null
++++ b/src/zen/kavacha-knowledge/graph.html
+@@ -0,0 +1,64 @@
++<!-- This Source Code Form is subject to the terms of the Mozilla Public
++   - License, v. 2.0. If a copy of the MPL was not distributed with this
++   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
++<!DOCTYPE html>
++<html lang="en" dir="ltr">
++  <head>
++    <meta charset="utf-8" />
++    <meta
++      http-equiv="Content-Security-Policy"
++      content="default-src chrome:; img-src chrome: data:; style-src chrome: 'unsafe-inline'; object-src 'none'"
++    />
++    <title>Knowledge</title>
++    <link
++      rel="stylesheet"
++      href="chrome://browser/content/kavacha-knowledge/graph.css"
++    />
++    <script src="chrome://browser/content/kavacha-theme/content-theme.js"></script>
++    <script src="chrome://browser/content/kavacha-knowledge/graph.js"></script>
++  </head>
++  <body>
++    <header class="kg-header">
++      <h1>Knowledge</h1>
++      <p class="kg-sub">
++        Everything this browser knows about your reading — and nothing that
++        left this device.
++      </p>
++      <div id="kg-stats" class="kg-stats"></div>
++    </header>
++
++    <section class="kg-search">
++      <input
++        id="kg-query"
++        type="text"
++        class="kg-input"
++        placeholder="Search pages, notes, clips and names"
++        autocomplete="off"
++      />
++    </section>
++
++    <main class="kg-main">
++      <aside class="kg-list-pane">
++        <h2 class="kg-heading" id="kg-list-heading">Most connected</h2>
++        <div id="kg-list" class="kg-list"></div>
++      </aside>
++
++      <section id="kg-detail" class="kg-detail">
++        <p class="kg-empty">
++          Pick a page to see what it connects to.
++        </p>
++      </section>
++    </main>
++
++    <footer class="kg-footer">
++      <button id="kg-export" class="kg-link">Export notes &amp; clips</button>
++      <button id="kg-forget" class="kg-link kg-danger">
++        Delete the graph
++      </button>
++      <button id="kg-forget-all" class="kg-link kg-danger">
++        Delete everything, including notes
++      </button>
++      <span id="kg-footer-status" class="kg-footer-status"></span>
++    </footer>
++  </body>
++</html>
+diff --git a/src/zen/kavacha-knowledge/graph.js b/src/zen/kavacha-knowledge/graph.js
+new file mode 100644
+index 0000000..113bf8e
+--- /dev/null
++++ b/src/zen/kavacha-knowledge/graph.js
+@@ -0,0 +1,469 @@
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this
++// file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++// about:knowledge — the personal knowledge graph (ADR 0016; FEATURES 6.3).
++//
++// DELIBERATELY NOT A FORCE-DIRECTED BALL OF DOTS. A node-and-spring picture
++// of a few thousand pages is a screensaver: it looks like understanding and
++// answers no question. What a user actually asks is "what led me here, what
++// did I write about it, and what else is like it" — so the page is a list of
++// entry points and a detail view that answers exactly those three, per page.
++// The graph is the DATA; this is one honest view of it, and the module's API
++// is deliberately free of presentation so another view can be built later.
++//
++// Chrome-privileged page, so the same rule as every other Kavacha chrome
++// surface: page titles, note text and model-extracted entity names are
++// untrusted strings and reach the DOM only through textContent.
++
++"use strict";
++
++/* global ChromeUtils, Services, Ci, Cc, IOUtils, PathUtils, document, window, console */
++
++(() => {
++  const { KavachaKnowledgeGraph } = ChromeUtils.importESModule(
++    "resource:///modules/KavachaKnowledgeGraph.sys.mjs"
++  );
++  const { KavachaKnowledge } = ChromeUtils.importESModule(
++    "resource:///modules/KavachaKnowledge.sys.mjs"
++  );
++  const { KavachaPersonalIndex } = ChromeUtils.importESModule(
++    "resource:///modules/KavachaPersonalIndex.sys.mjs"
++  );
++
++  const $ = id => document.getElementById(id);
++  const clear = node => {
++    while (node.firstChild) {
++      node.firstChild.remove();
++    }
++  };
++
++  let queryTimer = null;
++
++  function prettyUrl(url) {
++    try {
++      const uri = new URL(url);
++      return uri.host.replace(/^www\./, "") + uri.pathname.replace(/\/$/, "");
++    } catch (e) {
++      return url;
++    }
++  }
++
++  function openUrl(url) {
++    try {
++      const chromeWindow = Services.wm.getMostRecentWindow("navigator:browser");
++      chromeWindow?.openTrustedLinkIn(url, "tab");
++    } catch (e) {
++      console.error("about:knowledge: open failed", e);
++    }
++  }
++
++  function el(tag, className, text) {
++    const node = document.createElement(tag);
++    if (className) {
++      node.className = className;
++    }
++    if (text !== undefined) {
++      node.textContent = text;
++    }
++    return node;
++  }
++
++  /* ------------------------------------------------------------- entries */
++
++  function listRow(entry) {
++    const row = el("button", "kg-row");
++    row.append(el("span", "kg-row-title", entry.title || prettyUrl(entry.url)));
++    const meta = el("span", "kg-row-meta");
++    meta.textContent = entry.meta || prettyUrl(entry.url);
++    row.append(meta);
++    row.addEventListener("click", () => showPage(entry.url));
++    return row;
++  }
++
++  async function showHubs() {
++    $("kg-list-heading").textContent = "Most connected";
++    const hubs = await KavachaKnowledgeGraph.hubs({ limit: 25 });
++    const list = $("kg-list");
++    clear(list);
++    if (!hubs.length) {
++      list.append(
++        el(
++          "p",
++          "kg-empty",
++          "No trails yet. Follow a few links and this fills in — Kavacha " +
++            "records that one page led to another, which your history never does."
++        )
++      );
++      return;
++    }
++    for (const hub of hubs) {
++      list.append(
++        listRow({
++          url: hub.url,
++          title: prettyUrl(hub.url),
++          meta: hub.degree + " connections",
++        })
++      );
++    }
++  }
++
++  async function runSearch(query) {
++    const list = $("kg-list");
++    if (!query || query.length < 2) {
++      showHubs();
++      return;
++    }
++    $("kg-list-heading").textContent = "Results";
++    const [pages, kept] = await Promise.all([
++      KavachaPersonalIndex.search(query, { limit: 20 }),
++      KavachaKnowledge.search(query, { limit: 20 }),
++    ]);
++    clear(list);
++    const seen = new Set();
++    for (const page of pages) {
++      seen.add(page.url);
++      list.append(
++        listRow({
++          url: page.url,
++          title: page.title || prettyUrl(page.url),
++          meta: page.snippet || prettyUrl(page.url),
++        })
++      );
++    }
++    for (const item of kept) {
++      if (seen.has(item.url)) {
++        continue;
++      }
++      seen.add(item.url);
++      list.append(
++        listRow({
++          url: item.url,
++          title: item.title || prettyUrl(item.url),
++          meta: item.kind + " · " + (item.snippet || prettyUrl(item.url)),
++        })
++      );
++    }
++    if (!seen.size) {
++      list.append(el("p", "kg-empty", "Nothing matches that."));
++    }
++  }
++
++  /* -------------------------------------------------------------- detail */
++
++  function section(title) {
++    const wrap = el("section", "kg-section");
++    wrap.append(el("h3", "kg-section-title", title));
++    return wrap;
++  }
++
++  function linkRow(url, label, onClick) {
++    const row = el("button", "kg-link-row");
++    row.append(el("span", "kg-link-label", label));
++    row.append(el("span", "kg-link-url", prettyUrl(url)));
++    row.addEventListener("click", onClick || (() => showPage(url)));
++    return row;
++  }
++
++  async function showPage(url) {
++    const detail = $("kg-detail");
++    clear(detail);
++    detail.append(el("p", "kg-empty", "Reading…"));
++
++    const info = await KavachaKnowledgeGraph.describe(url);
++    clear(detail);
++
++    const head = el("div", "kg-detail-head");
++    head.append(el("h2", "kg-detail-title", info.title || prettyUrl(url)));
++    const sub = el("div", "kg-detail-url");
++    sub.textContent = info.url || url;
++    head.append(sub);
++
++    const tools = el("div", "kg-detail-tools");
++    const open = el("button", "kg-link", "Open page");
++    open.addEventListener("click", () => openUrl(info.url || url));
++    tools.append(open);
++    const map = el("button", "kg-link", "Find names on this page");
++    map.addEventListener("click", () => mapEntities(info.url || url));
++    tools.append(map);
++    head.append(tools);
++    detail.append(head);
++
++    // -- what the user wrote ------------------------------------------------
++    if (info.note || info.highlights.length || info.clips.length) {
++      const kept = section("What you kept");
++      if (info.note) {
++        const note = el("div", "kg-note");
++        note.append(el("div", "kg-kind", "Note"));
++        note.append(el("div", "kg-note-body", info.note.body));
++        kept.append(note);
++      }
++      for (const highlight of info.highlights) {
++        const item = el("div", "kg-quote");
++        item.append(el("div", "kg-kind", "Highlight"));
++        item.append(el("blockquote", "kg-quote-body", highlight.body));
++        if (highlight.comment) {
++          item.append(el("div", "kg-note-body", highlight.comment));
++        }
++        kept.append(item);
++      }
++      if (info.clips.length) {
++        kept.append(
++          el(
++            "div",
++            "kg-muted",
++            info.clips.length +
++              (info.clips.length === 1 ? " clip saved" : " clips saved") +
++              " — open them in the Notes & Clips sidebar."
++          )
++        );
++      }
++      detail.append(kept);
++    }
++
++    // -- how you got here ---------------------------------------------------
++    const trail = section("Trail");
++    const into = info.links.filter(l => l.direction === "from");
++    const outOf = info.links.filter(l => l.direction === "to");
++    if (!info.links.length) {
++      trail.append(
++        el("p", "kg-muted", "No recorded route in or out of this page yet.")
++      );
++    }
++    for (const link of into) {
++      trail.append(
++        linkRow(
++          link.url,
++          (link.kind === "opened-from" ? "opened from" : "came from") +
++            (link.weight > 1 ? " ×" + link.weight : ""),
++          () => showPage(link.url)
++        )
++      );
++    }
++    for (const link of outOf) {
++      trail.append(
++        linkRow(
++          link.url,
++          "led to" + (link.weight > 1 ? " ×" + link.weight : ""),
++          () => showPage(link.url)
++        )
++      );
++    }
++    detail.append(trail);
++
++    // -- what it resembles --------------------------------------------------
++    const related = section("Similar reading");
++    if (!info.related.length) {
++      related.append(
++        el(
++          "p",
++          "kg-muted",
++          info.indexed
++            ? "Nothing else in your index shares this page's vocabulary."
++            : "This page's text was never captured, so there is nothing to compare."
++        )
++      );
++    }
++    for (const item of info.related) {
++      related.append(
++        linkRow(
++          item.url,
++          item.title || prettyUrl(item.url),
++          () => showPage(item.url)
++        )
++      );
++    }
++    detail.append(related);
++
++    // -- names --------------------------------------------------------------
++    const names = section("Names");
++    names.id = "kg-entities";
++    renderEntities(names, info.entities);
++    detail.append(names);
++
++    // -- spaces -------------------------------------------------------------
++    if (info.spaces.length) {
++      const spaces = section("Spaces");
++      for (const uuid of info.spaces) {
++        let label = uuid;
++        try {
++          const chromeWindow =
++            Services.wm.getMostRecentWindow("navigator:browser");
++          label =
++            chromeWindow?.gZenWorkspaces?.getWorkspaceFromId?.(uuid)?.name ||
++            uuid;
++        } catch (e) {}
++        spaces.append(el("div", "kg-chip", label));
++      }
++      detail.append(spaces);
++    }
++  }
++
++  function renderEntities(container, entities) {
++    for (const node of [...container.querySelectorAll(".kg-chip, .kg-muted")]) {
++      node.remove();
++    }
++    if (!entities.length) {
++      container.append(
++        el(
++          "p",
++          "kg-muted",
++          "None yet. “Find names on this page” asks your local model " +
++            "who and what it is about — nothing is sent anywhere else, and " +
++            "nothing happens without you asking."
++        )
++      );
++      return;
++    }
++    for (const entity of entities) {
++      const chip = el("button", "kg-chip", entity.name);
++      chip.title = entity.kind;
++      chip.addEventListener("click", async () => {
++        const urls = await KavachaKnowledgeGraph.pagesForEntity(entity.name);
++        $("kg-list-heading").textContent = "Pages mentioning " + entity.name;
++        const list = $("kg-list");
++        clear(list);
++        for (const url of urls) {
++          list.append(listRow({ url, title: prettyUrl(url) }));
++        }
++      });
++      container.append(chip);
++    }
++  }
++
++  async function mapEntities(url) {
++    const container = $("kg-entities");
++    if (!container) {
++      return;
++    }
++    for (const node of [...container.querySelectorAll(".kg-chip, .kg-muted")]) {
++      node.remove();
++    }
++    container.append(el("p", "kg-muted", "Asking your local model…"));
++    const result = await KavachaKnowledgeGraph.extractEntities(url);
++    for (const node of [...container.querySelectorAll(".kg-muted")]) {
++      node.remove();
++    }
++    if (!result.available) {
++      const why = {
++        disabled: "AI is switched off in Settings → Privacy → Local AI.",
++        unreachable:
++          "No local model found. Kavacha only talks to a model server on " +
++          "this machine.",
++        "no-text":
++          "This page's text was never captured, so there is nothing to read.",
++        "not-a-page": "Names can only be found on web pages.",
++      };
++      container.append(
++        el("p", "kg-muted", why[result.reason] || "That did not work.")
++      );
++      return;
++    }
++    renderEntities(container, result.entities);
++  }
++
++  /* -------------------------------------------------------------- footer */
++
++  async function refreshStats() {
++    const [graph, kept] = await Promise.all([
++      KavachaKnowledgeGraph.stats(),
++      KavachaKnowledge.stats(),
++    ]);
++    const stats = $("kg-stats");
++    clear(stats);
++    const parts = [
++      graph.nodes + " pages connected",
++      graph.edges + " links recorded",
++      kept.note + " notes",
++      kept.highlight + " highlights",
++      kept.clip + " clips",
++    ];
++    for (const part of parts) {
++      stats.append(el("span", "kg-stat", part));
++    }
++  }
++
++  async function exportKnowledge() {
++    try {
++      const data = await KavachaKnowledge.exportAll();
++      const dir = Services.dirsvc.get("DfltDwnld", Ci.nsIFile).path;
++      const stamp = new Date().toISOString().slice(0, 10);
++      const path = PathUtils.join(dir, `kavacha-knowledge-${stamp}.json`);
++      await IOUtils.writeJSON(path, data);
++      $("kg-footer-status").textContent =
++        "Exported " + data.items.length + " items to " + path;
++    } catch (e) {
++      $("kg-footer-status").textContent = "Export failed.";
++    }
++  }
++
++  // Both destructive buttons confirm, and they say what will and will not
++  // survive. Deleting the graph leaves the writing; deleting everything does
++  // not, and the store deliberately does not follow history deletion, so this
++  // is the only place that can offer it.
++  function confirmThen(message, run) {
++    const chromeWindow = Services.wm.getMostRecentWindow("navigator:browser");
++    const ok = Services.prompt.confirm(chromeWindow, "Kavacha", message);
++    if (ok) {
++      run();
++    }
++  }
++
++  function init() {
++    $("kg-query").addEventListener("input", () => {
++      clearTimeout(queryTimer);
++      queryTimer = setTimeout(
++        () => runSearch($("kg-query").value.trim()),
++        150
++      );
++    });
++    $("kg-export").addEventListener("click", exportKnowledge);
++    $("kg-forget").addEventListener("click", () =>
++      confirmThen(
++        "Delete the trail between pages and any names found on them?\n\n" +
++          "Your notes, highlights and clips are not touched.",
++        async () => {
++          await KavachaKnowledgeGraph.clearAll();
++          await refreshStats();
++          showHubs();
++          $("kg-footer-status").textContent = "Graph deleted.";
++        }
++      )
++    );
++    $("kg-forget-all").addEventListener("click", () =>
++      confirmThen(
++        "Delete everything Kavacha has kept: the trail between pages, and " +
++          "all of your notes, highlights and clips.\n\nThis cannot be undone.",
++        async () => {
++          await KavachaKnowledgeGraph.clearAll();
++          await KavachaKnowledge.clearAll();
++          await refreshStats();
++          showHubs();
++          clear($("kg-detail"));
++          $("kg-footer-status").textContent = "Everything deleted.";
++        }
++      )
++    );
++
++    refreshStats();
++    showHubs();
++
++    // about:knowledge?url=… opens straight onto one page, which is how the
++    // palette command and the sidebar hand a page over.
++    const params = new URLSearchParams(
++      (window.location.search || "").replace(/^\?/, "")
++    );
++    const target = params.get("url");
++    if (target) {
++      showPage(target);
++    }
++  }
++
++  window.KavachaKnowledgePageGraph = { showPage, runSearch };
++
++  if (document.readyState === "loading") {
++    document.addEventListener("DOMContentLoaded", init, { once: true });
++  } else {
++    init();
++  }
++})();
+diff --git a/src/zen/kavacha-knowledge/jar.inc.mn b/src/zen/kavacha-knowledge/jar.inc.mn
+index 710fa0b..deee359 100644
+--- a/src/zen/kavacha-knowledge/jar.inc.mn
++++ b/src/zen/kavacha-knowledge/jar.inc.mn
+@@ -5,3 +5,6 @@
+         content/browser/kavacha-knowledge/knowledge.html                       (../../zen/kavacha-knowledge/knowledge.html)
+         content/browser/kavacha-knowledge/knowledge.css                        (../../zen/kavacha-knowledge/knowledge.css)
+         content/browser/kavacha-knowledge/knowledge.js                         (../../zen/kavacha-knowledge/knowledge.js)
++        content/browser/kavacha-knowledge/graph.html                           (../../zen/kavacha-knowledge/graph.html)
++        content/browser/kavacha-knowledge/graph.css                            (../../zen/kavacha-knowledge/graph.css)
++        content/browser/kavacha-knowledge/graph.js                             (../../zen/kavacha-knowledge/graph.js)
+diff --git a/src/zen/kavacha-knowledge/moz.build b/src/zen/kavacha-knowledge/moz.build
+new file mode 100644
+index 0000000..c6bc0d0
+--- /dev/null
++++ b/src/zen/kavacha-knowledge/moz.build
+@@ -0,0 +1,18 @@
++# This Source Code Form is subject to the terms of the Mozilla Public
++# License, v. 2.0. If a copy of the MPL was not distributed with this
++# file, You can obtain one at http://mozilla.org/MPL/2.0/.
++
++# Kavacha knowledge surfaces. The Knowledge SIDEBAR (patch 0082) is pure
++# chrome content and needs nothing here — it is registered through jar.inc.mn
++# and opened by KavachaKnowledgeSidebar.sys.mjs, which lives in common/sys
++# with the other cross-cutting modules. What this file wires up is the
++# about:knowledge page (patch 0083; ADR 0016): a JS about-module plus the
++# components.conf that registers its contract.
++
++EXTRA_JS_MODULES += [
++    "KavachaAboutKnowledge.sys.mjs",
++]
++
++XPCOM_MANIFESTS += [
++    "components.conf",
++]
+diff --git a/src/zen/moz.build b/src/zen/moz.build
+index fbbebfe..f7028e8 100644
+--- a/src/zen/moz.build
++++ b/src/zen/moz.build
+@@ -12,6 +12,7 @@ DIRS += [
+     "drag-and-drop",
+     "glance",
+     "kavacha-index",
++    "kavacha-knowledge",
+     "kavacha-marketplace",
+     "kavacha-plugins",
+     "kavacha-studio",

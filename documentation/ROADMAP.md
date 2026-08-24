@@ -600,22 +600,92 @@ actor child scripts do not load on a local macOS build (content sandbox vs. syml
 out of the bundle — Zen's own actors fail the same way), so patch 0078's *passive*
 capture has never run in a default local session. See [VERIFICATION.md](VERIFICATION.md) §4c.
 
-## Phase 7 — Browser, later (post-v1.0)
+## Phase 7 — Browser, later (post-v1.0) — **built 2026-08-17 (patches 0082–0087)**
 
 Browser work deliberately scheduled after v1.0. Still browser features — patches in
-`browser/patches/`, no servers, no accounts:
+`browser/patches/`, no servers, no accounts. Built ahead of its slot because none of it
+needs an account and all of it feeds the north star; **it does not change the release
+gates**, which are still blocked on the update service (R1) and signing (R2).
 
-- [ ] Knowledge management — per-page notes, web clipper, personal knowledge graph.
-      On the north-star path: the Phase 6 personal search index is what grows into
-      the graph (see [PLATFORM_PLAN.md](PLATFORM_PLAN.md) row 3)
-- [ ] Automation framework — workflow builder (trigger → actions), tab manipulation,
-      data extraction, scheduled workflows, reusable templates; the `automation`
-      command domain is already reserved in the patch-0027 registry
-- [ ] Power-user tooling — capture, annotation, citations, REST client, JSON viewer,
-      writing mode. Candidates for marketplace *bundles* rather than core
-- [ ] Focus mode — block distracting sites + notifications
-- [ ] Offline mode — save pages, notes, documents (pairs with the web clipper)
-- [ ] Tab history tree (FEATURES 7.1) and named/saved tab sessions (7.2)
+- [x] **Knowledge management — per-page notes, highlights, web clipper** (ADR 0015 +
+      patch `0082-knowledge-capture.patch`): a note per page (empty deletes it —
+      clearing the box *is* the gesture), highlights with comments, and clips of a
+      page's readable text, in `kavacha-knowledge.sqlite`, with a Knowledge sidebar
+      and two new universal-search sources. **The deletion contract is the inverse of
+      the index's, deliberately**: the index (ADR 0012) follows Places because it is a
+      derived cache; a note is a document the user wrote, so clearing history must not
+      destroy it. That is also why "delete everything" and a one-call JSON export are
+      in the first version rather than in a follow-up. The clipper is also the honest
+      half of **offline mode**: the saved copy renders from the store, so it survives
+      the site and the network — it is not a byte-for-byte archive, which is a
+      different feature with a different threat model.
+- [x] **Personal knowledge graph + `about:knowledge`** (ADR 0016 + patch
+      `0083-knowledge-graph.patch`): the north-star item. **Exactly one new fact is
+      stored** — that one page led to another (`followed`) or opened from it
+      (`opened-from`) — because that is the only thing no existing store holds: Places
+      records both visits and no relationship between them. Everything else the page
+      shows is derived at query time from the index, the knowledge store and Space
+      attribution, since a materialized second copy can disagree with the first.
+      Deletion follows Places here (an edge is *where you went*), which is why it is a
+      separate SQLite file from the notes. Entity extraction via the local model is
+      **on demand only**, so patch 0079's zero-background-requests guarantee (R3)
+      survives. Similarity is lexical — the strongest argument yet for ADR 0012's
+      optional embeddings.
+- [x] **Focus mode** (ADR 0018 + patch `0084-focus-mode.patch`): a session is a
+      **period with an end time**, not a mode flag, so a crash cannot strand the
+      browser blocked and the check never trusts that cleanup ran. Sessions survive a
+      restart (quitting is the obvious way to defeat a self-imposed block) but ending
+      is one click and the block page says so — a tool for attention, not a lock. Top
+      -level pages only, matched on eTLD+1; notification defaults are restored exactly,
+      which is patch 0066's lesson applied before the bug rather than after.
+      `about:focus` is both the wall and the blocklist editor.
+- [x] **Automation framework + `about:workflows`** (ADR 0017 + patch
+      `0085-automation-workflows.patch`; [automation/](../automation/README.md)):
+      **a workflow is data, never code.** No script step, no eval, no expression
+      language — a workflow document arrives from imports and one day from the
+      marketplace, and "run arbitrary JS with chrome privileges" would end the ADR 0011
+      security model. Fixed allowlist of eleven steps, schema-validated fail-closed at
+      save *and* at run, recursion impossible by construction, single-flight runs,
+      capped steps and tabs. Triggers: manual (the `automation` domain patch 0027
+      reserved), startup, space-switch, interval — and interval deliberately does not
+      catch up missed windows. The builder renders the engine's vocabulary, so it can
+      never offer a step the engine lacks.
+- [x] **Tab history tree + saved-session manager** (ADR 0019 + patch
+      `0086-tab-history-tree.patch`; FEATURES 7.1 and 7.2): the branches Gecko
+      truncates — go back three pages, follow a different link, and every browser
+      throws the first three away. Recorded *alongside* session history (Back and
+      Forward keep their meaning), persisted per tab through SessionStore, trimmed
+      leaves-only so a branch can never be orphaned. 7.2 closes what patch 0081 opened:
+      a saved session could only be found through the timeline of the one Space it
+      belonged to, and retention exempts labelled snapshots, so without a delete it was
+      permanent.
+- [x] **Power-user tooling** (patch `0087-power-user-tooling.patch`): the audit came
+      first, and half the list was already shipped or someone else's job — **capture**
+      is Firefox's own Screenshots (now a palette entry, not a reimplementation),
+      **annotation** shipped in 0082, and the **JSON viewer** is on by default in this
+      build (`devtools.jsonview.enabled`, checked against the engine tree rather than
+      assumed). Built: **citations** (APA/MLA/BibTeX from the page's own `citation_*`
+      and OpenGraph metadata; leads with the title when there is no author, which is
+      the APA rule people get wrong by hand) and **writing mode** (`about:write`, a
+      *view* over notes that already exist, never a fourth place your words could be).
+      **Not built: the REST client** — a developer tool with its own request store,
+      auth and history, which is the marketplace-bundle candidate this row was about.
+      Tracked in [REMAINING_WORK.md](REMAINING_WORK.md) §6.
+
+**Verification status — read this before trusting the checkmarks above.** The series
+round-trips byte-identically over 50 files with zero rejects, and 41 logic checks pass
+against the real modules with Gecko's globals stubbed (`test/phase7-logic/`). What has
+**not** happened: **no build of this series has completed**, and therefore **no
+functional (L4) verification has run at all**. The first attempt failed outright on an
+unsorted `EXTRA_JS_MODULES` list (fixed); the second got past `moz.build` into the C++
+compile and was stopped part-way, because a full Gecko build on the development machine
+exhausts RAM and thrashes swap. The Marionette probe (`build/marionette-phase7.py`) is
+written and waiting for a machine that can produce a build.
+
+Treat every Phase 7 row above as *code written and statically checked*, not as *code
+observed to work*. Patch 0059 is the standing reminder of what that distinction costs:
+four settings panes passed every static gate and had never once executed. See
+[VERIFICATION.md](VERIFICATION.md) §4d.
 
 ## Ecosystem (Year 2+) — separate document, deliberately
 

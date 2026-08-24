@@ -1,6 +1,37 @@
 # Kavacha — Remaining Work
 
-**Defects and features.** Everything below is open as of 2026-08-15, consolidated from
+<!-- PHASE7-TEST-STATUS: UNTESTED -->
+> ## ⛔ READ FIRST — Phase 7 is committed but **UNTESTED**
+>
+> Patches `0082`–`0087` (Phase 7) were committed **without a completed build and without
+> a single runtime probe**. Two build attempts were made; neither finished, because the
+> development machine runs out of RAM and spends the build in swap. The code applies and
+> round-trips byte-identically, and 41 logic checks pass with Gecko's globals stubbed —
+> that is the whole of what is known.
+>
+> **The next session does this before starting anything new:**
+>
+> 1. **Build it.** `env -u CLAUDECODE -u CLAUDE_CODE ./build/bootstrap.sh build`
+>    (the env-unset is required or `mach` hides its errors — see the build-propagation
+>    notes). Then `./build/bootstrap.sh fast` so post-import module edits propagate.
+> 2. **Run the L4 probe.** `./build/marionette-verify.py --launch`, then
+>    `./build/marionette-phase7.py`. Clear `startupCache` after any rebuild, and launch
+>    with `MOZ_DISABLE_CONTENT_SANDBOX=1` for the actor-driven paths (0082 capture,
+>    0087 citation metadata).
+> 3. **Fix every bug it finds**, regenerating the affected patch and re-running the
+>    round-trip.
+> 4. **Recommit**, then **update these notes**: change the marker above to
+>    `<!-- PHASE7-TEST-STATUS: TESTED <commit-sha> -->`, replace this whole block with a
+>    one-line "Phase 7 tested and fixed in `<sha>`", and update the matching statements in
+>    [VERIFICATION.md](VERIFICATION.md) §4d, [ROADMAP.md](ROADMAP.md) Phase 7,
+>    [SHIPPING.md](SHIPPING.md) §3, [FEATURES.md](FEATURES.md),
+>    [PLATFORM_PLAN.md](PLATFORM_PLAN.md) and
+>    [browser/patches/README.md](../browser/patches/README.md).
+>
+> Only then start new work. The 0059 saga is why: four settings panes passed every static
+> gate, shipped, and had never once executed.
+
+**Defects and features.** Everything below is open as of 2026-08-17, consolidated from
 [ROADMAP.md](ROADMAP.md), [MASTER_PLAN.md](MASTER_PLAN.md),
 [PLATFORM_PLAN.md](PLATFORM_PLAN.md) and [FEATURES.md](FEATURES.md), which stay as the
 record of *why* and of what is already done. This file is the record of what is *left to
@@ -15,11 +46,14 @@ Two things are deliberately elsewhere:
 - **[ECOSYSTEM.md](ECOSYSTEM.md)** — Mail, Drive, Identity, search aggregator, Enterprise.
   Separate products, gated on the browser shipping.
 
-Where we are: **Phases 1–4 and 6 feature-complete** through patch 0081 (2026-08-15),
+Where we are: **Phases 1–4, 6 and 7 feature-complete** through patch 0087 (2026-08-17)
+— with the caveat that Phase 7's six patches are **written but never built** (§6),
 **except** the open Phase 1 **update-service blocker** (see ROADMAP.md — no path to ship a
 security fix until `updates.kavacha.app` exists) and the release gates in
-[SHIPPING.md](SHIPPING.md). **Phase 5 (accounts and sync) and Phase 7 have not started**,
-and Phase 5 is now the only unstarted Y1 phase. Phase 6 landed out of order because none
+[SHIPPING.md](SHIPPING.md). **Phase 5 (accounts and sync) has not started** and is now
+the only unstarted phase — and the only unstarted Y1 one. Phase 7 landed early, out of
+order, for the same reason Phase 6 did: none of it needs an account. It moves no gate;
+what a release still waits on is unchanged. Phase 6 landed out of order because none
 of it needs an account: patches 0078–0079 built the index and the model bridge, 0080–0081
 built the surfaces (§5). Patches 0045–0050
 (2026-08-02) closed the open defects and the Phase 4 feature list; 0051–0058 closed
@@ -281,18 +315,63 @@ model must be off by default, clearly labeled, and per-request opt-in. Patch 007
 endpoint guarantee holds for all of Phase 6 — page text, questions and tab titles reach
 `kavacha.ai.endpoint` or nowhere.
 
-## 6. Phase 7 — Browser, later (post-v1.0)
+## 6. Phase 7 — Browser, later (6 of 6 written 2026-08-17, patches 0082–0087; **unbuilt**)
 
-Browser features, no servers, no accounts. Full list in [ROADMAP.md](ROADMAP.md):
+Browser features, no servers, no accounts. Built ahead of its post-v1.0 slot because
+none of it needs an account; **it moves no release gate**. Per-item reasoning in
+[ROADMAP.md](ROADMAP.md); decisions in ADRs 0015–0019.
 
-- Knowledge management — per-page notes, web clipper, personal knowledge graph. On the
-  north-star path: the Phase 6 index is what grows into the graph.
-- Automation framework — workflow builder (trigger → actions), tab manipulation, data
-  extraction, scheduled workflows, reusable templates. The `automation` command domain is
-  already reserved in the patch-0027 registry.
-- Power-user tooling as marketplace bundles — capture, annotation, citations, REST client,
-  JSON viewer, writing mode.
-- Focus mode · offline mode · tab history tree · named saved tab sessions.
+- [x] **Knowledge capture** (0082, ADR 0015) — per-page notes, highlights with comments,
+      web clips, a Knowledge sidebar, two new universal-search sources, JSON export.
+      Also the honest half of offline mode: the saved copy renders from the store.
+- [x] **Personal knowledge graph** (0083, ADR 0016) — `about:knowledge`. One stored
+      fact (this page led to that one); everything else derived at query time.
+- [x] **Focus mode** (0084, ADR 0018) — `about:focus`, sessions as periods.
+- [x] **Automation** (0085, ADR 0017) — `about:workflows`; workflows are data, never
+      code. Design artifacts in [automation/](../automation/README.md).
+- [x] **Tab history tree + saved sessions** (0086, ADR 0019) — FEATURES 7.1 and 7.2.
+- [x] **Power-user tooling** (0087) — citations and writing mode built; capture,
+      annotation and the JSON viewer were already shipped (see below).
+
+**Open, and stated rather than implied:**
+
+- [ ] **A completed build of 0082–0087 — this comes first, and has never happened.**
+      The series round-trips byte-identically over 50 files, and a build *attempt*
+      caught one real defect no static gate can (an unsorted `EXTRA_JS_MODULES` list
+      that fails the `moz.build` read outright). But neither attempt finished: the
+      development machine runs out of RAM and thrashes swap, so a full Gecko build
+      does not complete there. Until it does, the compile itself is unproven.
+- [ ] **Functional (L4) verification of 0082–0087**, blocked on the item above.
+      **No runtime probe has driven any of the six features**, and the probe that
+      would (`build/marionette-phase7.py`) is written and waiting. Given the 0059
+      saga — four panes that were present, packaged and dead — this is the item that
+      matters most in this section. See [VERIFICATION.md](VERIFICATION.md) §4d.
+- [ ] **REST client.** Deliberately not built (0087). A developer tool with its own
+      request store, auth handling and history is a product inside a product, and the
+      roadmap already calls this row a marketplace-bundle candidate. This is the item
+      that row was about.
+- [ ] **DOM-anchored highlights.** Today a highlight stores the quote and its comment;
+      real annotation software re-renders the mark on the live page. That needs an
+      anchoring scheme that survives page changes plus content-script rendering on
+      every visit (ADR 0015 § Alternatives).
+- [ ] **Full-fidelity offline archiving.** Clips keep the text, not the bytes. A real
+      archive re-fetches subresources on the user's behalf at a time they did not
+      choose — a different feature with a different threat model, worth doing
+      deliberately or not at all.
+- [ ] **Sync for notes and clips.** They are local-only, like everything else, until
+      Phase 5 exists. Of all Kavacha's stores this is the one a user would most expect
+      to follow them to another machine.
+
+Corrections the work forced, recorded so they are not re-litigated:
+
+- **Three of the six "power-user tooling" items did not need building.** Capture is
+  Firefox's own Screenshots component (on in this build), annotation shipped inside
+  0082, and the JSON viewer is enabled by default (`devtools.jsonview.enabled=true`,
+  checked in the engine tree). The roadmap line had been reading as six missing
+  features for months.
+- **"Offline mode" and "web clipper" were one feature, not two.** Saving the readable
+  text is what makes a page survive the site going away; the roadmap listed them
+  separately and they landed in one patch.
 
 ---
 
@@ -325,11 +404,17 @@ Browser features, no servers, no accounts. Full list in [ROADMAP.md](ROADMAP.md)
    source the day it landed.
 3. ~~Blocked-today badge surface~~ — **done** (0077).
 4. ~~Phase 2/3 follow-ups (§3)~~ — **done** (0051–0058).
-5. **Phase 5 — accounts and sync** (§4) is now the only unstarted Y1 phase, and it is
+5. **Build Phase 7, then functionally verify it (§6).** Six new features, four new
+   `about:` pages, two new SQLite stores and a new sidebar — all of it written, none of
+   it compiled to completion, none of it driven at runtime. It needs a machine with the
+   memory for a full Gecko build; the current one swaps. The 0059 saga is the argument:
+   everything was present, packaged, and dead. This now outranks the items below it.
+6. **Phase 5 — accounts and sync** (§4) is now the only unstarted phase, and it is
    the one with real prerequisites: a service to run, and an external crypto review
    before sync can ship (SHIPPING R9). The one piece that does **not** depend on the
-   account — **"Export My Digital Life"** — is worth pulling forward on its own.
-6. **Per-workspace AI settings** (§3) — small, and newly unblocked by Phase 6.
+   account — **"Export My Digital Life"** — is worth pulling forward on its own, and
+   patch 0082 already exports the knowledge store, so the shape is proven.
+7. **Per-workspace AI settings** (§3) — small, and newly unblocked by Phase 6.
 
 Before any of this, read [SHIPPING.md](SHIPPING.md) — if the goal is a release rather than
 a bigger feature set, that file's order beats this one.

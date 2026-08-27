@@ -8,22 +8,38 @@
 
 name: CI
 
+# ---------------------------------------------------------------------------
+# CI DISABLED 2026-08-27.
+#
+# The repository was made private after personal information was found in it.
+# Until that content is scrubbed from the working tree AND from history, nothing
+# here runs: no validation, no browser builds, and above all no `publish-nightly`
+# (it holds `contents: write` and pushes built binaries to the `nightly` release,
+# which is exactly the wrong thing to be doing with a repo in this state).
+#
+# Belt and braces, because a mistake here republishes the data:
+#   - the automatic triggers below (push / pull_request / daily 08:00 UTC cron)
+#     are removed, so nothing fires on its own;
+#   - every job carries `if: false`, so even a manual workflow_dispatch no-ops.
+#
+# TO RE-ENABLE once the repo is clean: restore the push/pull_request/schedule
+# triggers below, then drop the `if: false` line from each job — restoring the
+# original `if:` conditions on nightly-build and publish-nightly, which are kept
+# verbatim in the comment directly above each of those lines.
+# ---------------------------------------------------------------------------
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # Disabled: push, pull_request, schedule ("0 8 * * *" — daily Nightly, 08:00 UTC).
   workflow_dispatch:
     inputs:
       full_build:
         description: "Run full browser builds (1-3h per platform)"
         type: boolean
         default: false
-  schedule:
-    - cron: "0 8 * * *" # daily Nightly, 08:00 UTC
 
 jobs:
   validate:
     name: Validate (fast)
+    if: false # CI disabled 2026-08-27 (see header)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -92,8 +108,10 @@ jobs:
 
   nightly-build:
     name: Nightly build (${{ matrix.os }})
-    # Full builds only on schedule or when explicitly requested.
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_build)
+    # Full builds only on schedule or when explicitly requested. Original condition,
+    # restore on re-enable:
+    #   if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_build)
+    if: false # CI disabled 2026-08-27 (see header)
     needs: validate
     strategy:
       fail-fast: false
@@ -270,7 +288,9 @@ jobs:
     needs: nightly-build
     # always(): publish whatever platforms succeeded even if one failed
     # (Windows is experimental and continue-on-error already).
-    if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_build))
+    # Original condition, restore on re-enable:
+    #   if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_build))
+    if: false # CI disabled 2026-08-27 (see header)
     runs-on: ubuntu-latest
     # Serialize publishes: a manual full_build dispatch can overlap the 08:00
     # scheduled run (builds take hours). Two interleaved publish jobs can each

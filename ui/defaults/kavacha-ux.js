@@ -127,10 +127,17 @@ pref("kavacha.knowledge.record-links", true);
 pref("kavacha.focus.session-ends-at", 0);
 pref("kavacha.focus.default-minutes", 50);
 // While a session runs, websites cannot ask to send notifications. The value
-// that was there before is parked in the second pref and written back when the
-// session ends — explicit ownership, which is what patch 0066 cost us to learn.
+// that was there before is parked in kavacha.focus.saved-notification-default
+// and written back when the session ends — explicit ownership, which is what
+// patch 0066 cost us to learn.
+//
+// The park pref MUST NOT ship a default. FocusMode uses prefHasUserValue() on
+// it as the "a session is muting right now" sentinel, and libpref PRUNES a user
+// value that equals the default. The common notification default is 0 (ask), so
+// a default of 0 here made setIntPref(..., 0) a no-op: the sentinel never set,
+// restore never ran, and notifications stayed denied forever after the first
+// session. Left undefined, it is created on demand and the sentinel is honest.
 pref("kavacha.focus.block-notifications", true);
-pref("kavacha.focus.saved-notification-default", 0);
 
 // Automation (ADR 0017 / patch 0085): workflows are documents — a trigger and
 // a list of steps from a fixed allowlist — never code. The caps are the

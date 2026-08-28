@@ -52,6 +52,19 @@
 # "inundation modelling". ADR 0012's optional local embeddings are what would
 # close that gap, and this is the first caller that would benefit.
 #
+# TESTED & FIXED 2026-08-27 (first completed build + L4 probe of this series).
+# Two defects only a run could show, both in this patch:
+#   1. KavachaKnowledgeGraph.sys.mjs was created but never added to
+#      src/zen/common/moz.build's EXTRA_JS_MODULES, so it never packaged and
+#      resource:///modules/KavachaKnowledgeGraph.sys.mjs would not load — the
+#      graph, describe(), hubs() and edges were all dead in a real build while
+#      every static gate passed. Registered it. (That insertion shifted patch
+#      0084's adjacent moz.build hunk, which was regenerated to match.)
+#   2. parseEntities dropped every one-character name (name.length < 2), so a
+#      legitimately single-letter entity ("X", "Q") was discarded and a reply
+#      of [{"name":"X",...}] yielded nothing. Relaxed the guard to drop only
+#      empty/duplicate names. Verified: build/marionette-phase7.py 75/75.
+#
 diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
 index 02e9afd..32d5eb7 100644
 --- a/locales/en-US/browser/browser/zen-command-palette.ftl
@@ -735,7 +748,7 @@ index 0000000..9314456
 +    const out = [];
 +    for (const raw of parsed) {
 +      const name = String(raw?.name || "").trim().slice(0, 80);
-+      if (!name || name.length < 2 || seen.has(name.toLowerCase())) {
++      if (!name || seen.has(name.toLowerCase())) {
 +        continue;
 +      }
 +      seen.add(name.toLowerCase());
@@ -1673,6 +1686,18 @@ index 710fa0b..deee359 100644
 +        content/browser/kavacha-knowledge/graph.html                           (../../zen/kavacha-knowledge/graph.html)
 +        content/browser/kavacha-knowledge/graph.css                            (../../zen/kavacha-knowledge/graph.css)
 +        content/browser/kavacha-knowledge/graph.js                             (../../zen/kavacha-knowledge/graph.js)
+diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
+index 96b5d56..fa7cfd3 100644
+--- a/src/zen/common/moz.build
++++ b/src/zen/common/moz.build
+@@ -9,6 +9,7 @@ EXTRA_JS_MODULES += [
+   "sys/KavachaAskHistory.sys.mjs",
+   "sys/KavachaCommandRegistry.sys.mjs",
+   "sys/KavachaKnowledge.sys.mjs",
++  "sys/KavachaKnowledgeGraph.sys.mjs",
+   "sys/KavachaKnowledgeSidebar.sys.mjs",
+   "sys/KavachaLayoutEngine.sys.mjs",
+   "sys/KavachaMarkdown.sys.mjs",
 diff --git a/src/zen/kavacha-knowledge/moz.build b/src/zen/kavacha-knowledge/moz.build
 new file mode 100644
 index 0000000..c6bc0d0

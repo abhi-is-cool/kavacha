@@ -90,16 +90,16 @@ eyeballing; the 0030 → 0036 saga is the argument for that.
   resolves to real text rather than a raw Fluent id. Same gap: operating a control has not
   been shown to change anything.
 
-**Added 2026-08-17 — Phase 7 (patches 0082–0087).** Six features, four new `about:`
-pages, two new SQLite stores and a second sidebar landed ahead of their post-v1.0 slot.
-They **gate nothing** — no release requirement names them — but they enlarge the surface
-that the Dev Preview's L4 requirement covers, and **none of it has been compiled to
-completion, let alone driven at runtime**: the build was attempted twice and stopped
-both times, the second for lack of memory on the development machine. The arm list is
-[VERIFICATION.md](VERIFICATION.md) §4d. The attempt did catch one real defect (an
-unsorted `EXTRA_JS_MODULES` list that fails the `moz.build` read outright), which is
-the argument for not treating "the patch applies" as progress — and the unfinished
-build is the argument for not treating "it started compiling" as progress either.
+**Added 2026-08-17 — Phase 7 (patches 0082–0087); built + L4-verified 2026-08-27.** Six
+features, four new `about:` pages, two new SQLite stores and a second sidebar landed
+ahead of their post-v1.0 slot. They **gate nothing** — no release requirement names them
+— but they enlarge the surface the Dev Preview's L4 requirement covers, and that surface
+has now been built and driven: `build/marionette-phase7.py` reports **75/75**. The first
+real run found three defects no static gate caught (an omitted `EXTRA_JS_MODULES`
+registration that left the knowledge-graph module dead in a packaged build, an
+entity-name guard, and a focus-mode pref that libpref pruned) — all fixed and re-probed
+clean. Details in [VERIFICATION.md](VERIFICATION.md) §4d. The lesson stands regardless:
+neither "the patch applies" nor "it started compiling" was progress; a run was.
 
 **Remaining open arms:**
 

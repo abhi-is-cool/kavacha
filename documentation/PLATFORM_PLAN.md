@@ -32,9 +32,9 @@ Power-user platform
 | 7. Plugin ecosystem (SDK + permission model) | Extends roadmap Phase 3 marketplace: Kavacha SDK exposing workspaces/tabs/notes/commands/workflows behind explicit per-plugin permissions (never passwords/private data). Integration targets: Zotero, Obsidian, GitHub, Notion |
 | 8. Local intelligence layer | Roadmap Phase 6 — unchanged principle: AI arrives only after the browser has meaningful context, local models first |
 
-**"Shipped 2026-08-17" in rows 3, 4 and 5 means the patch exists and applies — not that
-it has run.** Patches 0082–0087 have never been through a completed build; see
-[VERIFICATION.md](VERIFICATION.md) §4d.
+**"Shipped 2026-08-17" in rows 3, 4 and 5 is now backed by a run.** Patches 0082–0087
+were built and L4-verified 2026-08-27 (`build/marionette-phase7.py` 75/75, three
+run-only defects fixed); see [VERIFICATION.md](VERIFICATION.md) §4d.
 
 ## Workspace OS — target model (Phase 2 extension)
 

@@ -1,35 +1,16 @@
 # Kavacha — Remaining Work
 
-<!-- PHASE7-TEST-STATUS: UNTESTED -->
-> ## ⛔ READ FIRST — Phase 7 is committed but **UNTESTED**
+<!-- PHASE7-TEST-STATUS: TESTED 2026-08-27 -->
+> ## Phase 7 tested and fixed — 2026-08-27
 >
-> Patches `0082`–`0087` (Phase 7) were committed **without a completed build and without
-> a single runtime probe**. Two build attempts were made; neither finished, because the
-> development machine runs out of RAM and spends the build in swap. The code applies and
-> round-trips byte-identically, and 41 logic checks pass with Gecko's globals stubbed —
-> that is the whole of what is known.
->
-> **The next session does this before starting anything new:**
->
-> 1. **Build it.** `env -u CLAUDECODE -u CLAUDE_CODE ./build/bootstrap.sh build`
->    (the env-unset is required or `mach` hides its errors — see the build-propagation
->    notes). Then `./build/bootstrap.sh fast` so post-import module edits propagate.
-> 2. **Run the L4 probe.** `./build/marionette-verify.py --launch`, then
->    `./build/marionette-phase7.py`. Clear `startupCache` after any rebuild, and launch
->    with `MOZ_DISABLE_CONTENT_SANDBOX=1` for the actor-driven paths (0082 capture,
->    0087 citation metadata).
-> 3. **Fix every bug it finds**, regenerating the affected patch and re-running the
->    round-trip.
-> 4. **Recommit**, then **update these notes**: change the marker above to
->    `<!-- PHASE7-TEST-STATUS: TESTED <commit-sha> -->`, replace this whole block with a
->    one-line "Phase 7 tested and fixed in `<sha>`", and update the matching statements in
->    [VERIFICATION.md](VERIFICATION.md) §4d, [ROADMAP.md](ROADMAP.md) Phase 7,
->    [SHIPPING.md](SHIPPING.md) §3, [FEATURES.md](FEATURES.md),
->    [PLATFORM_PLAN.md](PLATFORM_PLAN.md) and
->    [browser/patches/README.md](../browser/patches/README.md).
->
-> Only then start new work. The 0059 saga is why: four settings panes passed every static
-> gate, shipped, and had never once executed.
+> Phase 7 (patches 0082–0087) has now had its first completed build and its first
+> L4 runtime probe on Apple Silicon. `build/marionette-phase7.py` reports **75/75**.
+> Three defects that only a run could show were found and fixed — the knowledge
+> graph module was created but never registered in `EXTRA_JS_MODULES` (dead in a
+> packaged build while every static gate passed); its entity parser dropped every
+> one-character name; and focus mode left notifications permanently denied because
+> its park pref shipped a default that libpref pruned. Details in
+> [VERIFICATION.md](VERIFICATION.md) §4d and the headers of patches 0083/0084.
 
 **Defects and features.** Everything below is open as of 2026-08-17, consolidated from
 [ROADMAP.md](ROADMAP.md), [MASTER_PLAN.md](MASTER_PLAN.md),
@@ -47,7 +28,7 @@ Two things are deliberately elsewhere:
   Separate products, gated on the browser shipping.
 
 Where we are: **Phases 1–4, 6 and 7 feature-complete** through patch 0087 (2026-08-17)
-— with the caveat that Phase 7's six patches are **written but never built** (§6),
+— Phase 7's six patches are now **built and L4-verified** (§6, 75/75 on 2026-08-27),
 **except** the open Phase 1 **update-service blocker** (see ROADMAP.md — no path to ship a
 security fix until `updates.kavacha.app` exists) and the release gates in
 [SHIPPING.md](SHIPPING.md). **Phase 5 (accounts and sync) has not started** and is now
@@ -315,7 +296,7 @@ model must be off by default, clearly labeled, and per-request opt-in. Patch 007
 endpoint guarantee holds for all of Phase 6 — page text, questions and tab titles reach
 `kavacha.ai.endpoint` or nowhere.
 
-## 6. Phase 7 — Browser, later (6 of 6 written 2026-08-17, patches 0082–0087; **unbuilt**)
+## 6. Phase 7 — Browser, later (6 of 6, patches 0082–0087; **built + L4-verified 2026-08-27**)
 
 Browser features, no servers, no accounts. Built ahead of its post-v1.0 slot because
 none of it needs an account; **it moves no release gate**. Per-item reasoning in
@@ -335,17 +316,17 @@ none of it needs an account; **it moves no release gate**. Per-item reasoning in
 
 **Open, and stated rather than implied:**
 
-- [ ] **A completed build of 0082–0087 — this comes first, and has never happened.**
-      The series round-trips byte-identically over 50 files, and a build *attempt*
-      caught one real defect no static gate can (an unsorted `EXTRA_JS_MODULES` list
-      that fails the `moz.build` read outright). But neither attempt finished: the
-      development machine runs out of RAM and thrashes swap, so a full Gecko build
-      does not complete there. Until it does, the compile itself is unproven.
-- [ ] **Functional (L4) verification of 0082–0087**, blocked on the item above.
-      **No runtime probe has driven any of the six features**, and the probe that
-      would (`build/marionette-phase7.py`) is written and waiting. Given the 0059
-      saga — four panes that were present, packaged and dead — this is the item that
-      matters most in this section. See [VERIFICATION.md](VERIFICATION.md) §4d.
+- [x] **A completed build of 0082–0087** (2026-08-27, Apple Silicon, ~57 min). The
+      first build caught nothing extra by itself; the *probe* did the finding. Note the
+      series carries TWO distinct unsorted/omitted `EXTRA_JS_MODULES` bugs: the Workflows
+      one fixed pre-commit, and the KnowledgeGraph one fixed now (0083) — the module was
+      created but never registered, so it never packaged.
+- [x] **Functional (L4) verification of 0082–0087** — `build/marionette-phase7.py`
+      **75/75** on the fixed build, launched with `MOZ_DISABLE_CONTENT_SANDBOX=1` on a
+      fresh profile. Three defects found and fixed (graph registration, entity-name
+      guard, focus notification-restore pref pruning); re-probed clean. Exactly the 0059
+      class — present, packaged, and (for the graph) dead — caught this time by a run.
+      See [VERIFICATION.md](VERIFICATION.md) §4d.
 - [ ] **REST client.** Deliberately not built (0087). A developer tool with its own
       request store, auth handling and history is a product inside a product, and the
       roadmap already calls this row a marketplace-bundle candidate. This is the item
@@ -404,11 +385,10 @@ Corrections the work forced, recorded so they are not re-litigated:
    source the day it landed.
 3. ~~Blocked-today badge surface~~ — **done** (0077).
 4. ~~Phase 2/3 follow-ups (§3)~~ — **done** (0051–0058).
-5. **Build Phase 7, then functionally verify it (§6).** Six new features, four new
-   `about:` pages, two new SQLite stores and a new sidebar — all of it written, none of
-   it compiled to completion, none of it driven at runtime. It needs a machine with the
-   memory for a full Gecko build; the current one swaps. The 0059 saga is the argument:
-   everything was present, packaged, and dead. This now outranks the items below it.
+5. ~~Build Phase 7, then functionally verify it (§6).~~ — **done** (2026-08-27):
+   first completed build + `marionette-phase7.py` 75/75, three run-only defects fixed.
+   The 0059 argument held: the knowledge graph was present, packaged, and dead until the
+   probe drove it.
 6. **Phase 5 — accounts and sync** (§4) is now the only unstarted phase, and it is
    the one with real prerequisites: a service to run, and an external crypto review
    before sync can ship (SHIPPING R9). The one piece that does **not** depend on the

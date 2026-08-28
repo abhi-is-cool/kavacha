@@ -600,7 +600,7 @@ actor child scripts do not load on a local macOS build (content sandbox vs. syml
 out of the bundle — Zen's own actors fail the same way), so patch 0078's *passive*
 capture has never run in a default local session. See [VERIFICATION.md](VERIFICATION.md) §4c.
 
-## Phase 7 — Browser, later (post-v1.0) — **built 2026-08-17 (patches 0082–0087)**
+## Phase 7 — Browser, later (post-v1.0) — **built + L4-verified 2026-08-27 (patches 0082–0087)**
 
 Browser work deliberately scheduled after v1.0. Still browser features — patches in
 `browser/patches/`, no servers, no accounts. Built ahead of its slot because none of it
@@ -636,8 +636,10 @@ gates**, which are still blocked on the update service (R1) and signing (R2).
       browser blocked and the check never trusts that cleanup ran. Sessions survive a
       restart (quitting is the obvious way to defeat a self-imposed block) but ending
       is one click and the block page says so — a tool for attention, not a lock. Top
-      -level pages only, matched on eTLD+1; notification defaults are restored exactly,
-      which is patch 0066's lesson applied before the bug rather than after.
+      -level pages only, matched on eTLD+1; notification defaults are restored exactly
+      (verified 2026-08-27, after a fix — the first draft shipped a park-pref default
+      that libpref pruned, which left notifications denied after the first session; the
+      probe caught it, so patch 0066's lesson landed a run late, not before the bug).
       `about:focus` is both the wall and the blocklist editor.
 - [x] **Automation framework + `about:workflows`** (ADR 0017 + patch
       `0085-automation-workflows.patch`; [automation/](../automation/README.md)):
@@ -672,19 +674,18 @@ gates**, which are still blocked on the update service (R1) and signing (R2).
       auth and history, which is the marketplace-bundle candidate this row was about.
       Tracked in [REMAINING_WORK.md](REMAINING_WORK.md) §6.
 
-**Verification status — read this before trusting the checkmarks above.** The series
-round-trips byte-identically over 50 files with zero rejects, and 41 logic checks pass
-against the real modules with Gecko's globals stubbed (`test/phase7-logic/`). What has
-**not** happened: **no build of this series has completed**, and therefore **no
-functional (L4) verification has run at all**. The first attempt failed outright on an
-unsorted `EXTRA_JS_MODULES` list (fixed); the second got past `moz.build` into the C++
-compile and was stopped part-way, because a full Gecko build on the development machine
-exhausts RAM and thrashes swap. The Marionette probe (`build/marionette-phase7.py`) is
-written and waiting for a machine that can produce a build.
+**Verification status.** Built and L4-verified 2026-08-27 (Apple Silicon):
+`build/marionette-phase7.py` reports **75/75** on a fresh profile with
+`MOZ_DISABLE_CONTENT_SANDBOX=1`, and the base chrome probe is clean. The series still
+round-trips byte-identically with zero rejects and the 41 logic checks still pass
+(`test/phase7-logic/`). The first real run found three defects no static gate caught —
+the knowledge-graph module was created but never registered (dead in a packaged build),
+its entity parser dropped one-character names, and focus mode left notifications
+permanently denied via a pruned park-pref default — all fixed and re-probed clean.
 
-Treat every Phase 7 row above as *code written and statically checked*, not as *code
-observed to work*. Patch 0059 is the standing reminder of what that distinction costs:
-four settings panes passed every static gate and had never once executed. See
+Every Phase 7 row above is now *code observed to work* under the L4 probe, not merely
+statically checked. Patch 0059 is why that distinction was worth holding to the end: the
+knowledge graph passed every static gate and was dead until a run drove it. See
 [VERIFICATION.md](VERIFICATION.md) §4d.
 
 ## Ecosystem (Year 2+) — separate document, deliberately

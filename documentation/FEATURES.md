@@ -113,9 +113,11 @@ do, which is the one thing the consumer product promises never to happen.
 ~~Later (browser, post-v1.0)~~ — **all written 2026-08-17**, patches 0082–0087, ahead of
 their post-v1.0 slot because none of them needs an account: notes system, web clipper,
 knowledge graph, automation, focus mode, offline mode (the text half), tab history tree.
-**"Shipped" in the rows above means a patch exists and applies — not that it has run.**
-Unlike every earlier phase in this file, **no build of 0082–0087 has completed and no
-runtime probe has driven any of them** — see ROADMAP "Phase 7" and VERIFICATION §4d.
+**"Shipped" in the rows above is now backed by a run.** Patches 0082–0087 were built
+and L4-verified 2026-08-27 — `build/marionette-phase7.py` reports 75/75, after fixing
+three defects the first run exposed (a knowledge-graph module that never registered, an
+entity-name guard, and a focus-mode pref libpref pruned). See ROADMAP "Phase 7" and
+VERIFICATION §4d.
 Still open from that row: the REST client, DOM-anchored highlights, PDF capture, and
 full-fidelity offline archiving.
 

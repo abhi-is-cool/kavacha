@@ -1,5 +1,10 @@
 # Zen Spaces Audit — Kavacha Workspace Identities (Phase 2)
 
+> **Historical (2026-09-19).** The verdict below — adopt Zen's space object — is superseded
+> by [ADR 0021](decisions/0021-kavacha-owned-workspaces.md): Kavacha now owns the workspaces
+> model on Firefox primitives. This file stays as the record of why the schema fields are
+> what they are.
+
 *2026-07-12. Audited against upstream Zen source (`browser/zen-upstream/src/zen/`)
 and Kavacha's [`ui/workspaces/workspace.schema.json`](../ui/workspaces/workspace.schema.json).
 First Phase 2 deliverable per [ROADMAP.md](ROADMAP.md) and

@@ -13,19 +13,22 @@ is never modified**.
 
 ## How Kavacha attaches to upstream
 
-This is an **overlay repository** — no vendored Firefox/Zen source. See
-[build/README.md](../build/README.md).
+This is an **overlay repository** — no vendored Firefox source. See
+[build/README.md](../build/README.md). Since 2026-09-19 the base is **Firefox ESR directly**
+([ADR 0020](decisions/0020-firefox-esr-direct-overlay.md)); the Zen Browser base is retired.
 
 ```
-kavacha repo ──patches/branding/prefs──▶ zen-upstream (surfer) ──▶ firefox source ──▶ binary
+kavacha repo ──overlay + patches + branding + prefs──▶ browser/firefox-source (mach) ──▶ binary
 ```
 
 Mechanisms, in order of preference (most to least update-resilient):
 
 1. **Prefs** — `privacy/tracker-controls/kavacha.js`, shipped as defaults
 2. **Branding config** — `browser/branding/kavacha/branding.json`
-3. **Chrome overlays** — CSS/JS in `ui/` and `customization/` loaded into browser chrome
-4. **Patches** — `browser/patches/*.patch`, last resort, one logical change each
+3. **Overlay files** — everything Kavacha authors, under `browser/overlay/` mirroring
+   Firefox's tree (`browser/components/kavacha/…`), copied onto the checkout, never a patch
+4. **Patches** — `browser/patches/*.patch`, only for files Firefox tracks, last resort, one
+   logical change each
 
 ## Key subsystem designs
 
@@ -80,11 +83,11 @@ which is the review checkpoint that keeps the boundary meaningful.
 
 Significant choices are ADRs in [decisions/](decisions/):
 
-- [0001 — Fork Zen via an overlay repo, never touch Gecko](decisions/0001-fork-zen-overlay.md)
+- [0001 — Fork Zen via an overlay repo, never touch Gecko](decisions/0001-fork-zen-overlay.md) — *superseded by 0020 on the choice of base; overlay-repo and never-touch-Gecko stand*
 - [0002 — Enforce privacy through default prefs, not locks](decisions/0002-privacy-via-default-prefs.md)
 - [0003 — Workspaces map to Firefox containers](decisions/0003-workspaces-on-containers.md) — *superseded on defaults by patch 0038: per-space containers are opt-in, off by default*
 - [0004 — Federated universal search](decisions/0004-universal-search-federated.md)
-- [0005 — Per-workspace isolation: bookmarks isolate, history attributes, passwords global](decisions/0005-workspace-isolation.md)
+- [0005 — Per-workspace isolation: bookmarks isolate, history attributes, passwords global](decisions/0005-workspace-isolation.md) — *decision 1 (bookmarks via Zen's table) superseded by 0021; history attribution and global passwords stand*
 - [0006 — Workspace state-history substrate (snapshots)](decisions/0006-workspace-state-history.md)
 - [0007 — Privacy Center over Firefox's blocking ledger](decisions/0007-privacy-center.md)
 - [0008 — Customization engines (layout + theme)](decisions/0008-customization-engines.md)
@@ -99,3 +102,5 @@ Significant choices are ADRs in [decisions/](decisions/):
 - [0017 — Automation: workflows are data, never code](decisions/0017-automation-workflows.md)
 - [0018 — Focus sessions: a period, not a mode](decisions/0018-focus-sessions.md)
 - [0019 — The tab history tree: keeping the branches Gecko truncates](decisions/0019-tab-history-tree.md)
+- [0020 — Overlay Firefox ESR directly; build with mach; Windows is a native target](decisions/0020-firefox-esr-direct-overlay.md)
+- [0021 — Kavacha owns the workspaces model](decisions/0021-kavacha-owned-workspaces.md)

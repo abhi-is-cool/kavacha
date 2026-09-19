@@ -45,9 +45,14 @@ user-visible surface of the index and starts now (see Phase 3 checklist).
 ## Phase 1 — Foundation (Weeks 1–4)
 
 - [x] Repository created; structure, license (MPL-2.0), docs, ADRs
-- [x] Update strategy defined (overlay repo + ordered patches — see build/README.md)
+- [x] Update strategy defined (overlay repo + ordered patches — see build/README.md).
+      **Re-based 2026-09-19:** the Zen base is retired for a direct Firefox ESR 153
+      overlay built with `mach` ([ADR 0020](decisions/0020-firefox-esr-direct-overlay.md));
+      the Phase 1–7 work below is being ported milestone by milestone (M0–M5, see
+      [REMAINING_WORK.md](REMAINING_WORK.md)).
 - [x] Bootstrap tooling (`build/bootstrap.sh`: setup/build/ui/start/update)
-- [x] CI skeleton (validate on push; nightly build matrix for win/mac/linux)
+- [x] CI skeleton (validate on push; nightly build matrix — mac/linux since 2026-07-13,
+      Windows leg removed then and returning with the Firefox base)
 - [x] Privacy default prefs (`privacy/tracker-controls/kavacha.js`)
 - [x] Privacy prefs shipped inside the app (appended to branding prefs by
       generate-branding.sh; verified in Kavacha.app defaults/preferences, 2026-07-09)
@@ -64,9 +69,9 @@ user-visible surface of the index and starts now (see Phase 3 checklist).
       (174 MB DMG + update MAR) built and uploaded by run 29123975884 (2026-07-10).
       **Linux landed 2026-07-13**: `kavacha-nightly-linux` (165 MB) — fixes were
       resource caps (-j2, no debug symbols; hosted runners OOM-kill otherwise).
-      Windows native is upstream-broken at this pin (libwebrtc rule missing when
-      linking xul.dll; Zen only cross-compiles Windows) — stays experimental
-      until we adopt Zen's win-cross recipe.
+      Windows native was upstream-broken at the Zen pin (libwebrtc rule missing when
+      linking xul.dll; Zen only cross-compiles Windows) — resolved by leaving Zen
+      (ADR 0020); a native Windows build is the first port milestone (M1).
 - [ ] **Update service (`updates.kavacha.app`) — blocker for any public release**
       (added 2026-07-31). `build/generate-branding.sh` points `MOZ_APPUPDATE_HOST`
       at `updates.kavacha.app` and CI already produces update MARs — but nothing
@@ -600,7 +605,7 @@ actor child scripts do not load on a local macOS build (content sandbox vs. syml
 out of the bundle — Zen's own actors fail the same way), so patch 0078's *passive*
 capture has never run in a default local session. See [VERIFICATION.md](VERIFICATION.md) §4c.
 
-## Phase 7 — Browser, later (post-v1.0) — **built 2026-08-17 (patches 0082–0087)**
+## Phase 7 — Browser, later (post-v1.0) — **written 2026-08-17 (patches 0082–0087), never built or run**
 
 Browser work deliberately scheduled after v1.0. Still browser features — patches in
 `browser/patches/`, no servers, no accounts. Built ahead of its slot because none of it

@@ -1,90 +1,99 @@
 # Kavacha Build System
 
-Kavacha is an **overlay repository**: it does not vendor Firefox or Zen source. The
-bootstrap script fetches upstream Zen Browser into `browser/zen-upstream/` (gitignored),
-applies Kavacha's patches, and delegates to Zen's `surfer`-based build system, which in
-turn downloads and patches the matching Firefox source.
+Kavacha is an **overlay repository**: it does not vendor Firefox source. `build/bootstrap.sh`
+fetches **Firefox ESR** at a pinned commit into `browser/firefox-source/` (gitignored), lays
+Kavacha's overlay files and patches on it, generates the branding, and drives Firefox's own
+`./mach`. There is no intermediate fork and no `surfer` — see
+[ADR 0020](../documentation/decisions/0020-firefox-esr-direct-overlay.md) for why the Zen base
+was retired on 2026-09-19.
 
 ```
-Kavacha repo (this)          browser/zen-upstream/        Firefox source
-  patches + branding   -->     Zen (surfer build)    -->    Gecko (untouched)
+Kavacha repo (this)                      browser/firefox-source/          binary
+  overlay + patches + branding + prefs --->  Firefox ESR @ pin (mach) --->  kavacha(.exe/.app)
 ```
+
+> **Status:** this document describes the build system as designed in ADR 0020. Until port
+> milestone M1 has produced an observed build, treat every command below as the contract
+> `bootstrap.sh` is being written to, not as something that has run. M1 replaces this note
+> with the first build transcript's facts (times, paths, the Visual Studio answer).
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `./build/bootstrap.sh` | Check prereqs, clone Zen, `npm i`, `npm run init` (fetch Firefox source), language packs |
-| `./build/bootstrap.sh build` | **Import → brand → build.** Full build; first build 1–3 hours |
-| `./build/bootstrap.sh build-only` | Compile what is already in `engine/`, skipping the import. Only when you know nothing under `src/` changed |
-| `./build/bootstrap.sh ui` | Fast UI-only rebuild (`npm run build:ui`) |
-| `./build/bootstrap.sh start` | Launch the built browser |
+| `./build/bootstrap.sh setup` | Check prereqs → fetch Firefox at `FIREFOX_COMMIT` (depth 1) → write `mozconfig` → copy `browser/overlay/` onto the checkout and commit it locally → apply `browser/patches/` → generate branding → `./mach --no-interactive bootstrap --application-choice browser` |
+| `./build/bootstrap.sh build` | `./mach build`. First build 1–4 h; incremental builds minutes |
+| `./build/bootstrap.sh fast` | `./mach build faster` — repackages JS/CSS/FTL/XHTML/jar content without compiling. Use after any overlay-only edit |
+| `./build/bootstrap.sh start` | `./mach run -- -purgecaches` |
+| `./build/bootstrap.sh package` | `./mach package`; on Windows also the NSIS installer |
 | `./build/bootstrap.sh brand` | Regenerate branding only |
-| `./build/bootstrap.sh update` | Reset + pull upstream, re-apply Kavacha patches |
+| `./build/bootstrap.sh update` | Reset the checkout to the pin (keeps the objdir), re-copy overlay, re-apply patches, re-brand |
+| `./build/bootstrap.sh overlay-export` | Copy overlay-path files edited in the checkout back into `browser/overlay/` |
+| `./build/bootstrap.sh overlay-check` | Non-zero if `browser/overlay/` and the checkout differ |
+| `./build/bootstrap.sh patch-export NNNN-name` | `git diff HEAD -- <files>` in the checkout → `browser/patches/NNNN-name.patch`, with the required header |
+| `./build/bootstrap.sh roundtrip` | Reverse newest→oldest, forward oldest→newest in a scratch worktree; byte-identical or fail |
 
-### Why `build` imports first
+Run `mach` commands as `env -u CLAUDECODE -u CLAUDE_CODE ./build/bootstrap.sh build` when an
+agent is driving: `mach` detects one and suppresses the real error, leaving `*** Fix above
+errors` with nothing above it.
 
-`surfer build` calls `patchCheck()`, `applyConfig()` and `genericBuild()` — it
-**never** calls `applyPatches()`. Files under `src/**/*.patch` therefore reach
-`engine/` only via `surfer import`. Building without importing produces a
-silently *wrong* binary that looks fine: patches 0031, 0032 and 0038 were absent
-from every build for two weeks because of this, and a full rebuild reproduced a
-byte-identical `preferences.xhtml`.
+## How the pieces attach
 
-Surfer's own `patchCheck()` cannot catch it — it compares only the **count** of
-`.patch` files, so edits *within* an existing patch are invisible to it. Since
-2026-08-01 `bootstrap.sh build` always imports first (defect D0d).
-
-Branding must run **after** the import, because the import overwrites the
-generated branding directory. `build` also restores `engine/build/moz.build`
-before importing: `generate-branding.sh` rewrites its update-host line in place,
-which collides with Zen's own `src/build/moz-build.patch` and otherwise makes
-every later import fail with "patch does not apply" (defect D0c).
-
-`surfer import` copies `src/**` and applies the patch series, but it does
-**not** touch the top-level `locales/` tree. An FTL string added by a patch
-therefore applies cleanly, compiles, packages — and ships a control with **no
-label**, because its `data-l10n-id` resolves against a stale engine copy. This
-was measured, not assumed: a full import that applied all 246 patches left
-`engine/browser/locales/en-US/browser/preferences/zen-preferences.ftl`
-byte-identical (`40c1eb65e4a0` → `40c1eb65e4a0`) while the repo copy carried four
-new keys. `build` now runs `sync_locales()` after the import, copying
-`locales/en-US/browser/**` onto `engine/browser/locales/en-US/**` (defect D0e).
-
-Note the failure shape: applying, compiling and packaging prove nothing about
-behaviour, and *geometry* proves nothing about *text*. A probe that measures a
-control's bounding rect will report a blank checkbox as present and correct.
-
-**Never** use `dist/bin/browser/modules/*.mjs` to check whether a build is
-current — on macOS those are symlinks through `engine/` to `src/`, so they match
-even with no build at all. Check a genuinely preprocessed artifact such as
-`Kavacha.app/Contents/Resources/browser/chrome/browser/content/browser/preferences/preferences.xhtml`,
-or the packaged `browser/defaults/preferences/firefox-branding.js`.
+- **Overlay** (`browser/overlay/`) mirrors Firefox's tree: `browser/components/kavacha/`
+  holds one `moz.build`, one `components.conf`, one `jar.mn`, every `Kavacha*.sys.mjs`, every
+  `about:` page and every stylesheet; `browser/locales/en-US/browser/kavacha/` holds the FTL
+  files. `setup` copies it in and commits it on top of the pin, so inside the checkout
+  `git diff HEAD` is exactly the patch series and `git diff <pin>..HEAD` is exactly the
+  overlay.
+- **Patches** (`browser/patches/`) touch only files Firefox tracks — wiring `DIRS`, one
+  `browser.xhtml` include, the Settings panes, the search config. Target: under ten.
+- **Branding** is generated, not committed: `generate-branding.sh` renders
+  `browser/branding/kavacha/` inside the checkout from `browser/branding/kavacha/branding.json`
+  + `assets/logo.png`, using Firefox's `browser/branding/unofficial` as the template — PNG
+  sizes, `.ico` (Pillow), `.icns` (macOS), NSIS bitmaps, `branding.nsi`,
+  `VisualElementsManifest.xml`, `brand.ftl/.dtd/.properties`, and `pref/firefox-branding.js`
+  with `privacy/tracker-controls/kavacha.js` + `ui/defaults/kavacha-ux.js` appended (Firefox
+  packages that file as application defaults) and `app.update.url` pointed at
+  `updates.kavacha.app`.
+- **mozconfig** is written by `setup` per OS: `--enable-application=browser`,
+  `--enable-bootstrap`, `--with-branding=browser/branding/kavacha`, `--with-app-name=kavacha`,
+  `--with-app-basename=Kavacha`, `--with-distribution-id=app.kavacha`, release/optimize, no
+  tests, no crash reporter, `--enable-update-channel=$KV_CHANNEL`; Windows adds
+  `--disable-default-browser-agent` and `--disable-maintenance-service`; sccache when present.
 
 ## Prerequisites
 
-- ~30 GB free disk
-- Git, Python 3, Node.js 21+, Rust/Cargo, sccache
-- **macOS:** Xcode Command Line Tools (`xcode-select --install`)
-- **Windows:** MozillaBuild + 7-Zip on PATH, Visual Studio "Desktop development with C++"
-- **Linux:** standard build essentials (gcc/clang, pkg-config, GTK dev headers)
+- ~40 GB free disk, Git. `mach bootstrap` (via `--enable-bootstrap`) fetches clang, Rust,
+  cbindgen, nasm and node itself.
+- **macOS:** Xcode Command Line Tools (`xcode-select --install`).
+- **Windows:** [MozillaBuild](https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe)
+  installed to `C:\mozilla-build`; run every command from `C:\mozilla-build\start-shell.bat`
+  (`bootstrap.sh` refuses to run outside it — Git Bash lacks the Python and MSYS2 `mach`
+  needs). `git config --global core.longpaths true` and `core.autocrlf false`. Whether a
+  Visual Studio install is also required is the first thing M1 answers; the hypothesis is
+  that `--enable-bootstrap` fetches the packaged MSVC toolchain, with VS 2022 Build Tools
+  ("Desktop development with C++" + Windows 11 SDK) as the fallback.
+- **Linux:** build essentials (gcc/clang, pkg-config), GTK 3 dev headers, `xvfb` for headless
+  probes.
+- Optional: `sccache` (used automatically when on PATH), Python `pillow` for icon rendering
+  (`pip install pillow`; required by `generate-branding.sh`).
 
-## Patch workflow
+## Editing workflow
 
-Kavacha changes to upstream files are ordered patches in `browser/patches/`:
-
-1. Make your change inside `browser/zen-upstream/` and verify it builds.
-2. Export it: `git -C browser/zen-upstream diff > browser/patches/NNNN-short-name.patch`
-3. Reset upstream (`git -C browser/zen-upstream checkout -- .`) and confirm
-   `./build/bootstrap.sh update` re-applies it cleanly.
-
-Patches are a last resort — prefer prefs (`privacy/tracker-controls/`), branding config
-(`browser/branding/`), and chrome CSS/JS overlays, all of which survive upstream updates
-without conflicts.
+1. Edit in `browser/firefox-source/`. Overlay-path files: `./build/bootstrap.sh overlay-export`
+   copies them back into `browser/overlay/`; commit them like any file. Tracked Firefox files:
+   `./build/bootstrap.sh patch-export NNNN-name`, then `roundtrip` must pass.
+2. Rebuild with `fast` (overlay-only changes) or `build`, then re-run the relevant probe:
+   `build/marionette-verify.py --launch`, then `build/marionette-verify.py` /
+   `marionette-substrate.py` / `marionette-phase7.py`. Purge `<profile>/startupCache` after a
+   rebuild (`--purge-cache`) or `ChromeUtils.importESModule` keeps returning the stale module.
+3. Never check whether a build is current by looking at files in `dist/bin` that may be
+   symlinks into the source tree; check a genuinely preprocessed artifact such as the packaged
+   `browser/defaults/preferences/firefox-branding.js`.
 
 ## Upstream tracking strategy
 
-- Zen tracks Firefox **release/ESR**; Kavacha tracks Zen's `stable` tags.
-- On each Zen release: `./build/bootstrap.sh update`, fix any patch conflicts, run the
-  test suite, cut a Kavacha Nightly.
-- Firefox security point-releases flow in through Zen — never skip them.
+- Kavacha pins a commit on Firefox's `esr153` branch (`FIREFOX_COMMIT` in `bootstrap.sh`).
+  Security point releases: bump the pin, `./build/bootstrap.sh update`, fix any patch
+  conflicts, run the probes, cut a Nightly. Never skip one.
+- The next ESR is a deliberate migration, planned like the move off Zen was.

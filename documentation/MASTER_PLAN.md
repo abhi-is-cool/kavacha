@@ -61,7 +61,8 @@ Privacy gets users interested. Customization makes them stay. The goal:
 
 ## Technology Stack
 
-- **Browser:** Zen Browser fork on Firefox ESR — C++, Rust, JavaScript, CSS, HTML
+- **Browser:** overlay on Firefox ESR (built with `mach`; Zen base retired 2026-09-19,
+  [ADR 0020](decisions/0020-firefox-esr-direct-overlay.md)) — C++, Rust, JavaScript, CSS, HTML
 - **Backend:** Rust services (auth, sync, encryption, accounts), PostgreSQL, Redis
 - **Infrastructure:** GitHub Actions, Cloudflare, AWS/Fly.io initially; dedicated later
 

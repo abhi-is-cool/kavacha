@@ -13,33 +13,38 @@ and the conventions below keep it maintainable as it grows.
    request to a third party, enables telemetry, or weakens a default in
    `privacy/tracker-controls/` must be flagged in the PR description and reviewed
    explicitly.
-3. **Stay rebasable on upstream.** Kavacha tracks Zen Browser, which tracks Firefox ESR.
-   Prefer overlay files and prefs over invasive patches; when a patch is unavoidable,
-   keep it minimal and documented (see [build/README.md](build/README.md)).
+3. **Stay rebasable on upstream.** Kavacha tracks Firefox ESR directly, pinned by commit.
+   Everything Kavacha authors is an overlay file under `browser/overlay/`; a patch is only
+   for a file Firefox itself tracks, kept minimal and documented (see
+   [build/README.md](build/README.md)).
 
 ## Development workflow
 
 ```bash
-./build/bootstrap.sh        # one-time setup: fetch upstream, install deps
+./build/bootstrap.sh setup  # one-time: fetch Firefox at the pin, overlay, patches, branding, mach bootstrap
 ./build/bootstrap.sh build  # full build
-./build/bootstrap.sh ui     # fast rebuild for UI-only changes
+./build/bootstrap.sh fast   # repackage after JS/CSS/FTL/XHTML-only changes
 ./build/bootstrap.sh start  # run
 ```
 
-## Patch workflow
+## Overlay and patch workflow
 
-Kavacha-specific changes to upstream files live in `browser/patches/` as ordered,
-numbered patches:
+Kavacha's own files live in `browser/overlay/`, mirroring Firefox's tree
+(`browser/overlay/browser/components/kavacha/…`). Edit them in the checkout, then
+`./build/bootstrap.sh overlay-export` copies them back; commit the result like any file.
+
+Changes to files Firefox tracks are ordered, numbered patches in `browser/patches/`:
 
 ```
-browser/patches/0001-branding-kavacha.patch
-browser/patches/0002-disable-telemetry-endpoints.patch
+browser/patches/0001-build-wire-kavacha-component.patch
+browser/patches/0002-browser-xhtml-kavacha-include.patch
 ```
 
-- One logical change per patch.
+- One logical change per patch; a patch never creates a Kavacha-authored file.
 - Each patch starts with a comment block: what it does, why an overlay/pref couldn't
   do it, and which upstream files it touches.
-- After an upstream update, patches must apply cleanly (`./build/bootstrap.sh` verifies).
+- Regenerate with `./build/bootstrap.sh patch-export NNNN-name`, then
+  `./build/bootstrap.sh roundtrip` must pass (reverse/forward, byte-identical).
 
 ## Commit conventions
 

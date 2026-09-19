@@ -52,8 +52,8 @@ Everything follows from that:
 
 | Thing | Path |
 |---|---|
-| Engine | `browser/zen-upstream/src/zen/common/sys/KavachaWorkflows.sys.mjs` |
-| Builder (`about:workflows`) | `browser/zen-upstream/src/zen/kavacha-workflows/` |
+| Engine | `browser/overlay/browser/components/kavacha/modules/KavachaWorkflows.sys.mjs` (Zen-era path: `patches-zen/` 0085) |
+| Builder (`about:workflows`) | `browser/overlay/browser/components/kavacha/content/workflows/` (Zen-era path: `patches-zen/` 0085) |
 | Documents | profile `kavacha-workflows.json` |
 | Schema (design artifact) | [workflow.schema.json](workflow.schema.json) |
 

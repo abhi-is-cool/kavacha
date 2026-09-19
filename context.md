@@ -1,3 +1,8 @@
+> **Superseded 2026-09-19.** The task described below (build Phase 7 under Zen on a Mac) no
+> longer applies: Kavacha is being re-platformed onto Firefox ESR 153 with native Windows
+> first — see `documentation/decisions/0020-firefox-esr-direct-overlay.md` and the READ FIRST
+> block in `documentation/REMAINING_WORK.md`. Kept until M5 for its harness notes.
+
 # Session handoff — Windows box → Mac
 
 **Written 2026-08-27.** Scratch file for the machine switch. Delete it once Phase 7 is

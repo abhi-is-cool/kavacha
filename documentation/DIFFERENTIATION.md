@@ -8,26 +8,26 @@ the internet* — with room to become an ecosystem rather than another Firefox f
 The full annotated feature list lives in [FEATURES.md](FEATURES.md); this document is
 the strategic frame around it.
 
-This document is grounded in an inventory of Zen's actual source tree
-(`browser/zen-upstream/src/zen/`, Firefox 152.x, 2026-07): what we inherit for free,
-and where Kavacha must add value Zen doesn't (and won't) provide.
+This document was originally grounded (2026-07) in an inventory of Zen's source tree: what
+Kavacha inherited for free and where it had to add value. **Since 2026-09-19 Kavacha overlays
+Firefox ESR directly** ([ADR 0020](decisions/0020-firefox-esr-direct-overlay.md)); the
+comparison with Zen below is now competitive positioning, not an inheritance map.
 
-## What Zen already ships — inherit, don't rebuild
+## What Firefox provides — use, don't rebuild
 
-| Zen module | Feature | Master Plan phase it satisfies |
-|---|---|---|
-| `spaces`, `space-routing` | Workspaces + URL→workspace routing rules | Phase 2 (workspaces) |
-| `tabs` (vertical), `folders`, `live-folders` | Vertical tabs, tab groups | Phase 2 (tabs/groups) |
-| `split-view`, `glance`, `compact-mode` | Power-user viewing modes | Phase 2 (bonus) |
-| command palette (`zen-command-palette`) | Command palette | Phase 2 (palette) |
-| `mods` | Community theme/mod store | Phase 3 (partially) |
-| `boosts` | Per-site CSS/JS injection | Phase 3 (partially) |
-| `kbs` | Keyboard shortcut editor | Phase 3 (partially) |
-| `sessionstore` | Session/tab persistence | Phase 2 (tab memory, partially) |
+| Firefox feature | What Kavacha builds on it |
+|---|---|
+| Containers (`userContextId`) | Per-space cookie/storage isolation (ADR 0003) |
+| `SessionStore` custom tab/window values, `hideTab`/`showTab` | The workspaces model itself (ADR 0021) |
+| Tab groups, pinned tabs | Grouping inside a space; pinned tabs are global across spaces |
+| `sidebar.verticalTabs`, the sidebar | Vertical-tab layout as one pref; Kavacha's AI and Knowledge sidebars register alongside |
+| Built-in light/dark themes, `CustomizableUI` | Theme mode with every Firefox surface following; the ⚙ menu button as a movable widget |
+| Places, `nsIPermissionManager`, content-blocking log | History attribution, the permission manager, the Privacy Center |
+| `about:` modules, JSWindowActors, `EXTRA_JS_MODULES` | Every Kavacha page and module — all vanilla mechanisms |
 
-**Consequence for the roadmap:** Phase 2 shifts from *build* to *verify, harden, and
-extend* (e.g. per-workspace search engine + extension sets on top of Zen spaces).
-Engineering effort moves to the pillars below.
+**What Zen provided and Kavacha now owns:** the workspaces model, the command palette
+surface, first-run welcome, and startup wiring. **What Zen provided and Kavacha
+deliberately dropped:** compact mode, split view, glance, mods/boosts, Zen sync.
 
 ## The four pillars — where Kavacha differentiates
 
@@ -100,18 +100,18 @@ Studio makes users *authors*:
   spacing/typography accents.
 - **Own onboarding/welcome flow** — first-run should tour workspaces + privacy
   dashboard, not Zen's welcome.
-- Zen's features stay (that's inherited machinery); it's the *defaults and skin*
-  that must diverge. Track concrete changes in Phase 3 (Customization Studio +
-  default layout work), where the layout engine makes this cheap.
+- *(2026-09-19)* With the move to a direct Firefox overlay this concern inverts: the
+  risk is now looking like *Firefox* with a theme. The same three answers apply —
+  Kavacha's dashboard, theme and workspaces strip are what the user sees first.
 
 ## Litmus test for new features
 
 Before building anything, it must pass one of:
 
-1. Does Zen already ship it? → inherit and extend, don't rebuild.
+1. Does Firefox already ship it? → use and extend, don't rebuild.
 2. Does it make privacy *verifiable* rather than configurable?
 3. Does it move data/identity ownership from a third party to the user?
 4. Does it turn customization consumers into authors?
 5. Does it use local intelligence no cloud browser can offer privately?
 
-If none apply, it belongs upstream (contribute to Zen), not in Kavacha.
+If none apply, it belongs upstream (contribute to Firefox), not in Kavacha.

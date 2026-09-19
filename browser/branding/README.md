@@ -17,14 +17,19 @@ and build config read from it — never hardcode brand strings elsewhere.
 
 ## Where it plugs in
 
-Zen's build system exposes branding via its `configs/` + `surfer.json` brand entries.
-The Kavacha branding patch (`browser/patches/0001-branding-kavacha.patch`, to be
-generated) adds a `kavacha` brand alongside Zen's existing brands and points the build
-at it.
+`build/generate-branding.sh` renders a complete Firefox branding directory
+(`browser/branding/kavacha/` inside the checkout, untracked) from `branding.json` and
+`assets/logo.png`, using Firefox's `browser/branding/unofficial` as the template, and the
+mozconfig selects it with `--with-branding=browser/branding/kavacha`. Kavacha's default
+prefs (`privacy/tracker-controls/kavacha.js`, `ui/defaults/kavacha-ux.js`) are appended to
+the branding's `firefox-branding.js`, which Firefox packages as application defaults.
 
 ## Asset checklist before first Nightly
 
-- [ ] App icons in all sizes listed in `branding.json → assets.icons`
-- [ ] macOS `.icns` and Windows `.ico`
+- [x] App icons in all PNG sizes (rendered by the generator)
+- [ ] macOS `.icns` (generated on macOS hosts) and Windows `.ico` (generated with Pillow —
+      lands with the Firefox-base build tooling, port milestone M1)
 - [ ] Wordmark SVG
-- [ ] Installer imagery (Windows NSIS sidebar, macOS DMG background)
+- [ ] Installer imagery (Windows NSIS header/watermark bitmaps composed by the generator;
+      macOS DMG background) — hand-made art can replace the generated fallbacks under
+      `assets/`

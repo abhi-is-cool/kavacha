@@ -522,9 +522,10 @@ not exist yet at all:
       opt-in or manual methodology.
 - [ ] **External review of the crypto design** — Phase 5, explicit blocker for
       shipping sync.
-- [ ] **Windows native build** — upstream-broken at this pin (libwebrtc rule
-      missing when linking xul.dll). Experimental until Zen's win-cross recipe
-      is adopted.
+- [ ] **Windows native build** — was upstream-broken at the Zen pin (libwebrtc
+      rule missing when linking xul.dll). Unblocked by ADR 0020 (direct Firefox
+      ESR overlay); checked off only by a build transcript from the Windows host
+      (M1) and then a CI-published installer (M4).
 - [ ] **Tab-switch latency with heavy addon sets** (patch 0004 note) — flagged
       as "keep an eye on", never measured.
 

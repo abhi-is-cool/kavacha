@@ -1,35 +1,37 @@
 # Kavacha — Remaining Work
 
 <!-- PHASE7-TEST-STATUS: UNTESTED -->
-> ## ⛔ READ FIRST — Phase 7 is committed but **UNTESTED**
+> ## ⛔ READ FIRST — the re-platform is in progress; Phase 7 is still **UNTESTED**
 >
-> Patches `0082`–`0087` (Phase 7) were committed **without a completed build and without
-> a single runtime probe**. Two build attempts were made; neither finished, because the
-> development machine runs out of RAM and spends the build in swap. The code applies and
-> round-trips byte-identically, and 41 logic checks pass with Gecko's globals stubbed —
-> that is the whole of what is known.
+> **2026-09-19:** Kavacha is moving off Zen onto a direct **Firefox ESR 153** overlay built
+> with `mach`, with native Windows first ([ADR 0020](decisions/0020-firefox-esr-direct-overlay.md),
+> [ADR 0021](decisions/0021-kavacha-owned-workspaces.md)). The Zen-era series is in
+> `browser/patches-zen/` as reference only. Work proceeds by milestone, each with a gate that
+> must be *observed*, never inferred:
 >
-> **The next session does this before starting anything new:**
+> | | Milestone | Gate | Status |
+> |---|---|---|---|
+> | M0 | ADRs + docs; series moved to `patches-zen/` | docs consistent | **done 2026-09-19** |
+> | M1 | Firefox ESR 153 + Kavacha branding builds and launches on the Windows host | `kavacha.exe` launches; network-silence test passes | open |
+> | M2 | Substrate: startup, workspaces model, palette, welcome, theme tokens, Settings panes | `build/marionette-substrate.py` | open |
+> | M3 | Port the 87 Zen-era patches tier by tier; parity commit deletes `patches-zen/` | per-subsystem L4 recipes re-run | open |
+> | M4 | Three-platform CI incl. Windows installer + Marionette step | one green scheduled run, three assets | open |
+> | M5 | **Phase 7's first-ever probe** (`marionette-phase7.py` on the Windows build) | probe transcript | open |
 >
-> 1. **Build it.** `env -u CLAUDECODE -u CLAUDE_CODE ./build/bootstrap.sh build`
->    (the env-unset is required or `mach` hides its errors — see the build-propagation
->    notes). Then `./build/bootstrap.sh fast` so post-import module edits propagate.
-> 2. **Run the L4 probe.** `./build/marionette-verify.py --launch`, then
->    `./build/marionette-phase7.py`. Clear `startupCache` after any rebuild, and launch
->    with `MOZ_DISABLE_CONTENT_SANDBOX=1` for the actor-driven paths (0082 capture,
->    0087 citation metadata).
-> 3. **Fix every bug it finds**, regenerating the affected patch and re-running the
->    round-trip.
-> 4. **Recommit**, then **update these notes**: change the marker above to
->    `<!-- PHASE7-TEST-STATUS: TESTED <commit-sha> -->`, replace this whole block with a
->    one-line "Phase 7 tested and fixed in `<sha>`", and update the matching statements in
->    [VERIFICATION.md](VERIFICATION.md) §4d, [ROADMAP.md](ROADMAP.md) Phase 7,
->    [SHIPPING.md](SHIPPING.md) §3, [FEATURES.md](FEATURES.md),
->    [PLATFORM_PLAN.md](PLATFORM_PLAN.md) and
->    [browser/patches/README.md](../browser/patches/README.md).
+> Phase 7 (`0082`–`0087`) was committed under Zen **without a completed build and without a
+> single runtime probe**; the marker above flips to `TESTED <sha>` only at M5, and only
+> from a transcript. Until M3 completes, *every* feature in this file is "written under
+> Zen, not yet ported" — nothing below has run on the Firefox base.
 >
-> Only then start new work. The 0059 saga is why: four settings panes passed every static
-> gate, shipped, and had never once executed.
+> **Known regression against the Zen build, accepted deliberately:** per-space bookmarks
+> (ADR 0005 decision 1 relied on Zen's Places side table) are deferred; the schema default
+> was already `isolation.bookmarks: false`. Feature to build later, not a blocker.
+>
+> Harness notes that still apply: `env -u CLAUDECODE -u CLAUDE_CODE` before any `mach`
+> command (it hides errors under an agent); purge `startupCache` in the probe profile after
+> every rebuild; `MOZ_DISABLE_CONTENT_SANDBOX=1` only for the macOS actor paths.
+> The 0059 saga is still why: four settings panes passed every static gate, shipped, and
+> had never once executed.
 
 **Defects and features.** Everything below is open as of 2026-08-17, consolidated from
 [ROADMAP.md](ROADMAP.md), [MASTER_PLAN.md](MASTER_PLAN.md),

@@ -102,10 +102,10 @@ IGNORE = {
 
 
 def macos_binary(app_path):
-    """Resolve a .app bundle to its launchable binary."""
+    """Resolve a .app bundle, or a dist/bin directory, to its launchable binary."""
     if app_path.endswith(".app"):
         macos = os.path.join(app_path, "Contents", "MacOS")
-        for name in ("zen", "kavacha", "firefox"):
+        for name in ("kavacha", "zen", "firefox"):
             cand = os.path.join(macos, name)
             if os.path.exists(cand):
                 return cand
@@ -113,6 +113,12 @@ def macos_binary(app_path):
         for f in os.listdir(macos):
             cand = os.path.join(macos, f)
             if os.access(cand, os.X_OK):
+                return cand
+    if os.path.isdir(app_path):
+        # A dist/bin directory (Windows/Linux): pick the browser binary inside it.
+        for name in ("kavacha.exe", "kavacha", "firefox.exe", "firefox"):
+            cand = os.path.join(app_path, name)
+            if os.path.exists(cand):
                 return cand
     return app_path
 
@@ -130,6 +136,7 @@ def run(app_path, idle_seconds, headless=False):
     with open(os.path.join(profile, "user.js"), "w") as f:
         f.write('user_pref("browser.shell.checkDefaultBrowser", false);\n')
         f.write('user_pref("zen.welcome-screen.seen", true);\n')
+        f.write('user_pref("kavacha.welcome.seen", true);\n')
 
     env = dict(os.environ)
     env["MOZ_LOG"] = "timestamp,nsHostResolver:5,nsHttp:4"
@@ -153,7 +160,9 @@ def run(app_path, idle_seconds, headless=False):
     try:
         time.sleep(idle_seconds)
     finally:
-        proc.send_signal(signal.SIGTERM)
+        # terminate() is SIGTERM on POSIX and TerminateProcess on Windows,
+        # where send_signal(SIGTERM) is not delivered to the browser.
+        proc.terminate()
         try:
             proc.wait(timeout=20)
         except subprocess.TimeoutExpired:

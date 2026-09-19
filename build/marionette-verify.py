@@ -3,41 +3,64 @@
 
 Drives the built browser and reports hard facts instead of screenshots:
   * which Kavacha modules the build actually loaded
-  * whether the top-right menu button exists, and its geometry
-  * the geometry of the chrome containers, to locate the content inset
-    that shows as an accent-coloured frame on the right/bottom edges
+  * whether the Kavacha menu button exists, and its geometry
+  * the geometry of the chrome containers
 
 Usage:
-  1) launch the build with Marionette enabled:
-       ./build/marionette-verify.py --launch
-     (or manually:  <dist>/Kavacha.app/Contents/MacOS/zen -marionette -no-remote \
-                      -profile /tmp/kavacha-mn-profile)
+  1) launch the build with Marionette enabled (binary auto-detected under
+     browser/firefox-source/obj-*/dist/):
+       ./build/marionette-verify.py --launch [--bin PATH] [--purge-cache] [--headless]
   2) then, in another shell:
        ./build/marionette-verify.py
 
+Platform notes:
+  * Windows binary: obj-x86_64-pc-windows-msvc/dist/bin/kavacha.exe
+    macOS:          obj-aarch64-apple-darwin/dist/Kavacha.app/Contents/MacOS/kavacha
+    Linux:          obj-x86_64-pc-linux-gnu/dist/bin/kavacha
+  * --purge-cache deletes <profile>/startupCache: after a rebuild,
+    ChromeUtils.importESModule otherwise keeps returning the stale module.
+  * --no-sandbox sets MOZ_DISABLE_CONTENT_SANDBOX=1 (macOS local builds:
+    JSWindowActor child scripts do not load without it).
+
 No third-party deps: Marionette is length-prefixed JSON over TCP.
+Other probes (marionette-phase7.py, marionette-substrate.py) import the
+Marionette class from this file; keep its constructor defaults stable.
 """
 
+import argparse
+import glob
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 
 HOST, PORT = "127.0.0.1", 2828
-DIST = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "..", "browser", "zen-upstream", "engine",
-    "obj-aarch64-apple-darwin", "dist",
-)
-BIN = os.path.normpath(os.path.join(DIST, "Kavacha.app", "Contents", "MacOS", "zen"))
-PROFILE = "/tmp/kavacha-mn-profile"
+REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+SRC_DIR = os.path.join(REPO_ROOT, "browser", "firefox-source")
+DEFAULT_PROFILE = os.path.join(tempfile.gettempdir(), "kavacha-mn-profile")
+
+
+def find_binary():
+    """Locate the built browser in any objdir; None if no build exists."""
+    patterns = [
+        os.path.join(SRC_DIR, "obj-*", "dist", "bin", "kavacha.exe"),
+        os.path.join(SRC_DIR, "obj-*", "dist", "Kavacha.app", "Contents", "MacOS", "kavacha"),
+        os.path.join(SRC_DIR, "obj-*", "dist", "bin", "kavacha"),
+    ]
+    for pat in patterns:
+        hits = sorted(glob.glob(pat))
+        if hits:
+            return hits[0]
+    return None
 
 
 class Marionette:
-    def __init__(self):
-        self.sock = socket.create_connection((HOST, PORT), timeout=30)
+    def __init__(self, host=HOST, port=PORT):
+        self.sock = socket.create_connection((host, port), timeout=30)
         self.buf = b""
         self.msgid = 0
         self._recv()  # server handshake
@@ -77,9 +100,9 @@ const pick = id => doc.getElementById(id);
 
 const btn = pick("kavacha-menu-button");
 const containers = {};
-for (const sel of ["#navigator-toolbox", "#browser", "#appcontent",
-                   "#tabbrowser-tabbox", "#tabbrowser-tabpanels",
-                   "#zen-sidebar-top-buttons", "#zen-sidebar-top-buttons-customization-target"]) {
+for (const sel of ["#navigator-toolbox", "#nav-bar", "#TabsToolbar", "#browser", "#appcontent",
+                   "#tabbrowser-tabbox", "#tabbrowser-tabpanels", "#sidebar-main",
+                   "#kavacha-spaces-strip"]) {
   const el = doc.querySelector(sel);
   if (el) { containers[sel] = {rect: rect(el), box: box(el)}; }
 }
@@ -88,9 +111,9 @@ if (stack) { containers[".browserStack"] = {rect: rect(stack), box: box(stack)};
 
 // which Kavacha modules are actually loaded in this build
 const loaded = [];
-for (const m of ["KavachaMenu", "KavachaSessionCleanup", "KavachaMarketplace",
-                 "KavachaSDK", "KavachaPluginManager", "KavachaCommandRegistry",
-                 "KavachaThemeEngine", "KavachaLayoutEngine"]) {
+for (const m of ["KavachaStartup", "KavachaWorkspaces", "KavachaMenu", "KavachaSessionCleanup",
+                 "KavachaMarketplace", "KavachaSDK", "KavachaPluginManager",
+                 "KavachaCommandRegistry", "KavachaThemeEngine", "KavachaLayoutEngine"]) {
   try {
     ChromeUtils.importESModule("resource:///modules/" + m + ".sys.mjs");
     loaded.push(m);
@@ -98,6 +121,9 @@ for (const m of ["KavachaMenu", "KavachaSessionCleanup", "KavachaMarketplace",
 }
 
 return JSON.stringify({
+  app: {name: Services.appinfo.name, version: Services.appinfo.version,
+        buildID: Services.appinfo.appBuildID, os: Services.appinfo.OS,
+        brand: (() => { try { return doc.title; } catch (e) { return null; } })()},
   menuButton: btn
     ? {found: true, rect: rect(btn), hidden: btn.hidden,
        parent: btn.parentElement && btn.parentElement.id,
@@ -113,14 +139,33 @@ return JSON.stringify({
 """
 
 
-def launch():
-    os.makedirs(PROFILE, exist_ok=True)
-    print("launching %s with -marionette ..." % BIN)
-    subprocess.Popen([BIN, "-marionette", "-remote-allow-system-access", "-no-remote", "-profile", PROFILE])
-    print("waiting for Marionette on %s:%d ..." % (HOST, PORT))
-    for _ in range(60):
+def launch(args):
+    binary = args.bin or find_binary()
+    if not binary or not os.path.exists(binary):
+        print("no built browser found under browser/firefox-source/obj-*/dist (pass --bin)", file=sys.stderr)
+        return 1
+    profile = args.profile
+    if args.purge_cache:
+        cache = os.path.join(profile, "startupCache")
+        if os.path.isdir(cache):
+            shutil.rmtree(cache)
+            print("purged %s" % cache)
+    os.makedirs(profile, exist_ok=True)
+    env = dict(os.environ)
+    if args.no_sandbox:
+        env["MOZ_DISABLE_CONTENT_SANDBOX"] = "1"
+    cmd = [binary, "-marionette", "-remote-allow-system-access", "-no-remote", "-profile", profile]
+    if args.headless:
+        cmd.append("-headless")
+    print("launching %s\n  profile: %s" % (binary, profile))
+    kwargs = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    subprocess.Popen(cmd, env=env, **kwargs)
+    print("waiting for Marionette on %s:%d ..." % (HOST, args.port))
+    for _ in range(90):
         try:
-            socket.create_connection((HOST, PORT), timeout=1).close()
+            socket.create_connection((HOST, args.port), timeout=1).close()
             print("Marionette is up. Now run:  ./build/marionette-verify.py")
             return 0
         except OSError:
@@ -129,10 +174,23 @@ def launch():
     return 1
 
 
+def parse_args(argv=None):
+    p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    p.add_argument("--launch", action="store_true", help="launch the build with -marionette and wait for the port")
+    p.add_argument("--bin", help="browser binary (default: auto-detect under browser/firefox-source/obj-*/dist)")
+    p.add_argument("--profile", default=DEFAULT_PROFILE, help="profile directory (default: %(default)s)")
+    p.add_argument("--port", type=int, default=PORT)
+    p.add_argument("--purge-cache", action="store_true", help="delete <profile>/startupCache before launching")
+    p.add_argument("--headless", action="store_true", help="launch with -headless (CI)")
+    p.add_argument("--no-sandbox", action="store_true", help="set MOZ_DISABLE_CONTENT_SANDBOX=1 (macOS actor paths)")
+    return p.parse_args(argv)
+
+
 def main():
-    if "--launch" in sys.argv:
-        return launch()
-    m = Marionette()
+    args = parse_args()
+    if args.launch:
+        return launch(args)
+    m = Marionette(HOST, args.port)
     m.call("WebDriver:NewSession", {})
     m.call("Marionette:SetContext", {"value": "chrome"})
     print(m.script(PROBE))

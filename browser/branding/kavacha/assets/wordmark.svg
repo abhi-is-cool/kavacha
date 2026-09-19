@@ -1,0 +1,8 @@
+<!-- Kavacha wordmark. Placeholder: system-font text in the same frame as
+   - Firefox's branding wordmarks (viewBox 372x99, fill from context) so the
+   - about dialog and about:logo surfaces render it in the right colour.
+   - Replace with drawn glyph paths when brand lettering exists. -->
+<svg xmlns="http://www.w3.org/2000/svg" fill="context-fill #F7F6FB" viewBox="0 0 372 99">
+  <text x="0" y="76" font-family="'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif"
+        font-size="80" font-weight="600" letter-spacing="-1">Kavacha</text>
+</svg>

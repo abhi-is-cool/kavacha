@@ -67,12 +67,18 @@ errors` with nothing above it.
   cbindgen, nasm and node itself.
 - **macOS:** Xcode Command Line Tools (`xcode-select --install`).
 - **Windows:** [MozillaBuild](https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe)
-  installed to `C:\mozilla-build`; run every command from `C:\mozilla-build\start-shell.bat`
-  (`bootstrap.sh` refuses to run outside it — Git Bash lacks the Python and MSYS2 `mach`
-  needs). `git config --global core.longpaths true` and `core.autocrlf false`. Whether a
-  Visual Studio install is also required is the first thing M1 answers; the hypothesis is
-  that `--enable-bootstrap` fetches the packaged MSVC toolchain, with VS 2022 Build Tools
-  ("Desktop development with C++" + Windows 11 SDK) as the fallback.
+  installed to `C:\mozilla-build` (4.2.1 verified; ships Python 3.12, MSYS2, NSIS, 7-Zip,
+  mozmake). `git config --global core.longpaths true` and `core.autocrlf false`.
+  **No Visual Studio install is required** — verified 2026-09-19 on this host: with no VS
+  present, `mach bootstrap` downloaded the packaged MSVC toolchain and Windows SDK into
+  `~/.mozbuild/vs` and reported "Your system should be ready to build Firefox for Desktop".
+  You may run `bootstrap.sh` from Git Bash or the MozillaBuild shell: when `$MOZILLABUILD`
+  is unset it re-executes itself under MozillaBuild's MSYS2 via a generated `.cmd` file.
+  (The hop goes through native `cmd.exe` on purpose: Git Bash's MSYS runtime and
+  MozillaBuild's MSYS2 do not pass each other custom environment variables, and Git Bash
+  re-escapes quotes on native command lines — a batch file avoids both.) `mach`'s state
+  lives in `~/.mozbuild` (`MOZBUILD_STATE_PATH` is pinned there explicitly, because
+  Python's `Path.home()` cannot resolve a home directory inside that MSYS2 otherwise).
 - **Linux:** build essentials (gcc/clang, pkg-config), GTK 3 dev headers, `xvfb` for headless
   probes.
 - Optional: `sccache` (used automatically when on PATH), Python `pillow` for icon rendering

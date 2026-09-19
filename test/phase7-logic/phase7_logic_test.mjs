@@ -36,7 +36,9 @@ globalThis.PathUtils = { join: (...a) => a.join("/"), profileDir: "/tmp" };
 globalThis.console = console;
 
 const here = new URL(".", import.meta.url);
-const base = new URL("../../browser/zen-upstream/src/zen/common/sys/", here).href;
+// The real modules live in the overlay (ADR 0020), so this runs with no Firefox
+// checkout at all. Until port milestone M3 moves them there, resolution fails.
+const base = new URL("../../browser/overlay/browser/components/kavacha/modules/", here).href;
 const results = { pass: [], fail: [] };
 const ok = (name, cond, detail) =>
   (cond ? results.pass : results.fail).push(

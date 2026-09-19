@@ -31,7 +31,7 @@ jobs:
       - name: Validate JSON files parse
         run: |
           set -e
-          find . -name '*.json' -not -path './browser/zen-upstream/*' -not -path './node_modules/*' | while read -r f; do
+          find . -name '*.json' -not -path './browser/firefox-source/*' -not -path './node_modules/*' | while read -r f; do
             python3 -m json.tool "$f" > /dev/null || { echo "Invalid JSON: $f"; exit 1; }
           done
 
@@ -54,40 +54,46 @@ jobs:
           sudo apt-get install -y shellcheck
           shellcheck build/*.sh
 
-      - name: Kavacha patches apply cleanly to upstream
+      - name: Overlay modules parse
+        run: |
+          shopt -s globstar nullglob
+          files=(browser/overlay/**/*.mjs browser/overlay/**/*.js)
+          if [ ${#files[@]} -eq 0 ]; then echo "overlay has no scripts yet"; exit 0; fi
+          for f in "${files[@]}"; do node --check "$f"; done
+          echo "${#files[@]} overlay script(s) parse"
+
+      - name: Kavacha patches apply cleanly to Firefox ESR
         run: |
           shopt -s nullglob
           patches=(browser/patches/*.patch)
           if [ ${#patches[@]} -eq 0 ]; then echo "no patches yet"; exit 0; fi
-          # Validate against the PINNED upstream commit, never the moving tip.
-          # This step used to `git clone --depth 10` the default branch, so it
-          # patched whatever Zen had merged that day. bootstrap.sh:19-23 already
-          # documents why that is wrong ("cloning an unpinned tip means upstream
-          # drift silently breaks patches"), and the build itself does use the
-          # pin — so a red run here meant "Zen moved", not "Kavacha broke".
-          #
-          # Read the pin from bootstrap.sh so there is exactly one source of
-          # truth. A second literal here would drift from the real one, which is
-          # the same class of bug this step exists to catch.
-          pin="$(sed -n 's/^UPSTREAM_COMMIT="\([0-9a-f]\{40\}\)".*/\1/p' build/bootstrap.sh)"
+          # Validate against the PINNED Firefox commit, never the moving tip
+          # (ADR 0020). Read the pin from bootstrap.sh so there is exactly one
+          # source of truth; a second literal here would drift from the real one.
+          pin="$(sed -n 's/^FIREFOX_COMMIT="\([0-9a-f]\{40\}\)".*/\1/p' build/bootstrap.sh)"
           if [ -z "$pin" ]; then
-            echo "could not read UPSTREAM_COMMIT from build/bootstrap.sh"; exit 1
+            echo "could not read FIREFOX_COMMIT from build/bootstrap.sh"; exit 1
           fi
-          echo "validating against pinned upstream $pin"
+          echo "validating against pinned Firefox $pin"
 
-          # Fetch one arbitrary SHA at depth 1 (GitHub permits this; it is how
-          # actions/checkout pins) rather than a shallow clone of the branch,
-          # because the pin is normally far more than 10 commits behind tip.
-          git init -q /tmp/zen
-          git -C /tmp/zen remote add origin https://github.com/zen-browser/desktop.git
-          git -C /tmp/zen fetch -q --depth 1 origin "$pin"
-          git -C /tmp/zen checkout -q FETCH_HEAD
+          # Firefox at depth 1 is ~1 GB of tree; a blob-less partial clone with a
+          # sparse checkout limited to the directories the patches touch keeps
+          # this step at seconds. The pin is fetched by SHA (GitHub permits it).
+          dirs="$(grep -h '^+++ b/' "${patches[@]}" | sed 's#^+++ b/##' | xargs -n1 dirname | sort -u)"
+          git init -q /tmp/ff
+          git -C /tmp/ff remote add origin https://github.com/mozilla-firefox/firefox.git
+          git -C /tmp/ff config core.sparseCheckout true
+          git -C /tmp/ff sparse-checkout init --cone
+          # shellcheck disable=SC2086
+          git -C /tmp/ff sparse-checkout set $dirs
+          git -C /tmp/ff fetch -q --depth 1 --filter=blob:none origin "$pin"
+          git -C /tmp/ff checkout -q FETCH_HEAD
 
-          # Patches are ordered and may build on each other (e.g. 0001 and 0002
-          # both touch surfer.json), so apply each one for real, in sequence.
+          # Patches are ordered and may build on each other, so apply each one
+          # for real, in sequence.
           for p in "${patches[@]}"; do
             echo "applying $p"
-            git -C /tmp/zen apply "$GITHUB_WORKSPACE/$p"
+            git -C /tmp/ff apply "$GITHUB_WORKSPACE/$p"
           done
 
   nightly-build:
@@ -103,25 +109,21 @@ jobs:
             platform: linux
           - os: macos-latest
             platform: macos
-          # Windows is intentionally absent: native Windows is upstream-broken
-          # at this pin (libwebrtc rule missing at xul.dll link; Zen only
-          # cross-compiles Windows) and every attempt burns ~3.5h of runner
-          # time and delays publish-nightly. The windows-conditional steps
-          # below are kept for its return via Zen's win-cross recipe —
-          # tracked in ROADMAP.md.
+          # Native Windows returned with the move to a direct Firefox ESR
+          # overlay (ADR 0020): the xul.dll link failure that removed this leg
+          # was Zen's native-Windows libwebrtc config, not Firefox's.
+          - os: windows-latest
+            platform: windows
     runs-on: ${{ matrix.os }}
     # Cold builds on 3-4 core hosted runners take ~4h; 360 is GitHub's job max.
     timeout-minutes: 360
     env:
-      # Zen's configs/common/mozconfig turns this into --with-ccache=sccache +
-      # RUSTC_WRAPPER=sccache, so compiles hit the GitHub Actions cache backend.
+      # bootstrap.sh writes --with-ccache=<sccache> + RUSTC_WRAPPER into the
+      # mozconfig when sccache is on PATH; the GHA backend needs these.
       SCCACHE_GHA_ENABLED: "true"
+      MACH_HIDE_DEV_DRIVE_SUGGESTION: "1"
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
 
       - uses: actions/setup-python@v5
         with:
@@ -129,23 +131,24 @@ jobs:
 
       # Stock ubuntu runners don't have the ~40GB a Firefox build needs; the
       # runner gets killed mid-compile ("shutdown signal") when disk fills.
-      # Same mitigation as Zen's linux-release-build workflow.
       - name: Free disk space (Linux)
         if: matrix.platform == 'linux'
         uses: jlumbroso/free-disk-space@main
         with:
           tool-cache: false
 
-      - name: Install Rust
-        run: rustup update stable
+      - name: Linux build dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libgtk-3-dev libdbus-glib-1-dev libasound2-dev xvfb
+        shell: bash
 
-      # Persistent compile cache across nightlies (same recipe as Zen's release
-      # workflows). The first cold build populates it; later builds should drop
-      # from ~4h to well under an hour on cache hits. Caveat: GitHub caps the
-      # repo cache at 10GB LRU, shared across platforms — partial hits expected.
-      # continue-on-error: the action's post-run stats step can fail (seen on
-      # macOS even after a fully successful build+upload) and must not poison
-      # the job result.
+      # Persistent compile cache across nightlies. The first cold build
+      # populates it; later builds should drop from ~4h to well under an hour
+      # on cache hits. GitHub caps the repo cache at 10GB LRU, shared across
+      # platforms — partial hits expected. continue-on-error: the action's
+      # post-run stats step can fail and must not poison the job result.
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@v0.0.9
         continue-on-error: true
@@ -158,64 +161,53 @@ jobs:
             core.exportVariable('ACTIONS_RESULTS_URL', process.env['ACTIONS_RESULTS_URL'])
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env['ACTIONS_RUNTIME_TOKEN'])
 
-      # surfer import commits into the Firefox tree; icon rendering needs an
-      # image resizer on non-macOS hosts (see render_png in generate-branding.sh).
+      # 16GB hosted runners can't take Firefox's default build parallelism:
+      # Linux runners die with a "shutdown signal" (OOM kills the runner
+      # agent) and Windows rustc hits LLVM out-of-memory with full debuginfo.
+      # Cap -j and drop debug symbols on both; macOS runners cope as-is.
+      # bootstrap.sh appends $KV_MOZCONFIG_EXTRA to the mozconfig it writes.
+      - name: Runner memory caps (Linux, Windows)
+        if: matrix.platform != 'macos'
+        run: |
+          jobs=2; [ "${{ matrix.platform }}" = "windows" ] && jobs=3
+          {
+            echo 'KV_MOZCONFIG_EXTRA<<EOF'
+            echo "mk_add_options MOZ_MAKE_FLAGS=\"-j$jobs\""
+            echo 'ac_add_options --disable-debug-symbols'
+            echo 'EOF'
+          } >> "$GITHUB_ENV"
+        shell: bash
+
+      # generate-branding.sh renders every icon with Pillow; bootstrap.sh
+      # commits the overlay into the checkout, so git needs an identity.
       - name: Configure git identity + icon tooling
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          pip install --quiet pillow
+          python3 -m pip install --quiet pillow
         shell: bash
 
-      # Firefox's tree exceeds MAX_PATH, and mach needs the MozillaBuild shell.
+      # mach needs MozillaBuild's shell; bootstrap.sh re-executes itself under
+      # it when $MOZILLABUILD is unset. Firefox's tree exceeds MAX_PATH.
       - name: Windows build prerequisites
         if: matrix.platform == 'windows'
         run: |
           git config --global core.longpaths true
-          git config --global core.safecrlf false
+          git config --global core.autocrlf false
           (New-Object System.Net.WebClient).DownloadFile("https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe", "C:\MozillaBuildSetup-Latest.exe")
-          C:\MozillaBuildSetup-Latest.exe /S | out-null
+          Start-Process -FilePath C:\MozillaBuildSetup-Latest.exe -ArgumentList '/S' -Wait
+          C:\mozilla-build\python3\python3.exe -m pip install --quiet pillow
+          New-Item -ItemType Junction -Path C:\k -Target $env:GITHUB_WORKSPACE
         shell: pwsh
 
-      - name: Bootstrap (fetch upstream + Firefox source)
-        run: ./build/bootstrap.sh
-        shell: bash
-
-      # 16GB hosted runners can't take Firefox's default build parallelism:
-      # Linux runners die with a "shutdown signal" (OOM kills the runner agent,
-      # twice, even with disk freed) and Windows rustc hits LLVM out-of-memory
-      # even at -j2 — a single rustc with full debuginfo is too big, so
-      # Windows also drops debug symbols. Uses surfer's uncommitted
-      # root-mozconfig hook. Slower, but these runs must finish.
-      # Linux at -j3 still lost its runner ~92 min in (hard kill, no logs) —
-      # the link-stage memory spike. Same fix that saved Windows: no debug
-      # symbols, and -j2 for headroom.
-      - name: Cap build parallelism + drop debug symbols (Linux)
-        if: matrix.platform == 'linux'
+      # setup: fetch Firefox at the pin, mozconfig, overlay, patches, branding,
+      # mach bootstrap (downloads the toolchains; on Windows that includes the
+      # packaged MSVC toolchain — no Visual Studio is used).
+      - name: Setup (fetch Firefox + mach bootstrap)
         run: |
-          echo 'mk_add_options MOZ_MAKE_FLAGS="-j2"' >> browser/zen-upstream/mozconfig
-          echo 'ac_add_options --disable-debug-symbols' >> browser/zen-upstream/mozconfig
+          if [ "${{ matrix.platform }}" = "windows" ]; then cd /c/k; fi
+          ./build/bootstrap.sh setup
         shell: bash
-
-      # Windows compiles for hours then dies linking xul.dll: "No rule to
-      # make target ...goog_cc_scream...Unified_cpp_etwork_controller_gn0.obj".
-      # NOT path length (macOS generates the identical unified name and links
-      # fine) — an upstream inconsistency in Zen's native-Windows libwebrtc
-      # build config, which tracks: Zen cross-compiles its Windows releases
-      # from Linux and doesn't maintain the native path. Real fix later:
-      # adopt Zen's win-cross recipe. The short-path junction stays (harmless,
-      # avoids other MAX_PATH edges).
-      - name: Cap build parallelism + drop debug symbols (Windows)
-        if: matrix.platform == 'windows'
-        run: |
-          echo 'mk_add_options MOZ_MAKE_FLAGS="-j2"' >> browser/zen-upstream/mozconfig
-          echo 'ac_add_options --disable-debug-symbols' >> browser/zen-upstream/mozconfig
-        shell: bash
-
-      - name: Short-path junction (Windows)
-        if: matrix.platform == 'windows'
-        run: New-Item -ItemType Junction -Path C:\k -Target $env:GITHUB_WORKSPACE
-        shell: pwsh
 
       - name: Build
         run: |
@@ -223,8 +215,9 @@ jobs:
           ./build/bootstrap.sh build
         shell: bash
 
-      # Compilation lands in the obj dir; `surfer package` is what produces the
-      # distributables (DMG / tar / installer + update MAR) in zen-upstream/dist/.
+      # `mach package` produces the distributables (DMG / tar / zip + update
+      # MAR) in obj-*/dist/; on Windows `mach build installer` adds the NSIS
+      # .exe under dist/install/sea/.
       - name: Package
         run: |
           if [ "${{ matrix.platform }}" = "windows" ]; then cd /c/k; fi
@@ -236,24 +229,29 @@ jobs:
         with:
           name: kavacha-nightly-${{ matrix.platform }}
           path: |
-            browser/zen-upstream/dist/*
+            browser/firefox-source/obj-*/dist/*.dmg
+            browser/firefox-source/obj-*/dist/*.tar.*
+            browser/firefox-source/obj-*/dist/*.zip
+            browser/firefox-source/obj-*/dist/install/sea/*.exe
+            browser/firefox-source/obj-*/dist/update/*.mar
           if-no-files-found: error
           retention-days: 14
 
       # R3 (SHIPPING.md): the network-silence gate. Runs the just-built binary
       # headless on a fresh profile and fails if it contacts any telemetry /
       # advertising / experimentation host — the load-bearing proof of Kavacha's
-      # privacy claim, on the real artifact. Linux only (the behaviour is
-      # pref-driven and identical across platforms, and this is the cheap
-      # runner); -headless needs no display. Placed after the upload so a
-      # regression marks the build red without withholding the binary.
+      # privacy claim, on the real artifact. Linux and Windows: the behaviour
+      # is pref-driven, but Windows has its own phone-home surface (the
+      # default-browser agent, disabled at configure time) worth proving.
+      # Placed after the upload so a regression marks the build red without
+      # withholding the binary.
       - name: Network-silence test (R3)
-        if: matrix.platform == 'linux'
+        if: matrix.platform == 'linux' || matrix.platform == 'windows'
         run: |
-          objbin="$(ls -d browser/zen-upstream/engine/obj-*/dist/bin 2>/dev/null | head -1)"
+          objbin="$(ls -d browser/firefox-source/obj-*/dist/bin 2>/dev/null | head -1)"
           app=""
-          for cand in "$objbin/kavacha" "$objbin/zen"; do
-            [ -x "$cand" ] && app="$cand" && break
+          for cand in "$objbin/kavacha" "$objbin/kavacha.exe"; do
+            [ -f "$cand" ] && app="$cand" && break
           done
           if [ -z "$app" ]; then
             echo "could not find the built binary under $objbin"; ls -la "$objbin" || true; exit 1
@@ -262,14 +260,25 @@ jobs:
           python3 test/network-silence/network_silence_test.py --app "$app" --headless --idle 40
         shell: bash
 
+      # L4 probe over Marionette on the real artifact: launches headless,
+      # prints the chrome facts (loaded Kavacha modules, menu button, layout).
+      # Informational until the substrate lands (port milestone M2), when the
+      # probe starts asserting and this step becomes load-bearing.
+      - name: Marionette probe (informational)
+        continue-on-error: true
+        run: |
+          python3 build/marionette-verify.py --launch --headless --purge-cache
+          python3 build/marionette-verify.py
+        shell: bash
+
   # Rolling "nightly" prerelease: Actions artifacts require a GitHub login to
   # download, a Release gives a public link anyone can try. The tag is moved
   # to the built commit each publish.
   publish-nightly:
     name: Publish nightly release
     needs: nightly-build
-    # always(): publish whatever platforms succeeded even if one failed
-    # (Windows is experimental and continue-on-error already).
+    # always(): publish whatever platforms succeeded even if one failed; the
+    # carry-forward step below keeps a failed platform's last good binary.
     if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_build))
     runs-on: ubuntu-latest
     # Serialize publishes: a manual full_build dispatch can overlap the 08:00
@@ -299,8 +308,11 @@ jobs:
             ext="${f#*.tar.}"
             cp "$f" "out/kavacha-nightly-linux-x86_64.tar.${ext}"
           done
-          for f in artifacts/kavacha-nightly-windows/*.exe artifacts/kavacha-nightly-windows/*.zip; do
-            cp "$f" "out/kavacha-nightly-windows-$(basename "$f")"
+          for f in artifacts/kavacha-nightly-windows/*.exe artifacts/kavacha-nightly-windows/**/*.exe; do
+            cp "$f" "out/kavacha-nightly-windows-x86_64.exe"
+          done
+          for f in artifacts/kavacha-nightly-windows/*.zip; do
+            cp "$f" "out/kavacha-nightly-windows-x86_64.zip"
           done
           ls -la out
           [ -n "$(ls -A out)" ] || { echo "no release files found"; exit 1; }
@@ -349,7 +361,7 @@ jobs:
           fi
           NOTES="Automated Kavacha nightly from commit ${GITHUB_SHA:0:7} ($(date -u +%Y-%m-%d)).${CARRIED}
 
-          Unsigned development builds — macOS: right-click the app and choose Open the first time, or run: xattr -dr com.apple.quarantine /Applications/Kavacha.app
+          Unsigned development builds — macOS: right-click the app and choose Open the first time, or run: xattr -dr com.apple.quarantine /Applications/Kavacha.app — Windows: SmartScreen will warn; choose More info → Run anyway, or use the .zip and run kavacha.exe from the extracted folder.
 
           Not audited yet; see the roadmap for release gates."
           TITLE="Kavacha Nightly ($(date -u +%Y-%m-%d))"

@@ -512,7 +512,9 @@ cmd_update() {
     local snap f
     snap="$(mktemp -d "${TMPDIR:-/tmp}/kavacha-patched.XXXXXX")"
     while IFS= read -r f; do
-        [ -n "$f" ] && [ -f "$SRC_DIR/$f" ] || continue
+        if [ -z "$f" ] || [ ! -f "$SRC_DIR/$f" ]; then
+            continue
+        fi
         mkdir -p "$snap/$(dirname "$f")"
         cp -p "$SRC_DIR/$f" "$snap/$f"
     done <<< "$(patch_paths)"
@@ -534,7 +536,9 @@ cmd_update() {
     apply_patches
     local kept=0
     while IFS= read -r f; do
-        [ -n "$f" ] && [ -f "$snap/$f" ] && [ -f "$SRC_DIR/$f" ] || continue
+        if [ -z "$f" ] || [ ! -f "$snap/$f" ] || [ ! -f "$SRC_DIR/$f" ]; then
+            continue
+        fi
         if cmp -s "$snap/$f" "$SRC_DIR/$f"; then
             touch -r "$snap/$f" "$SRC_DIR/$f"
             kept=$((kept+1))

@@ -49,9 +49,14 @@ jobs:
           print("schema validation OK")
           EOF
 
+      # Print the version: this gate is only as strong as the binary running it,
+      # and the two differ. 0.9.0 (the runner image's) reports SC2015 on
+      # `A && B || continue`; 0.11.0 does not, so a local 0.11 check passes code
+      # that fails here. Match the version before trusting a local run.
       - name: Shellcheck build scripts
         run: |
           sudo apt-get install -y shellcheck
+          shellcheck --version
           shellcheck build/*.sh
 
       - name: Overlay modules parse

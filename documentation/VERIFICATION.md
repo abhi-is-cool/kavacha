@@ -774,8 +774,26 @@ Two failures worth keeping, both self-inflicted and both of a kind that reads as
   checking `stat -c %Y` against the previous run's recorded values rather than by reading
   the log.
 
-**Not claimed here:** anything about CI. The workflow has still never run; see
-REMAINING_WORK's M4 note.
+**A third false success, found by CI on 2026-09-20.** The `validate` job failed on
+`shellcheck build/*.sh` with two SC2015 findings (`A && B || continue` in `cmd_update`).
+Local shellcheck had reported **clean** — on **0.11.0**, while the runner image ships
+**0.9.0**, and 0.9.0 reports SC2015 where 0.11.0 does not. The local gate was weaker than
+the gate that counted, so "clean locally" carried no information about CI. Both lines are
+now explicit `if` blocks, checked against **both** versions, the CI step prints
+`shellcheck --version` so the gate's strength is visible in its own log, and
+`build/README.md` says to match the version before trusting a local run.
+
+Worth recording alongside the diagnosis: this was ranked *least* likely of three
+hypotheses, on the reasoning that an older linter checks less. That reasoning is wrong —
+checks are added and removed across versions, and SC2015's heuristics were narrowed after
+0.9. The two hypotheses ranked above it (PEP 668 on `pip install jsonschema`, and
+`apt-get install` without `apt-get update`) were both plausible and both wrong. Reading
+the failing log settled it in one step; reproducing all six steps locally had settled
+nothing, because every one of them passed.
+
+**Not claimed here:** anything about CI passing. As of this entry the `validate` job has
+failed once and been fixed; no job in the workflow has yet completed green, and
+`nightly-build` (which `needs: validate`) has never started. See REMAINING_WORK's M4 note.
 
 ## 7. Release-gate verification still unbuilt
 

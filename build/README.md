@@ -45,6 +45,18 @@ declaration throws and aborts that whole file); and an unsorted `EXTRA_JS_MODULE
 fails the `moz.build` read outright because mozbuild sorts case-insensitively and Python
 does not. All three were real — see the script's header.
 
+**Match CI's shellcheck version before trusting a local run.** CI installs the runner
+image's apt package — **0.9.0** — and the checks differ by version: 0.9.0 reports SC2015
+on `A && B || continue`, and 0.11.0 does not. A local 0.11 run reported clean on code that
+failed CI (2026-09-20). To check against the version that actually gates:
+
+```
+python3 -m venv /tmp/sc9 && /tmp/sc9/bin/pip install shellcheck-py==0.9.0.6
+/tmp/sc9/bin/shellcheck build/*.sh
+```
+
+The CI step prints `shellcheck --version` so the gate's strength is visible in the log.
+
 Run `mach` commands as `env -u CLAUDECODE -u CLAUDE_CODE ./build/bootstrap.sh build` when an
 agent is driving: `mach` detects one and suppresses the real error, leaving `*** Fix above
 errors` with nothing above it.

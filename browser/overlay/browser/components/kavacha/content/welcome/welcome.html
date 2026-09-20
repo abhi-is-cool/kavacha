@@ -1,0 +1,62 @@
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src chrome:; img-src chrome: data:; style-src chrome: 'unsafe-inline'; object-src 'none'"
+    />
+    <title data-l10n-id="kavacha-welcome-title"></title>
+    <link rel="localization" href="browser/kavacha/kavacha-welcome.ftl" />
+    <link rel="stylesheet" href="chrome://browser/content/kavacha/welcome/welcome.css" />
+    <script src="chrome://browser/content/kavacha/welcome/welcome.js"></script>
+  </head>
+  <body>
+    <main class="kw-card">
+      <header class="kw-header">
+        <img class="kw-logo" src="chrome://branding/content/about-logo.png" alt="" />
+        <h1 data-l10n-id="kavacha-welcome-heading"></h1>
+        <p class="kw-lead" data-l10n-id="kavacha-welcome-lead"></p>
+      </header>
+
+      <section class="kw-step" data-step="appearance">
+        <h2 data-l10n-id="kavacha-welcome-appearance-title"></h2>
+        <p data-l10n-id="kavacha-welcome-appearance-description"></p>
+        <div class="kw-choices" role="radiogroup">
+          <label><input type="radio" name="mode" value="dark" checked /> <span data-l10n-id="kavacha-welcome-appearance-midnight"></span></label>
+          <label><input type="radio" name="mode" value="light" /> <span data-l10n-id="kavacha-welcome-appearance-light"></span></label>
+          <label><input type="radio" name="mode" value="system" /> <span data-l10n-id="kavacha-welcome-appearance-auto"></span></label>
+        </div>
+      </section>
+
+      <section class="kw-step" data-step="accent">
+        <h2 data-l10n-id="kavacha-welcome-color-title"></h2>
+        <p data-l10n-id="kavacha-welcome-color-description"></p>
+        <div id="kw-swatches" class="kw-swatches"></div>
+      </section>
+
+      <section class="kw-step" data-step="newtab">
+        <h2 data-l10n-id="kavacha-welcome-newtab-title"></h2>
+        <p data-l10n-id="kavacha-welcome-newtab-description"></p>
+        <div class="kw-choices" role="radiogroup">
+          <label><input type="radio" name="newtab" value="dashboard" checked /> <span data-l10n-id="kavacha-welcome-newtab-dashboard"></span></label>
+          <label><input type="radio" name="newtab" value="firefox" /> <span data-l10n-id="kavacha-welcome-newtab-firefox"></span></label>
+        </div>
+      </section>
+
+      <section class="kw-step" data-step="import">
+        <h2 data-l10n-id="kavacha-welcome-import-title"></h2>
+        <p data-l10n-id="kavacha-welcome-import-description"></p>
+        <button id="kw-import" class="kw-secondary" data-l10n-id="kavacha-welcome-import-button"></button>
+      </section>
+
+      <footer class="kw-footer">
+        <p class="kw-hint" data-l10n-id="kavacha-welcome-menu-hint"></p>
+        <button id="kw-done" class="kw-primary" data-l10n-id="kavacha-welcome-done"></button>
+      </footer>
+    </main>
+  </body>
+</html>

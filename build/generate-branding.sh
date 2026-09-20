@@ -109,8 +109,11 @@ cat > "$DST/pref/firefox-branding.js" <<EOF
 // browser/branding/kavacha/branding.json. Edit the generator, not this file.
 
 pref("startup.homepage_override_url", "");
-pref("startup.homepage_welcome_url", "");
+// First run opens Kavacha's own welcome (about:kavacha-welcome, ADR 0020 §4d);
+// Firefox's about:welcome is not used.
+pref("startup.homepage_welcome_url", "about:kavacha-welcome");
 pref("startup.homepage_welcome_url.additional", "");
+pref("browser.aboutwelcome.enabled", false);
 
 // Updates: served by Kavacha's own update service (SHIPPING.md R1). Until it
 // exists this host answers nothing, which fails closed.

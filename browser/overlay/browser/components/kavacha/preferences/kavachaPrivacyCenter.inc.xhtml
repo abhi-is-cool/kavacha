@@ -1,0 +1,23 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+# Kavacha Settings pane "Privacy" — PLACEHOLDER (port milestone M2). The
+# Zen-era pane (patches 0021/0031/0032/0048-0050/0059/0063) lands here in M3;
+# this file exists so preferences.xhtml (patch 0004) can #include it and the
+# pane selects, which is what the substrate probe checks.
+<script type="text/javascript" src="chrome://browser/content/preferences/kavacha-privacy.js"/>
+<html:template id="template-paneKavachaPrivacy">
+
+<hbox id="kavachaPrivacyCategory"
+      class="subcategory"
+      hidden="true"
+      data-category="paneKavachaPrivacy">
+<html:h1 data-l10n-id="kavacha-privacy-center-title"/>
+</hbox>
+
+<groupbox id="kavachaPrivacyPlaceholder" data-category="paneKavachaPrivacy" hidden="true">
+  <description class="description-deemphasized" data-l10n-id="kavacha-pane-placeholder"/>
+</groupbox>
+
+</html:template>

@@ -1,0 +1,42 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* Kavacha token floor (ADR 0020 §4e). Every Kavacha stylesheet reads
+ * --kavacha-* tokens; nothing reads Firefox's or a theme's variables directly.
+ * The values here are the Midnight defaults; KavachaThemeEngine overrides them
+ * per theme on :root. The --zen-* tokens of the Zen era map onto these:
+ *   --zen-primary-color      -> --kavacha-accent
+ *   --zen-branding-dark      -> --kavacha-surface
+ *   --zen-branding-paper     -> --kavacha-surface-light
+ *   --zen-colors-border      -> --kavacha-border
+ *   --zen-colors-secondary   -> --kavacha-surface-2
+ *   --zen-colors-tertiary    -> --kavacha-surface-3
+ *   --zen-essential-tab-icon -> --kavacha-pinned-icon
+ *   --zen-urlbar-*           -> --kavacha-urlbar-*
+ *   --zen-main-browser-background -> --kavacha-content-bg
+ *   --zen-element-separation -> --kavacha-gap
+ *   --zen-dialog-background  -> --kavacha-dialog-bg
+ *   --zen-toolbar-element-bg -> --kavacha-toolbar-element-bg
+ */
+:root {
+  --kavacha-surface: #14111F;
+  --kavacha-surface-light: #F7F6FB;
+  --kavacha-surface-2: #1D1929;
+  --kavacha-surface-3: #262133;
+  --kavacha-border: color-mix(in srgb, #F7F6FB 14%, transparent);
+  --kavacha-text: #F7F6FB;
+  --kavacha-text-muted: color-mix(in srgb, #F7F6FB 62%, transparent);
+  /* No default accent (user decision 2026-07-13); consumers use the fallback. */
+  --kavacha-accent-fallback: #8b7bd8;
+  --kavacha-pinned-icon: var(--kavacha-text-muted);
+  --kavacha-urlbar-background: var(--kavacha-surface-2);
+  --kavacha-urlbar-top: 0px;
+  --kavacha-urlbar-filter: none;
+  --kavacha-content-bg: var(--kavacha-surface);
+  --kavacha-gap: 6px;
+  --kavacha-dialog-bg: var(--kavacha-surface-2);
+  --kavacha-toolbar-element-bg: color-mix(in srgb, #F7F6FB 6%, transparent);
+  --kavacha-toolbar-element-bg-hover: color-mix(in srgb, #F7F6FB 12%, transparent);
+  --kavacha-radius: 8px;
+}

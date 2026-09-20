@@ -93,10 +93,13 @@ errors` with nothing above it.
 1. Edit in `browser/firefox-source/`. Overlay-path files: `./build/bootstrap.sh overlay-export`
    copies them back into `browser/overlay/`; commit them like any file. Tracked Firefox files:
    `./build/bootstrap.sh patch-export NNNN-name`, then `roundtrip` must pass.
-2. Rebuild with `fast` (overlay-only changes) or `build`, then re-run the relevant probe:
-   `build/marionette-verify.py --launch`, then `build/marionette-verify.py` /
-   `marionette-substrate.py` / `marionette-phase7.py`. Purge `<profile>/startupCache` after a
-   rebuild (`--purge-cache`) or `ChromeUtils.importESModule` keeps returning the stale module.
+2. Rebuild with `fast` (overlay-only changes; note `update` first if the overlay gained files)
+   or `build` (moz.build/jar.mn changes), then re-run the relevant probe:
+   `build/marionette-verify.py --launch --purge-cache`, then `build/marionette-verify.py`
+   (chrome facts), `marionette-substrate.py` (the M2 substrate, 43 checks),
+   `marionette-restart.py 1` / relaunch / `marionette-restart.py 2` (a space surviving a
+   restart), `marionette-phase7.py` (M5). Purge `<profile>/startupCache` after a rebuild
+   (`--purge-cache`) or `ChromeUtils.importESModule` keeps returning the stale module.
 3. Never check whether a build is current by looking at files in `dist/bin` that may be
    symlinks into the source tree; check a genuinely preprocessed artifact such as the packaged
    `browser/defaults/preferences/firefox-branding.js`.

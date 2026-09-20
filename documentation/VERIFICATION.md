@@ -555,6 +555,44 @@ Harness hazard found: editing `bootstrap.sh` while a build it launched is runnin
 resume at a stale byte offset when `mach` returns (`unexpected EOF` after a *successful*
 build). Do not edit a running script; `build/README.md` says so now.
 
+## 4f. Firefox ESR 153 base — M2: the substrate, observed (2026-09-19)
+
+Milestone M2 of the re-platform ([ADR 0020](decisions/0020-firefox-esr-direct-overlay.md)
+§4, [ADR 0021](decisions/0021-kavacha-owned-workspaces.md)): the four things Zen used to
+provide, now Kavacha's own, driven over Marionette on the Windows build.
+`build/marionette-substrate.py` — **43 checks, 0 failures**; `build/marionette-restart.py`
+(two phases around a real relaunch of the same profile) — **7 checks, 0 failures**.
+
+| Piece | What the probe observed |
+|---|---|
+| Startup (`KavachaStartup`, `profile-after-change` category) | module imports, service constructed, window script ran (`gKavacha.ready`), Kavacha stylesheet applied before first paint (`--kavacha-sheet-loaded`), FTLs inserted — all injected at `browser-window-before-show`, **no `browser.xhtml` patch** |
+| Spaces model (`KavachaWorkspaces` + `gKavachaWorkspaces`) | ≥1 space on a fresh profile ("Personal"); `createAndSaveWorkspace` returns a record and switches; a new tab joins the active space and carries `kavachaSpaceId` in SessionStore; switching away hides it (`tab.hidden === true`), switching back shows it and re-selects the space's last-selected tab; archive hides it from the strip and flags the record, unarchive re-activates; delete moves the tabs home; the strip is a CustomizableUI widget inside `#TabsToolbar` with one button per visible space |
+| **Restart round-trip** | space + hidden tab → session flushed → clean quit → relaunch (`browser.startup.page=3`): the space is in the store, the `about:robots` tab is restored **in its space** (SessionStore custom value), hidden while home is active, listed in the strip, shown on switch |
+| Command palette | `KavachaCommandRegistry` ported (802 lines; 87 command strings recovered into `kavacha-commands.ftl`), `Ctrl/Cmd+K` key registered with Firefox's `key_search` displaced, the panel opens, lists the built-ins grouped by domain (incl. the template commands), closes |
+| Welcome | `about:kavacha-welcome` resolves (JS `nsIAboutModule`), loads in the parent as secure chrome UI, renders its four steps, script runs; `startup.homepage_welcome_url` default = `about:kavacha-welcome` (Marionette itself sets a user value of `about:blank` on test profiles — the probe reads the default branch) |
+| Settings panes (patch 0004) | the four Kavacha nav buttons exist in `about:preferences`; `#kavachaPrivacy` selects `paneKavachaPrivacy`; the pane template expands, its script runs, the body un-hides. **Placeholder bodies** — the real panes are M3 |
+
+**Defects the probes caught, fixed the same day:**
+
+- **Restored tabs lost their space.** Session restore creates tabs (firing `TabOpen`) *before*
+  applying their saved state; the `TabOpen` handler stamped every restored tab with the active
+  space and wrote it as a custom value, and `SSTabRestoring` then trusted the attribute. The
+  first restart round-trip failed 3 of 7. Fix: defer the `TabOpen` assignment by one task
+  (restore applies state synchronously right after creating its tabs) and make the saved
+  custom value authoritative over the attribute. Second run: 7/7.
+- Placeholder pane ids were generated from the include file name (`kavachaPrivacyCenterCategory`)
+  while the pane scripts, probe and the Zen-era panes use `kavachaPrivacyCategory`. Aligned to
+  the Zen-era names, which M3 keeps.
+- Two probe-side corrections, not product bugs: the space re-selects its *last-selected* tab, not
+  the tab a test added in the background; an about: page's `documentURI` stays the about: URI.
+
+**Not claimed by M2:** any ported feature (M3); theme mode is the welcome page's pref +
+built-in-theme switch until `KavachaThemeEngine` is ported and becomes the authority;
+per-space search engine / extensions / settings overrides (they hook the switch chokepoint
+in M3, which already exists — `addSwitchListener`); container retargeting of fresh tabs;
+Firefox's quick-actions urlbar integration; the notes/branching/timeline members of the
+facade, which log "not ported yet" and return empty.
+
 ## 7. Release-gate verification still unbuilt
 
 From ROADMAP Phase 4 and the release-gate table — verification work that does

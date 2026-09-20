@@ -4,7 +4,7 @@
   "title": "Kavacha Workspace",
   "description": "A workspace is an isolated environment (e.g. Personal, Work, School, Research) owning its own tabs, cookies, extensions, theme, search provider, and settings. Cookie/storage isolation is backed by a Firefox container.",
   "type": "object",
-  "required": ["id", "name", "containerId", "createdAt"],
+  "required": ["id", "name", "createdAt"],
   "additionalProperties": false,
   "properties": {
     "$schema": { "type": "string" },
@@ -28,8 +28,29 @@
       "description": "Theme id applied while this workspace is active; falls back to the global theme when absent."
     },
     "containerId": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Firefox container (userContextId) providing cookie/storage isolation for this workspace. Optional since patch 0038 / ADR 0021: containers are opt-in (kavacha.workspaces.isolate-containers), the Private template always has one."
+    },
+    "order": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Position in the Spaces strip (ADR 0021)."
+    },
+    "description": {
       "type": "string",
-      "description": "Firefox container (contextual identity) providing cookie/storage isolation for this workspace."
+      "maxLength": 280,
+      "description": "Free-text description shown as the strip tooltip (patch 0014/0051)."
+    },
+    "parentSpaceId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "The space this one was branched from (ADR 0006 research branching)."
+    },
+    "accent": {
+      "type": "string",
+      "pattern": "^#[0-9A-Fa-f]{6}$",
+      "description": "Per-space accent colour (templates set it); absent = the global accent."
     },
     "searchProvider": {
       "type": "string",

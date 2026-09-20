@@ -1,0 +1,24 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+# chrome://browser/content/kavacha/…  and  chrome://browser/skin/kavacha/…
+# (browser.jar registers %skin/classic/browser/ as chrome://browser/skin/).
+browser.jar:
+    content/browser/kavacha/kavacha-window.js                 (content/kavacha-window.js)
+    content/browser/kavacha/spaces/kavacha-workspaces.js      (content/spaces/kavacha-workspaces.js)
+    content/browser/kavacha/palette/kavacha-palette.js        (content/palette/kavacha-palette.js)
+    content/browser/kavacha/welcome/welcome.html              (content/welcome/welcome.html)
+    content/browser/kavacha/welcome/welcome.js                (content/welcome/welcome.js)
+    content/browser/kavacha/welcome/welcome.css               (content/welcome/welcome.css)
+    skin/classic/browser/kavacha/kavacha.css                  (skin/kavacha.css)
+    skin/classic/browser/kavacha/kavacha-tokens.css           (skin/kavacha-tokens.css)
+    skin/classic/browser/kavacha/kavacha-spaces.css           (skin/kavacha-spaces.css)
+    skin/classic/browser/kavacha/kavacha-palette.css          (skin/kavacha-palette.css)
+    skin/classic/browser/kavacha/preferences.css              (skin/preferences.css)
+# Settings pane scripts: same chrome path the panes' <script> tags used under
+# Zen (content/browser/preferences/), contributed from this manifest.
+    content/browser/preferences/kavacha-privacy.js            (preferences/kavacha-privacy.js)
+    content/browser/preferences/kavacha-appearance.js         (preferences/kavacha-appearance.js)
+    content/browser/preferences/kavacha-customization.js      (preferences/kavacha-customization.js)
+    content/browser/preferences/kavacha-workspaces.js         (preferences/kavacha-workspaces.js)

@@ -1,0 +1,118 @@
+# What: add the four Kavacha Settings panes (Privacy Center, Appearance & Themes,
+# Customization, Workspaces) to about:preferences: nav buttons, #includes, one
+# stylesheet and one localization link in preferences.xhtml; template expansion
+# and defensive registration in preferences.js.
+# Why a patch: about:preferences is one preprocessed document with a hard-coded
+# pane list; there is no registration API for a pane's markup. The pane bodies,
+# scripts, styles and strings are overlay files (browser/components/kavacha/
+# preferences/, ADR 0020) -- only these two tracked files need hunks. Replaces
+# the Zen-era meta-patches preferences-{js,xhtml}.patch + jar-mn.patch
+# (patches 0021/0031/0032/0059).
+# Touches: browser/components/preferences/preferences.js browser/components/preferences/preferences.xhtml 
+diff --git a/browser/components/preferences/preferences.js b/browser/components/preferences/preferences.js
+index c76a0647e1..0a9cde3ec8 100644
+--- a/browser/components/preferences/preferences.js
++++ b/browser/components/preferences/preferences.js
+@@ -483,7 +483,12 @@ function register_module(categoryName, categoryObject) {
+       }
+       this._initted = true;
+       let template = document.getElementById("template-" + categoryName);
+-      if (template && !srdSectionPrefs.all) {
++      // Kavacha panes ship as <html:template> and must always be expanded,
++      // redesign flag or not (patch 0004).
++      if (
++        template &&
++        (!srdSectionPrefs.all || categoryName.startsWith("paneKavacha"))
++      ) {
+         // Replace the template element with the nodes inside of it.
+         template.replaceWith(template.content);
+ 
+@@ -528,6 +533,28 @@ function init_all() {
+   register_module("paneSearch", gSearchPane);
+   register_module("panePrivacy", gPrivacyPane);
+ 
++  // Kavacha: register the Kavacha panes defensively (patch 0004; the lesson of
++  // the Zen-era patch 0059). Each pane global comes from a separate classic
++  // <script> sharing this global scope, so a parse error in one file leaves
++  // its global undefined -- and a bare register_module(name, gUndefined)
++  // throws and aborts init_all(), silently killing every pane registered after
++  // it. One broken pane must cost one pane, not all of them.
++  const kavachaRegister = (name, mod) => {
++    if (!mod) {
++      console.error(`Settings: pane ${name} is unavailable; skipping it`);
++      return;
++    }
++    try {
++      register_module(name, mod);
++    } catch (e) {
++      console.error(`Settings: pane ${name} failed to register`, e);
++    }
++  };
++  kavachaRegister("paneKavachaPrivacy", typeof gKavachaPrivacyCenter !== "undefined" ? gKavachaPrivacyCenter : null);
++  kavachaRegister("paneKavachaAppearance", typeof gKavachaAppearance !== "undefined" ? gKavachaAppearance : null);
++  kavachaRegister("paneKavachaCustomization", typeof gKavachaCustomization !== "undefined" ? gKavachaCustomization : null);
++  kavachaRegister("paneKavachaWorkspaces", typeof gKavachaWorkspaces !== "undefined" ? gKavachaWorkspaces : null);
++
+   // Restore the cached Firefox Labs nav button visibility so it shows
+   // immediately when recipes are expected to be available, before
+   // firefoxLabs.mjs loads on first navigation. The module itself updates
+diff --git a/browser/components/preferences/preferences.xhtml b/browser/components/preferences/preferences.xhtml
+index 1b8c381593..cd575baf3d 100644
+--- a/browser/components/preferences/preferences.xhtml
++++ b/browser/components/preferences/preferences.xhtml
+@@ -35,6 +35,7 @@
+   <link rel="stylesheet" href="chrome://browser/skin/preferences/search.css" />
+   <link rel="stylesheet" href="chrome://browser/content/usercontext/usercontext.css" />
+   <link rel="stylesheet" href="chrome://browser/skin/preferences/privacy.css" />
++  <link rel="stylesheet" href="chrome://browser/skin/kavacha/preferences.css" />
+   <link rel="stylesheet" href="chrome://browser/content/preferences/widgets/setting-group.css" />
+   <link rel="stylesheet" href="chrome://browser/content/preferences/widgets/setting-pane.css" />
+   <link rel="stylesheet" href="chrome://browser/content/preferences/widgets/setting-control.css" />
+@@ -45,6 +46,7 @@
+   <link rel="localization" href="browser/preferences/fonts.ftl"/>
+   <link rel="localization" href="browser/preferences/moreFromMozilla.ftl"/>
+   <link rel="localization" href="browser/preferences/preferences.ftl"/>
++  <link rel="localization" href="browser/kavacha/kavacha-preferences.ftl"/>
+   <link rel="localization" href="toolkit/branding/brandings.ftl"/>
+   <link rel="localization" href="toolkit/firefoxlabs/features.ftl"/>
+ 
+@@ -139,6 +141,28 @@
+         iconsrc="chrome://browser/skin/preferences/category-privacy-security.svg"
+         data-l10n-id="pane-privacy-title3">
+       </html:moz-page-nav-button>
++      <!-- Kavacha panes (patch 0004); pane bodies are overlay files under
++           browser/components/kavacha/preferences/ (ADR 0020). -->
++      <html:moz-page-nav-button id="category-kavacha-privacy"
++        view="paneKavachaPrivacy"
++        iconsrc="chrome://browser/skin/tracking-protection.svg"
++        data-l10n-id="pane-kavacha-privacy-title">
++      </html:moz-page-nav-button>
++      <html:moz-page-nav-button id="category-kavacha-appearance"
++        view="paneKavachaAppearance"
++        iconsrc="chrome://global/skin/icons/eye.svg"
++        data-l10n-id="pane-kavacha-appearance-title">
++      </html:moz-page-nav-button>
++      <html:moz-page-nav-button id="category-kavacha-customization"
++        view="paneKavachaCustomization"
++        iconsrc="chrome://browser/skin/customize.svg"
++        data-l10n-id="pane-kavacha-customization-title">
++      </html:moz-page-nav-button>
++      <html:moz-page-nav-button id="category-kavacha-workspaces"
++        view="paneKavachaWorkspaces"
++        iconsrc="chrome://browser/skin/window.svg"
++        data-l10n-id="pane-kavacha-workspaces-title">
++      </html:moz-page-nav-button>
+       <html:moz-page-nav-button id="category-passwords-autofill"
+         view="panePasswordsAutofill"
+         iconsrc="chrome://browser/skin/login.svg"
+@@ -246,6 +270,10 @@
+ #include home.inc.xhtml
+ #include search.inc.xhtml
+ #include privacy.inc.xhtml
++#include ../kavacha/preferences/kavachaPrivacyCenter.inc.xhtml
++#include ../kavacha/preferences/kavachaAppearance.inc.xhtml
++#include ../kavacha/preferences/kavachaCustomization.inc.xhtml
++#include ../kavacha/preferences/kavachaWorkspaces.inc.xhtml
+ #include sync.inc.xhtml
+ #include moreFromMozilla.inc.xhtml
+         </vbox>

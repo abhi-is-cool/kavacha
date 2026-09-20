@@ -1,0 +1,16 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* The one stylesheet KavachaStartup loads into every browser window (author
+ * sheet, before first paint). It only @imports, in the order Zen's
+ * zen-theme.css used to %include the kavacha-*.inc.css files; each feature
+ * ships its own file under skin/ and adds a line here. */
+@import url("chrome://browser/skin/kavacha/kavacha-tokens.css");
+@import url("chrome://browser/skin/kavacha/kavacha-spaces.css");
+@import url("chrome://browser/skin/kavacha/kavacha-palette.css");
+
+/* Marker the Marionette probe can read to prove this sheet applied. */
+:root {
+  --kavacha-sheet-loaded: 1;
+}

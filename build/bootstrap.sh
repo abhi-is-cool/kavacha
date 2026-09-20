@@ -243,9 +243,16 @@ copy_overlay() {
         mkdir -p "$SRC_DIR/$(dirname "$f")"
         cp "$OVERLAY_DIR/$f" "$SRC_DIR/$f"
     done <<< "$files"
-    (cd "$SRC_DIR" && printf '%s\n' "$files" | xargs git add -- )
+    # Stage by top-level overlay directory (no xargs: MSYS2 under MozillaBuild
+    # can fail to fork it). The checkout was just reset, so -A here only adds
+    # the overlay files.
+    local topdirs
+    topdirs="$(cd "$OVERLAY_DIR" && find . -mindepth 1 -maxdepth 1 -type d | sed 's#^\./##')"
+    while IFS= read -r dir; do
+        [ -n "$dir" ] && git -C "$SRC_DIR" add -A -- "$dir"
+    done <<< "$topdirs"
     if ! git -C "$SRC_DIR" diff --cached --quiet; then
-        git -C "$SRC_DIR" commit -q -m "kavacha overlay" --
+        git -C "$SRC_DIR" commit -q -m "kavacha overlay"
         log "Overlay committed locally on top of the pin."
     else
         log "Overlay already committed and unchanged."
@@ -339,7 +346,7 @@ roundtrip() {
     # Firefox checkout is ~400k files and minutes on Windows; this is seconds.
     local wt dirs
     wt="$(mktemp -d "${TMPDIR:-/tmp}/kavacha-rt.XXXXXX")"
-    dirs="$(grep -h '^+++ b/' "${patches[@]}" | sed 's#^+++ b/##' | xargs -n1 dirname | sort -u)"
+    dirs="$(grep -h '^+++ b/' "${patches[@]}" | sed 's#^+++ b/##; s#/[^/]*$##' | sort -u)"
     git -C "$SRC_DIR" worktree add -q --no-checkout --detach "$wt" HEAD
     # Expand now: the trap runs after this function's locals are gone.
     # shellcheck disable=SC2064

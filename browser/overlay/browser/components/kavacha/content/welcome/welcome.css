@@ -1,0 +1,86 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* about:kavacha-welcome. A content document: the chrome token floor is not in
+ * its cascade, so every --kavacha-* token carries a fallback here. */
+
+:root {
+  --kavacha-surface: #14111F;
+  --kavacha-surface-2: #1D1929;
+  --kavacha-text: #F7F6FB;
+  --kavacha-text-muted: rgba(247, 246, 251, 0.62);
+  --kavacha-border: rgba(247, 246, 251, 0.14);
+  --kavacha-accent-fallback: #8b7bd8;
+  --kavacha-radius: 10px;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --kavacha-surface: #F7F6FB;
+    --kavacha-surface-2: #FFFFFF;
+    --kavacha-text: #1B1730;
+    --kavacha-text-muted: rgba(27, 23, 48, 0.62);
+    --kavacha-border: rgba(27, 23, 48, 0.14);
+    color-scheme: light;
+  }
+}
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--kavacha-surface);
+  color: var(--kavacha-text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.kw-card {
+  max-width: 640px;
+  margin: 6vh auto 8vh;
+  padding: 32px 36px;
+  background: var(--kavacha-surface-2);
+  border: 1px solid var(--kavacha-border);
+  border-radius: calc(var(--kavacha-radius) + 6px);
+}
+
+.kw-header { text-align: center; margin-bottom: 24px; }
+.kw-logo { width: 72px; height: 72px; }
+.kw-header h1 { margin: 12px 0 4px; font-size: 1.8em; }
+.kw-lead { margin: 0; color: var(--kavacha-text-muted); }
+
+.kw-step { padding: 18px 0; border-top: 1px solid var(--kavacha-border); }
+.kw-step h2 { margin: 0 0 4px; font-size: 1.1em; }
+.kw-step p { margin: 0 0 12px; color: var(--kavacha-text-muted); }
+
+.kw-choices { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+.kw-choices label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+
+.kw-swatches { display: flex; flex-wrap: wrap; gap: 10px; }
+.kw-swatch {
+  width: 34px; height: 34px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+}
+.kw-swatch[selected] { border-color: var(--kavacha-text); box-shadow: 0 0 0 2px var(--kavacha-surface-2) inset; }
+.kw-swatch-system { background-image: conic-gradient(from 0deg, #4AA3DF, #5FBF77, #E8A33D, #E05C5C, #8B7BD8, #4AA3DF); }
+
+.kw-footer {
+  margin-top: 8px;
+  padding-top: 18px;
+  border-top: 1px solid var(--kavacha-border);
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+}
+.kw-hint { margin: 0; color: var(--kavacha-text-muted); }
+
+.kw-primary, .kw-secondary {
+  padding: 9px 18px;
+  border-radius: var(--kavacha-radius);
+  border: 1px solid var(--kavacha-border);
+  background: var(--kavacha-accent, var(--kavacha-accent-fallback));
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+.kw-secondary { background: transparent; color: inherit; font-weight: 500; }

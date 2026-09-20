@@ -1,0 +1,22 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+# Kavacha overlay component (ADR 0020). This directory is copied onto the
+# Firefox checkout by build/bootstrap.sh; patch 0003 adds it to
+# browser/components/moz.build DIRS. Every Kavacha module, about: page,
+# stylesheet and locale file is wired from here — one manifest each, in place
+# of the 26 moz.build / 12 jar.inc.mn / 7 components.conf hunks of the Zen era.
+
+JAR_MANIFESTS += ["jar.mn"]
+
+XPCOM_MANIFESTS += ["components.conf"]
+
+# resource:///modules/Kavacha*.sys.mjs — the import path every Kavacha module
+# and probe already uses.
+EXTRA_JS_MODULES += [
+    "modules/KavachaAboutWelcome.sys.mjs",
+    "modules/KavachaCommandRegistry.sys.mjs",
+    "modules/KavachaStartup.sys.mjs",
+    "modules/KavachaWorkspaces.sys.mjs",
+]

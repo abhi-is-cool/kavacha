@@ -1,0 +1,58 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* The Spaces strip: a CustomizableUI widget placed at the start of the tab
+ * strip, filled by gKavachaWorkspaces.render(). Tokens only (kavacha-tokens.css). */
+
+#kavacha-spaces-strip {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-inline: 4px;
+  max-width: 40%;
+  overflow: hidden;
+}
+
+#kavacha-spaces-strip .kavacha-space-button,
+#kavacha-spaces-strip .kavacha-space-add {
+  appearance: none;
+  min-width: 0;
+  margin: 0;
+  padding: 2px 8px;
+  border-radius: var(--kavacha-radius);
+  background: transparent;
+  color: inherit;
+  font-size: 0.92em;
+  white-space: nowrap;
+}
+
+/* The tab strip is an icons-only toolbar; a space is its name, so show it. */
+#kavacha-spaces-strip .toolbarbutton-text {
+  display: block !important;
+}
+#kavacha-spaces-strip .toolbarbutton-icon {
+  display: none !important;
+}
+
+#kavacha-spaces-strip .kavacha-space-button:hover,
+#kavacha-spaces-strip .kavacha-space-add:hover {
+  background: var(--kavacha-toolbar-element-bg-hover);
+}
+
+#kavacha-spaces-strip .kavacha-space-button[active] {
+  background: var(--kavacha-toolbar-element-bg);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0
+    var(--kavacha-space-accent, var(--kavacha-accent, var(--kavacha-accent-fallback)));
+}
+
+#kavacha-spaces-strip .kavacha-space-add {
+  opacity: 0.7;
+  padding-inline: 6px;
+}
+
+/* Tabs carry their space for styling and for the probe. */
+.tabbrowser-tab[kavacha-space-id][hidden] {
+  display: none;
+}

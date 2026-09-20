@@ -1,0 +1,73 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* The command palette panel (content/palette/kavacha-palette.js). */
+
+#kavacha-palette {
+  --panel-width: 560px;
+  --panel-padding: 0;
+  --panel-border-radius: calc(var(--kavacha-radius) + 4px);
+}
+
+#kavacha-palette .kavacha-palette-box {
+  width: 560px;
+  max-height: 60vh;
+  padding: 8px;
+  gap: 6px;
+}
+
+#kavacha-palette .kavacha-palette-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  font-size: 1.1em;
+  border: 1px solid var(--kavacha-border);
+  border-radius: var(--kavacha-radius);
+  background: var(--kavacha-toolbar-element-bg);
+  color: inherit;
+  outline: none;
+}
+#kavacha-palette .kavacha-palette-input:focus {
+  border-color: var(--kavacha-accent, var(--kavacha-accent-fallback));
+}
+
+#kavacha-palette .kavacha-palette-list {
+  overflow-y: auto;
+  max-height: calc(60vh - 70px);
+}
+
+#kavacha-palette .kavacha-palette-group {
+  margin: 8px 8px 2px;
+  font-size: 0.8em;
+  font-weight: 600;
+  opacity: 0.6;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+#kavacha-palette .kavacha-palette-row {
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--kavacha-radius);
+  cursor: default;
+}
+#kavacha-palette .kavacha-palette-row[selected] {
+  background: var(--kavacha-toolbar-element-bg-hover);
+  box-shadow: inset 3px 0 0 var(--kavacha-accent, var(--kavacha-accent-fallback));
+}
+
+#kavacha-palette .kavacha-palette-icon {
+  width: 16px;
+  height: 16px;
+  -moz-context-properties: fill;
+  fill: currentColor;
+  opacity: 0.85;
+}
+
+#kavacha-palette .kavacha-palette-empty {
+  padding: 16px;
+  opacity: 0.6;
+  text-align: center;
+}

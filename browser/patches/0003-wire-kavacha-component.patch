@@ -1,0 +1,18 @@
+# What: add browser/components/kavacha (the Kavacha overlay component) to DIRS.
+# Why a patch: moz.build DIRS are an explicit list; there is no glob or drop-in
+# mechanism, so the one directory that holds every Kavacha module, page,
+# stylesheet and manifest has to be named here. Everything under that
+# directory is overlay, not patch (ADR 0020).
+# Touches: browser/components/moz.build 
+diff --git a/browser/components/moz.build b/browser/components/moz.build
+index d1d769ab09..e8788847d4 100644
+--- a/browser/components/moz.build
++++ b/browser/components/moz.build
+@@ -44,6 +44,7 @@ DIRS += [
+     "firefoxview",
+     "genai",
+     "ipprotection",
++    "kavacha",
+     "messagepreview",
+     "migration",
+     "mozcachedohttp",

@@ -1,0 +1,11 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* Styles for the Kavacha Settings panes (about:preferences#kavacha*), linked
+ * from preferences.xhtml by patch 0004. The Zen-era rules (zen-preferences.css
+ * hunks of patches 0021/0031/0032/0048/0049/0050) move here in port milestone M3. */
+
+[kavacha-placeholder] + groupbox {
+  opacity: 0.8;
+}

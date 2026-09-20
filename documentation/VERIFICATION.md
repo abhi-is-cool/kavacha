@@ -398,81 +398,78 @@ press rather than by invoking the registered command.
 
 ---
 
-## 4d. Phase 7 (0082–0087) — the Zen-era record, superseded by §4h
+## 4d. Phase 7 (0082–0086) — **built and L4-verified 2026-08-27 (Zen base)**
 
-> **Superseded 2026-09-20.** Phase 7 was ported to the Firefox ESR base, built and driven
-> at runtime: see [§4h](#4h-phase-7--tested-2026-09-20). This section is kept as the record
-> of the fifteen months it spent written-but-unrun, and of what that cost — the first
-> execution found a real defect (focus mode never restored the notification default) that
-> the code's own header claimed had been pre-empted.
+<!-- PHASE7-TEST-STATUS: TESTED 2026-08-27 -->
+> **Still current as the record of Phase 7's first run.** This section describes Phase 7
+> on the **Zen** base. It was re-run later on the Firefox ESR base after the re-platform
+> — see [§4h](#4h-phase-7--first-run-on-the-firefox-esr-base-2026-09-20). §4h does not
+> supersede this one; it is a second run on a different base, and two of the three
+> defects found here were found again there because the port branched from before this
+> commit (`dd49da9`).
 
-**Committed untested, deliberately and on the record.** Phase 7 was committed in this
-state so the work is not lost, not because it is done. The next session builds it, runs
-`build/marionette-phase7.py`, fixes what that finds, recommits, and then replaces the
-marker above with `<!-- PHASE7-TEST-STATUS: TESTED <commit-sha> -->` and rewrites this
-section to say what the probe actually showed. See the READ FIRST block at the top of
-[REMAINING_WORK.md](REMAINING_WORK.md).
+**Built and driven at runtime, on the record.** Phase 7 had its first completed build
+(Apple Silicon, ~57 min) and its first L4 probe on 2026-08-27.
+`build/marionette-phase7.py`, launched on a **fresh** profile with
+`MOZ_DISABLE_CONTENT_SANDBOX=1`, reports **75 passed, 0 failed**. The base chrome probe
+(`marionette-verify.py`) is clean alongside it. This section now says what the probe
+showed, not what was hoped.
 
-Written 2026-08-17, corrected 2026-08-23. Stated plainly because this section exists
-to stop us confusing "it applies" with "it works" — and the correction matters: an
-earlier draft of this heading said "built", which was not true and is the exact
-mistake the section is meant to prevent.
+Written 2026-08-17, corrected 2026-08-23, verified 2026-08-27. The earlier drafts said
+"never built"; that was true when written and is why this section exists — to keep
+"it applies" apart from "it works". The distinction paid off: the first run drove code
+that had passed every static gate and was dead anyway.
 
-**No build of this series has ever completed, so no L4 probe has ever run.** Two
-attempts were made. The first failed outright on the sorted-list defect below. The
-second got past the `moz.build` read and into the C++ compile before it was stopped
-part-way: a full Gecko build exhausts RAM on the development machine and spends its
-time in swap, which makes the ~27-minute build effectively unbounded there. This is a
-*hardware* gate, not a code one — it says nothing about whether the series compiles,
-only that we do not know. `build/marionette-phase7.py` is written, executable and
-syntax-checked, and is waiting for a machine that can produce a build.
+**Three defects only a run could show — found by the probe, fixed, re-probed clean:**
 
-**What has been settled**
+1. **0083 — the knowledge graph module never packaged.** `KavachaKnowledgeGraph.sys.mjs`
+   was created but never added to `src/zen/common/moz.build`'s `EXTRA_JS_MODULES`, so
+   `resource:///modules/KavachaKnowledgeGraph.sys.mjs` failed to load — `about:knowledge`'s
+   graph, `describe()`, `hubs()` and every edge were dead in a real build while the
+   round-trip, syntax and manifest gates all passed. This is the 0059 shape exactly
+   (present, packaged elsewhere, dead here) and is the second distinct unsorted/omitted
+   `EXTRA_JS_MODULES` bug in this series — the Workflows one was caught pre-commit, this
+   one only by the run. Registering it shifted patch 0084's adjacent `moz.build` hunk,
+   regenerated to match; the 87-patch round-trip is byte-identical again.
+2. **0083 — the entity parser dropped one-character names.** `parseEntities` rejected any
+   `name.length < 2`, discarding legitimately single-letter entities ("X", "Q") and
+   returning nothing for a model reply of `[{"name":"X",...}]`. Relaxed to drop only
+   empty/duplicate names. Confirmed in isolation (pure function, node) and in the probe.
+3. **0084 — focus mode left notifications permanently denied.** The park pref
+   `kavacha.focus.saved-notification-default` shipped a default of 0
+   (`ui/defaults/kavacha-ux.js`), and libpref prunes a user value equal to its default —
+   so when the user's notification default was 0 (the common "ask"), `_muteNotifications`
+   could not persist the saved value, its `prefHasUserValue` sentinel never set,
+   `_restoreNotifications` early-returned, and the default stayed at 2 (DENY) after the
+   first session. The ROADMAP line boasting "restored exactly … before the bug rather
+   than after" was, ironically, describing the bug. Fix: the park pref ships no default.
+   Verified on a fresh profile: `before=0 → after=0`.
 
-| Check | Result |
+**What the probe proved (75/75), by patch:**
+
+| Patch | Now driven at runtime |
 |---|---|
-| Series round-trip | All six patches reverse-apply newest→oldest and forward-apply oldest→newest in a scratch copy, producing a byte-identical tree over **50 touched files**, zero `.rej` |
-| Syntax | `node --check` on every new and modified `.mjs` / `.js` |
-| Component manifests | The four new `components.conf` files parse and declare distinct cids and contract ids (`knowledge`, `focus`, `workflows`, `write`) |
-| Schema | `automation/workflow.schema.json` parses; its action `enum` matches the engine's `KavachaWorkflowActions` (11 entries) |
-| Build — **attempted, never completed** | The attempt paid for itself anyway: `EXTRA_JS_MODULES` is a `StrictOrderingOnAppendList`, and `KavachaWorkflows.sys.mjs` had been inserted before `KavachaWidgetHost.sys.mjs`, which fails the `moz.build` read outright and which **no** static gate catches. Fixed in the tree *and* in patch 0085's hunk, then the round-trip was re-run. A second attempt then read `moz.build` successfully and began compiling before it was stopped for the memory reason above — so the manifests parse, and **nothing beyond that is established**: not that the C++ links, not that the jar entries land, not that a single new file reaches `dist/` |
+| 0082 | Knowledge sidebar registers; note upsert + empty-body delete; highlight and clip store; `forPage` returns note+highlight+clip; search finds the note; JSON export; `removeForUrl` clears the page |
+| 0083 | `about:knowledge` contract registered and the module loads; an edge dedups to weight 2; self- and non-web edges refused; `hubs()` and the four `describe()` sections; all five `parseEntities` cases (prose-wrapped, refusal, junk-kind→topic, unnamed-dropped, capped-at-12) |
+| 0084 | `about:focus` registered; base-domain block matching; session active with minutes left; end time in **seconds** (not overflowed); notifications denied during and **restored exactly** after |
+| 0085 | `about:workflows` registered; valid workflow saves + registers its `Run:` command; `javascript:` URL and unknown step refused; sub-15-minute interval refused; a run executes its steps; a workflow cannot run another; delete revokes the command |
+| 0086 | Back-then-elsewhere produces a **sibling**, not a truncation; branch points marked; cursor on the newest node; a reload adds no node; `about:blank` is never a node |
+| 0087 | APA (title-first with no author, author-first with one), MLA quoting, BibTeX TeX-escaping and host+year key; the two panels exist; all 13 commands register and every command icon resolves |
 
-**Logic verified without a browser (41 checks, 0 failures).**
-`test/phase7-logic/phase7_logic_test.mjs` imports the **real** modules with Gecko's
-globals stubbed — the technique that reproduced D8 — and exercises citation formatting,
-hostile entity replies, URL keying, the tab-tree classifier and the non-schema half of
-workflow validation. It found two things a static gate could not:
+**Prior static/logic results (still true, kept for the record).** The 87-patch series
+round-trips byte-identically with zero `.rej`; `node --check` passes on every new/modified
+`.mjs`/`.js`; the four `components.conf` parse with distinct cids/contract ids; the
+workflow schema's action `enum` matches `KavachaWorkflowActions`; and
+`test/phase7-logic/phase7_logic_test.mjs` (41 checks, real modules, Gecko globals stubbed)
+earlier fixed the multi-step-back tab-tree classifier and the ordering of the
+`run-command` recursion refusal.
 
-- The tab-tree classifier recognised only a **one-step** back, so the Back button's
-  dropdown (a multi-entry jump) duplicated a node instead of moving the cursor. Fixed
-  by walking the whole ancestor chain; forward stays one level, because the ancestor
-  chain is bounded and descendants are not.
-- The `run-command` recursion refusal ran *after* the command lookup, so it depended on
-  an unrelated lookup succeeding. Moved ahead of it — a security check that only runs
-  when something else happens to succeed is one refactor from not running.
-
-Passing there is **not** L4: it never touches SQLite, the registry, chrome UI, the
-actor or a real navigation.
-
-**What has NOT been settled — the arm list**
-
-Nothing below has been driven at runtime, and nothing below is even *packaged* yet. Given the 0059 saga (four settings panes that
-were present, packaged, and dead), this is the section that matters.
-
-| Patch | Unproven |
-|---|---|
-| 0082 | The Knowledge sidebar registers and opens; a note autosaves and an emptied note deletes; `CaptureSelection` returns a real selection; a clip stores real page text and the saved copy renders offline; the two new universal-search groups appear with their headers |
-| 0083 | `about:knowledge` loads (all four new about: pages share this risk — a JS about-module that registers but does not resolve is exactly the 0024 gap); a `followed` edge is written on an ordinary navigation and an `opened-from` edge on a link-to-new-tab; deleting the graph leaves the notes |
-| 0084 | A blocked site actually reaches the block page rather than a network error; the notification default is restored exactly on end; a session survives a restart and expires on the clock |
-| 0085 | A workflow saves, registers its `Run:` command, and runs; an invalid document is refused at save AND at run; a deleted workflow's command leaves the palette; `run-command` refuses a workflow command; the tab cap stops a runaway |
-| 0086 | Back-then-elsewhere really produces a sibling rather than a truncation; the tree survives a restart through SessionStore; the saved-session manager lists across Spaces and its delete confirms |
-| 0087 | A citation copies with real metadata from a `citation_*` page; `about:write` edits the Space note and the page note and saves both; the Screenshots command fires Firefox's UI |
-
-Two harness notes carried forward from §4c and still in force: a `.sys.mjs` change needs
-`bootstrap.sh fast` **plus** clearing the profile `startupCache`, and JSWindow actor
-child scripts do not load on a local macOS build without
-`MOZ_DISABLE_CONTENT_SANDBOX=1` — which affects 0082's clip/highlight capture and
-0087's citation metadata, since all three go through the `KavachaIndexer` actor.
+Two harness notes, now confirmed necessary in practice: a `.sys.mjs` change needs
+`bootstrap.sh fast` **plus** clearing the profile `startupCache`; a **new**
+`EXTRA_JS_MODULES` entry needs a full `mach build`, not `build:ui`; and JSWindow actor
+child scripts do not load on a local macOS build without `MOZ_DISABLE_CONTENT_SANDBOX=1`,
+which affects 0082's clip/highlight capture and 0087's citation metadata through the
+`KavachaIndexer` actor.
 
 ## 5. Documentation reconciliation needed
 
@@ -669,17 +666,32 @@ Kavacha adopted rather than built; history attribution ported in full.
 installer), any L4 arm in §3 that this probe does not exercise, or subjective visual
 sign-off (B7).
 
-## 4h. Phase 7 — TESTED (2026-09-20)
+## 4h. Phase 7 — first run on the Firefox ESR base (2026-09-20)
 
 <!-- PHASE7-TEST-STATUS: TESTED aff0e3d (build 20260920090557) -->
-**Phase 7 has been built and driven at runtime.** `build/marionette-phase7.py`, written
-2026-08-17 and never once executed until today, ran clean on a fresh profile against build
-`20260920090557`: **77 checks, 0 failures** — knowledge capture (notes, highlights, clips,
-search, export, per-page delete), the knowledge graph (edge dedup and weighting, self-edge
-and non-web refusal, hubs, describe, the entity parser), focus sessions, automation
-workflows, the tab-history tree, citations and writing mode.
+**Phase 7 runs on the Firefox ESR base.** `build/marionette-phase7.py` ran clean on a
+fresh profile against build `20260920090557`: **77 checks, 0 failures** — knowledge
+capture (notes, highlights, clips, search, export, per-page delete), the knowledge graph
+(edge dedup and weighting, self-edge and non-web refusal, hubs, describe, the entity
+parser), focus sessions, automation workflows, the tab-history tree, citations and
+writing mode.
 
-Getting there took four fixes, and the first-ever run is what found all of them:
+> **This was not Phase 7's first run.** Earlier drafts of this section said the probe had
+> "never once been executed until today" and called this the first-ever run. That was
+> false, and it was written in good faith from a branch that did not contain the evidence:
+> the re-platform branched at `2cc7cc0`, and Phase 7's actual first build and first L4
+> probe happened on the **Zen** base on 2026-08-27 (`dd49da9`, 75/75, Apple Silicon) —
+> [§4d](#4d-phase-7-00820086--built-and-l4-verified-2026-08-27-zen-base). What is true
+> here is narrower and still worth recording: this is the first Phase 7 run **on the
+> Firefox ESR base**, on a different platform, after every feature was ported.
+>
+> The two histories met on 2026-09-20. The lesson is the one this file exists for: a
+> claim of the form "this has never been done" is a claim about everything you cannot
+> see, and a branch is exactly the thing that hides it.
+
+Getting there took four fixes. Two of them are the same defects 2026-08-27 had already
+found and fixed on the Zen base — the port branched from before those fixes, so it
+re-derived them independently rather than inheriting them:
 
 - **A real defect: focus mode left desktop notifications blocked permanently.**
   `kavacha.focus.saved-notification-default` shipped with default `0`. In Gecko,
@@ -688,18 +700,26 @@ Getting there took four fixes, and the first-ever run is what found all of them:
   `permissions.default.desktop-notification` ("ask"). So "save the previous value" stored
   nothing, `_restoreNotifications` found nothing saved and returned early, and every focus
   session ended with notifications still blocked, across restarts. Fixed with a `-1`
-  sentinel and one shared accessor. **Patch 0084's own header claims the opposite** — "the
-  notification default is restored exactly on end; patch 0066's lesson applied before the
-  bug". It was not, and could not be known either way, because the code had never run.
+  sentinel and one shared accessor. **Already found and fixed on 2026-08-27** on the Zen
+  base, which resolved it the other way — by shipping no default at all, so
+  `prefHasUserValue()` is an honest sentinel. Both fixes are correct and mutually
+  exclusive; `ui/defaults/kavacha-ux.js` now carries the `-1` default the ported module
+  expects, and says so. The pre-2026-08-27 header of patch 0084 asserted the opposite
+  ("the notification default is restored exactly on end"); the 2026-08-27 commit corrected
+  that header in place, and that correction is preserved in
+  `browser/patches-zen/0084-focus-mode.patch`.
 - **Two port gaps:** the tab-history-tree and saved-session panels lived in Zen's
   `popups.inc` and had no Firefox-base equivalent, so `KavachaTabHistory.showPanel()`
   silently did nothing and `kavachaOpenSavedSessions` was still a stub. Both panels are
   built now and the session manager (restore / rename / delete) is implemented.
-- **Three of the probe's own assertions were wrong.** Its entity-parser cases used
-  one-character names (`"X"`, `"A"`), which the parser deliberately rejects as LLM noise
-  (`name.length < 2`), so they never reached the behaviour under test. A probe that has
-  never executed has unverified expectations too; corrected, with a case added for the
-  length rule itself.
+- **Three of the probe's assertions were changed — and one of those changes was wrong.**
+  Its entity-parser cases used one-character names (`"X"`, `"A"`). I read the parser's
+  `name.length < 2` guard as deliberate LLM-noise rejection and rewrote the probe to match
+  it. That was backwards: 2026-08-27 had already diagnosed the same guard as a real defect
+  — it discards legitimately single-letter entities (`"X"`, `"Q"`) — and relaxed it to
+  drop only empty and duplicate names. Rewriting a probe so it agrees with the code under
+  test removes the only thing that could have caught this. The guard is fixed and the
+  assertion restored to test the intended behaviour; see the commit following the merge.
 
 **Still not claimed for Phase 7:** the capture paths that need a real http(s) page
 (`CaptureSelection`, citation metadata from live page markup) — the indexer actor matches

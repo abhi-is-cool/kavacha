@@ -16,7 +16,7 @@
 > | M2 | Substrate: startup, workspaces model, palette, welcome, theme tokens, Settings panes | `build/marionette-substrate.py` + `marionette-restart.py` | **done 2026-09-19** (43/43 + 7/7, [VERIFICATION](VERIFICATION.md) §4f; patches 0003/0004) |
 > | M3 | Port every Zen-era feature into `browser/overlay/` | substrate probe 104/104 on a fresh profile | **done 2026-09-20** ([VERIFICATION](VERIFICATION.md) §4g) |
 > | M4 | Three-platform CI incl. Windows installer + Marionette step | one green scheduled run, three assets | **open — the only milestone left** (workflow written and locally pre-flighted; see below) |
-> | M5 | **Phase 7's first-ever probe** | `marionette-phase7.py` 77/77 on a fresh profile | **done 2026-09-20** ([VERIFICATION](VERIFICATION.md) §4h) |
+> | M5 | **Phase 7 on the Firefox ESR base** | `marionette-phase7.py` 77/77 on a fresh profile | **done 2026-09-20** ([VERIFICATION](VERIFICATION.md) §4h) |
 >
 > **M4 status, 2026-09-20.** `.github/workflows/ci.yml` has had a `windows-latest` leg,
 > a `check-overlay.py` step and a Marionette step for some time; **none of it has ever
@@ -35,12 +35,18 @@
 > on a runner, and whether macOS and Linux still build on the Firefox base at all —
 > neither has been built on it.
 >
-> Phase 7 ran for the first time on 2026-09-20 and passes 77/77; the marker above is
-> flipped on that transcript, not on a hope. Its first execution found a real defect
-> (focus mode never restored the notification default) — see
-> [VERIFICATION](VERIFICATION.md) §4h. Everything in this file below now runs on the
-> Firefox base; what a *release* still waits on is unchanged (R1 update service, R2
-> signing).
+> **Phase 7 on the Firefox ESR base passes 77/77** (2026-09-20); the marker above is
+> flipped on that transcript, not on a hope. **This was not Phase 7's first run** — an
+> earlier version of this block said it was, which was false. Phase 7 was first built and
+> probed on the **Zen** base on 2026-08-27 (75/75, Apple Silicon, commit `dd49da9`), and
+> that run found three defects no static gate caught: the knowledge-graph module created
+> but never registered in `EXTRA_JS_MODULES` (dead in a packaged build), its entity parser
+> dropping every one-character name, and focus mode leaving notifications permanently
+> denied because its park pref shipped a default libpref pruned
+> ([VERIFICATION](VERIFICATION.md) §4d). The re-platform branched from before those fixes,
+> so two of the three were re-derived independently on the Firefox base rather than
+> inherited (§4h). Everything in this file below now runs on the Firefox base; what a
+> *release* still waits on is unchanged (R1 update service, R2 signing).
 >
 > **Known regression against the Zen build, accepted deliberately:** per-space bookmarks
 > (ADR 0005 decision 1 relied on Zen's Places side table) are deferred; the schema default
@@ -68,8 +74,9 @@ Two things are deliberately elsewhere:
   Separate products, gated on the browser shipping.
 
 Where we are: **Phases 1–4, 6 and 7 feature-complete** through patch 0087 (2026-08-17)
-— and since 2026-09-20 all of it is ported to the Firefox ESR base and probe-verified,
-Phase 7 included (§6; [VERIFICATION](VERIFICATION.md) §4g/§4h),
+— Phase 7's six patches were **built and L4-verified on the Zen base** (75/75,
+2026-08-27), and since 2026-09-20 all of it is ported to the Firefox ESR base and
+probe-verified, Phase 7 included (§6; [VERIFICATION](VERIFICATION.md) §4d/§4g/§4h),
 **except** the open Phase 1 **update-service blocker** (see ROADMAP.md — no path to ship a
 security fix until `updates.kavacha.app` exists) and the release gates in
 [SHIPPING.md](SHIPPING.md). **Phase 5 (accounts and sync) has not started** and is now
@@ -337,7 +344,7 @@ model must be off by default, clearly labeled, and per-request opt-in. Patch 007
 endpoint guarantee holds for all of Phase 6 — page text, questions and tab titles reach
 `kavacha.ai.endpoint` or nowhere.
 
-## 6. Phase 7 — Browser, later (written 2026-08-17; **built, ported and TESTED 2026-09-20**)
+## 6. Phase 7 — Browser, later (6 of 6, patches 0082–0087; **built + L4-verified 2026-08-27 on Zen; ported and re-verified 2026-09-20 on Firefox ESR**)
 
 Browser features, no servers, no accounts. Built ahead of its post-v1.0 slot because
 none of it needs an account; **it moves no release gate**. Per-item reasoning in
@@ -357,17 +364,17 @@ none of it needs an account; **it moves no release gate**. Per-item reasoning in
 
 **Open, and stated rather than implied:**
 
-- [ ] **A completed build of 0082–0087 — this comes first, and has never happened.**
-      The series round-trips byte-identically over 50 files, and a build *attempt*
-      caught one real defect no static gate can (an unsorted `EXTRA_JS_MODULES` list
-      that fails the `moz.build` read outright). But neither attempt finished: the
-      development machine runs out of RAM and thrashes swap, so a full Gecko build
-      does not complete there. Until it does, the compile itself is unproven.
-- [ ] **Functional (L4) verification of 0082–0087**, blocked on the item above.
-      **No runtime probe has driven any of the six features**, and the probe that
-      would (`build/marionette-phase7.py`) is written and waiting. Given the 0059
-      saga — four panes that were present, packaged and dead — this is the item that
-      matters most in this section. See [VERIFICATION.md](VERIFICATION.md) §4d.
+- [x] **A completed build of 0082–0087** (2026-08-27, Apple Silicon, ~57 min). The
+      first build caught nothing extra by itself; the *probe* did the finding. Note the
+      series carries TWO distinct unsorted/omitted `EXTRA_JS_MODULES` bugs: the Workflows
+      one fixed pre-commit, and the KnowledgeGraph one fixed now (0083) — the module was
+      created but never registered, so it never packaged.
+- [x] **Functional (L4) verification of 0082–0087** — `build/marionette-phase7.py`
+      **75/75** on the fixed build, launched with `MOZ_DISABLE_CONTENT_SANDBOX=1` on a
+      fresh profile. Three defects found and fixed (graph registration, entity-name
+      guard, focus notification-restore pref pruning); re-probed clean. Exactly the 0059
+      class — present, packaged, and (for the graph) dead — caught this time by a run.
+      See [VERIFICATION.md](VERIFICATION.md) §4d.
 - [ ] **REST client.** Deliberately not built (0087). A developer tool with its own
       request store, auth handling and history is a product inside a product, and the
       roadmap already calls this row a marketplace-bundle candidate. This is the item
@@ -426,11 +433,10 @@ Corrections the work forced, recorded so they are not re-litigated:
    source the day it landed.
 3. ~~Blocked-today badge surface~~ — **done** (0077).
 4. ~~Phase 2/3 follow-ups (§3)~~ — **done** (0051–0058).
-5. **Build Phase 7, then functionally verify it (§6).** Six new features, four new
-   `about:` pages, two new SQLite stores and a new sidebar — all of it written, none of
-   it compiled to completion, none of it driven at runtime. It needs a machine with the
-   memory for a full Gecko build; the current one swaps. The 0059 saga is the argument:
-   everything was present, packaged, and dead. This now outranks the items below it.
+5. ~~Build Phase 7, then functionally verify it (§6).~~ — **done** (2026-08-27):
+   first completed build + `marionette-phase7.py` 75/75, three run-only defects fixed.
+   The 0059 argument held: the knowledge graph was present, packaged, and dead until the
+   probe drove it.
 6. **Phase 5 — accounts and sync** (§4) is now the only unstarted phase, and it is
    the one with real prerequisites: a service to run, and an external crypto review
    before sync can ship (SHIPPING R9). The one piece that does **not** depend on the

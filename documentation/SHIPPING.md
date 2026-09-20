@@ -94,16 +94,21 @@ from clean 7/7.
   resolves to real text rather than a raw Fluent id. Same gap: operating a control has not
   been shown to change anything.
 
-**Phase 7 (0082–0087): built, ported and TESTED 2026-09-20.** Six features, four new
-`about:` pages, two new SQLite stores and a second sidebar. They **gate nothing** — no
-release requirement names them — but they enlarge the surface the Dev Preview's L4
-requirement covers. Written 2026-08-17 and never executed until the port to the
-Firefox ESR base: `marionette-phase7.py` now runs 77 checks with 0 failures on a fresh
-profile ([VERIFICATION.md](VERIFICATION.md) §4h). The first run found a real defect —
-focus mode never restored the desktop-notification default, leaving notifications
-blocked permanently after every session — in a file whose own header claimed that bug
-had been pre-empted. Still unproven for Phase 7: the capture paths needing a real
-http(s) page (clip/highlight capture, citation metadata from live markup).
+**Phase 7 (0082–0087): built and L4-verified 2026-08-27, ported and re-verified
+2026-09-20.** Six features, four new `about:` pages, two new SQLite stores and a second
+sidebar. They **gate nothing** — no release requirement names them — but they enlarge the
+surface the Dev Preview's L4 requirement covers, and that surface has been built and
+driven twice. On the **Zen** base, `build/marionette-phase7.py` reported **75/75** on
+2026-08-27, and that first run found three defects no static gate caught: an omitted
+`EXTRA_JS_MODULES` registration that left the knowledge-graph module dead in a packaged
+build, an entity-name guard that discarded one-character names, and a focus-mode park pref
+that libpref pruned ([VERIFICATION.md](VERIFICATION.md) §4d). On the **Firefox ESR** base
+after the port, it reports **77/77** ([VERIFICATION.md](VERIFICATION.md) §4h); because the
+port branched from before the 2026-08-27 fixes, two of those three defects were found a
+second time and fixed independently. Still unproven for Phase 7: the capture paths needing
+a real http(s) page (clip/highlight capture, citation metadata from live markup). The
+lesson stands regardless: neither "the patch applies" nor "it started compiling" was
+progress; a run was.
 
 **Remaining open arms:**
 

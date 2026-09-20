@@ -48,6 +48,18 @@
 # neither cheap nor reliable, and a session is one span of attention anyway.
 # Stated in the code as well, because the other reading is reasonable.
 #
+# TESTED & FIXED 2026-08-27 (first completed build + L4 probe of this series).
+# The "notification defaults are restored exactly" claim above was FALSE in the
+# common case. The park pref kavacha.focus.saved-notification-default shipped a
+# DEFAULT of 0 (ui/defaults/kavacha-ux.js), and libpref prunes a user value that
+# equals its default — so when the user's notification default was 0 (ask),
+# _muteNotifications could not persist the saved value, the prefHasUserValue
+# sentinel never set, _restoreNotifications early-returned, and notifications
+# stayed DENIED after the first session. Fix (in kavacha-ux.js): the park pref
+# ships no default, so it is created on demand and the sentinel is honest.
+# Verified on a fresh profile: before=0 -> after=0. (This patch itself changed
+# only its moz.build hunk, regenerated for patch 0083's new registration.)
+#
 diff --git a/locales/en-US/browser/browser/zen-command-palette.ftl b/locales/en-US/browser/browser/zen-command-palette.ftl
 index 32d5eb7..465f5fb 100644
 --- a/locales/en-US/browser/browser/zen-command-palette.ftl
@@ -91,7 +103,7 @@ index a0405a9..2939923 100644
        // (process singleton + per-window apply; ADR 0008).
        const kavachaLayout = ChromeUtils.importESModule(
 diff --git a/src/zen/common/moz.build b/src/zen/common/moz.build
-index 96b5d56..ba25cd4 100644
+index fa7cfd3..5f9a9ef 100644
 --- a/src/zen/common/moz.build
 +++ b/src/zen/common/moz.build
 @@ -8,6 +8,7 @@ EXTRA_JS_MODULES += [
@@ -100,8 +112,8 @@ index 96b5d56..ba25cd4 100644
    "sys/KavachaCommandRegistry.sys.mjs",
 +  "sys/KavachaFocusMode.sys.mjs",
    "sys/KavachaKnowledge.sys.mjs",
+   "sys/KavachaKnowledgeGraph.sys.mjs",
    "sys/KavachaKnowledgeSidebar.sys.mjs",
-   "sys/KavachaLayoutEngine.sys.mjs",
 diff --git a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs b/src/zen/common/sys/KavachaCommandRegistry.sys.mjs
 index 9976135..7941495 100644
 --- a/src/zen/common/sys/KavachaCommandRegistry.sys.mjs

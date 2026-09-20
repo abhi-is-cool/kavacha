@@ -134,14 +134,24 @@ pref("kavacha.knowledge.record-links", true);
 pref("kavacha.focus.session-ends-at", 0);
 pref("kavacha.focus.default-minutes", 50);
 // While a session runs, websites cannot ask to send notifications. The value
-// that was there before is parked in the second pref and written back when the
-// session ends — explicit ownership, which is what patch 0066 cost us to learn.
+// that was there before is parked in kavacha.focus.saved-notification-default
+// and written back when the session ends — explicit ownership, which is what
+// patch 0066 cost us to learn.
 pref("kavacha.focus.block-notifications", true);
-// -1 = nothing saved. NOT 0: Gecko clears a pref's user value when you set
-// it to its own default, and 0 is the ordinary value of
-// permissions.default.desktop-notification, so a 0 default made "save the
-// previous value" a silent no-op and left notifications blocked forever
-// after a focus session (found 2026-09-20).
+//
+// The park pref and the code that reads it MUST AGREE about what "nothing is
+// saved" looks like, because libpref PRUNES a user value equal to the default.
+// The common notification default is 0 (ask), so an earlier default of 0 here
+// made setIntPref(..., 0) a silent no-op: the sentinel never set, restore never
+// ran, and notifications stayed DENIED forever after the first session.
+//
+// Found 2026-08-27 on the Zen base (commit dd49da9), which fixed it by shipping
+// NO default, so prefHasUserValue() is an honest sentinel. The port to the
+// Firefox ESR base hit the same bug independently and resolved it the other
+// way: KavachaFocusMode reads getIntPref(pref, -1), so a -1 default is both an
+// honest sentinel AND lets the restore path clear the user value by writing -1
+// back. Both are correct and they are mutually exclusive — this is the one the
+// ported module expects. Changing either half requires changing the other.
 pref("kavacha.focus.saved-notification-default", -1);
 
 // Automation (ADR 0017 / patch 0085): workflows are documents — a trigger and

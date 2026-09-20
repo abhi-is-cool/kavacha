@@ -1,6 +1,6 @@
 # Kavacha — Remaining Work
 
-<!-- PHASE7-TEST-STATUS: TESTED 20260920090557 -->
+<!-- PHASE7-TEST-STATUS: TESTED aff0e3d (build 20260920090557) -->
 > ## READ FIRST — the re-platform: M0–M3 and M5 done, M4 (CI) open
 >
 > **2026-09-19:** Kavacha is moving off Zen onto a direct **Firefox ESR 153** overlay built

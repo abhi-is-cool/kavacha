@@ -671,7 +671,7 @@ sign-off (B7).
 
 ## 4h. Phase 7 — TESTED (2026-09-20)
 
-<!-- PHASE7-TEST-STATUS: TESTED 20260920090557 -->
+<!-- PHASE7-TEST-STATUS: TESTED aff0e3d (build 20260920090557) -->
 **Phase 7 has been built and driven at runtime.** `build/marionette-phase7.py`, written
 2026-08-17 and never once executed until today, ran clean on a fresh profile against build
 `20260920090557`: **77 checks, 0 failures** — knowledge capture (notes, highlights, clips,

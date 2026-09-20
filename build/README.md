@@ -119,6 +119,10 @@ errors` with nothing above it.
    symlinks into the source tree; check a genuinely preprocessed artifact such as the packaged
    `browser/defaults/preferences/firefox-branding.js`.
 
+> The harness notes above (`env -u CLAUDECODE`, purging `startupCache`, the
+> `MOZ_DISABLE_CONTENT_SANDBOX` caveat) were carried over from `context.md`, the
+> Windows→Mac handoff scratch file. It was deleted at port milestone M5, as it said to be.
+
 ## Upstream tracking strategy
 
 - Kavacha pins a commit on Firefox's `esr153` branch (`FIREFOX_COMMIT` in `bootstrap.sh`).

@@ -605,7 +605,12 @@ export const KavachaKnowledgeGraph = {
     const out = [];
     for (const raw of parsed) {
       const name = String(raw?.name || "").trim().slice(0, 80);
-      if (!name || name.length < 2 || seen.has(name.toLowerCase())) {
+      // Empty and duplicate only. An earlier `name.length < 2` here discarded
+      // legitimately single-letter entities ("X", "Q"): a reply of
+      // [{"name":"X"}] yielded nothing at all. Found by the first run of this
+      // code on 2026-08-27 (patches-zen/0083); the Firefox ESR port branched
+      // from before that fix and shipped the guard again.
+      if (!name || seen.has(name.toLowerCase())) {
         continue;
       }
       seen.add(name.toLowerCase());

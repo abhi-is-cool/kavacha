@@ -103,7 +103,7 @@ driven twice. On the **Zen** base, `build/marionette-phase7.py` reported **75/75
 `EXTRA_JS_MODULES` registration that left the knowledge-graph module dead in a packaged
 build, an entity-name guard that discarded one-character names, and a focus-mode park pref
 that libpref pruned ([VERIFICATION.md](VERIFICATION.md) §4d). On the **Firefox ESR** base
-after the port, it reports **77/77** ([VERIFICATION.md](VERIFICATION.md) §4h); because the
+after the port, it reports **78/78** ([VERIFICATION.md](VERIFICATION.md) §4h); because the
 port branched from before the 2026-08-27 fixes, two of those three defects were found a
 second time and fixed independently. Still unproven for Phase 7: the capture paths needing
 a real http(s) page (clip/highlight capture, citation metadata from live markup). The

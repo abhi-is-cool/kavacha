@@ -277,8 +277,8 @@ jobs:
         shell: bash
 
       # L4 probes over Marionette on the real artifact: the M2 substrate (104
-      # checks), Phase 7 (77) and the workspace restart round-trip (3 + 7
-      # across a real relaunch) — 188 in total. This is load-bearing, not
+      # checks), Phase 7 (78) and the workspace restart round-trip (3 + 7
+      # across a real relaunch) — 192 in total. This is load-bearing, not
       # informational: the substrate landed at port milestone M2 and these are
       # the gates VERIFICATION.md §4f-§4i record. marionette-ci.py launches and
       # kills a browser per probe on its own fresh profile; sharing one profile

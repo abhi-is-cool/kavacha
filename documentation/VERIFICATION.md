@@ -670,7 +670,8 @@ sign-off (B7).
 
 <!-- PHASE7-TEST-STATUS: TESTED aff0e3d (build 20260920090557) -->
 **Phase 7 runs on the Firefox ESR base.** `build/marionette-phase7.py` ran clean on a
-fresh profile against build `20260920090557`: **77 checks, 0 failures** — knowledge
+fresh profile against build `20260920090557`, and **78 checks, 0 failures** after the
+entity-parser fix below — knowledge
 capture (notes, highlights, clips, search, export, per-page delete), the knowledge graph
 (edge dedup and weighting, self-edge and non-web refusal, hubs, describe, the entity
 parser), focus sessions, automation workflows, the tab-history tree, citations and
@@ -718,8 +719,12 @@ re-derived them independently rather than inheriting them:
   it. That was backwards: 2026-08-27 had already diagnosed the same guard as a real defect
   — it discards legitimately single-letter entities (`"X"`, `"Q"`) — and relaxed it to
   drop only empty and duplicate names. Rewriting a probe so it agrees with the code under
-  test removes the only thing that could have caught this. The guard is fixed and the
-  assertion restored to test the intended behaviour; see the commit following the merge.
+  test removes the only thing that could have caught this. **Fixed 2026-09-20 after the
+  merge:** the guard now drops only empty and duplicate names, and the probe reads single
+  letters again — `entity parser: single-character names are KEPT` replaces
+  `… are dropped as noise`, with a case added for case-insensitive duplicate collapse.
+  Phase 7 goes 77 → **78 checks, 0 failures**, and both new assertions were confirmed
+  individually in the transcript rather than inferred from the total.
 
 **Still not claimed for Phase 7:** the capture paths that need a real http(s) page
 (`CaptureSelection`, citation metadata from live page markup) — the indexer actor matches
@@ -749,8 +754,8 @@ overlay file was added (`Overlay: 121 files, 1 changed`, commit amended), then d
 is byte-identical (sha256 `b28395b2…`, 4 patches).
 
 **`build/marionette-ci.py`** runs every probe in one command, each on its own `mkdtemp`
-profile, launching and killing the browser itself. Observed: **3/3 probes, 188 checks,
-0 failures, 23 s, headless** — substrate 104, Phase 7 77, restart 3 (phase 1) + 7
+profile, launching and killing the browser itself. Observed: **3/3 probes, 192 checks,
+0 failures, headless** — substrate 104, Phase 7 78, restart 3 (phase 1) + 7
 (phase 2) — against build `20260920093413`. No browser processes were left behind
 afterwards, checked: Firefox's content processes do exit with the parent, so terminating
 the parent is enough. This is also the first evidence that the probes pass **headless**,

@@ -16,7 +16,7 @@
 > | M2 | Substrate: startup, workspaces model, palette, welcome, theme tokens, Settings panes | `build/marionette-substrate.py` + `marionette-restart.py` | **done 2026-09-19** (43/43 + 7/7, [VERIFICATION](VERIFICATION.md) §4f; patches 0003/0004) |
 > | M3 | Port every Zen-era feature into `browser/overlay/` | substrate probe 104/104 on a fresh profile | **done 2026-09-20** ([VERIFICATION](VERIFICATION.md) §4g) |
 > | M4 | Three-platform CI incl. Windows installer + Marionette step | one green scheduled run, three assets | **open — the only milestone left** (workflow written and locally pre-flighted; see below) |
-> | M5 | **Phase 7 on the Firefox ESR base** | `marionette-phase7.py` 77/77 on a fresh profile | **done 2026-09-20** ([VERIFICATION](VERIFICATION.md) §4h) |
+> | M5 | **Phase 7 on the Firefox ESR base** | `marionette-phase7.py` 78/78 on a fresh profile | **done 2026-09-20** ([VERIFICATION](VERIFICATION.md) §4h) |
 >
 > **M4 status, 2026-09-20.** `.github/workflows/ci.yml` has had a `windows-latest` leg,
 > a `check-overlay.py` step and a Marionette step for some time; **none of it has ever
@@ -35,7 +35,7 @@
 > on a runner, and whether macOS and Linux still build on the Firefox base at all —
 > neither has been built on it.
 >
-> **Phase 7 on the Firefox ESR base passes 77/77** (2026-09-20); the marker above is
+> **Phase 7 on the Firefox ESR base passes 78/78** (2026-09-20); the marker above is
 > flipped on that transcript, not on a hope. **This was not Phase 7's first run** — an
 > earlier version of this block said it was, which was false. Phase 7 was first built and
 > probed on the **Zen** base on 2026-08-27 (75/75, Apple Silicon, commit `dd49da9`), and

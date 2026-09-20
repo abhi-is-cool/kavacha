@@ -613,7 +613,7 @@ capture has never run in a default local session. See [VERIFICATION.md](VERIFICA
 > three defects no static gate caught, including focus mode never restoring the
 > desktop-notification default, so every session left notifications blocked permanently.
 > Ported to the **Firefox ESR** base with everything else and run again there on
-> 2026-09-20: 77 checks, 0 failures ([VERIFICATION](VERIFICATION.md) §4h). The port
+> 2026-09-20: 78 checks, 0 failures ([VERIFICATION](VERIFICATION.md) §4h). The port
 > branched from before the 2026-08-27 fixes, so two of those three defects were
 > re-derived and fixed independently rather than inherited.
 

@@ -147,18 +147,24 @@ try {
        G.parseEntities('Sure! [{"name":"Kerala","kind":"place"}]').length === 1);
     ok("entity parser: refusal yields nothing",
        G.parseEntities("I cannot help with that.").length === 0);
-    // Names are required to be >= 2 characters (single letters are LLM noise),
-    // so these cases need real names — the originals used "X" and "A" and were
-    // rejected for the LENGTH, never reaching the behaviour under test. Found
-    // 2026-09-20, the first time this probe was ever executed.
+    // These cases use single-letter names on purpose. They are the original
+    // ones, and they are the ones that matter: an earlier `name.length < 2`
+    // guard swallowed them, so each case was rejected for its LENGTH and never
+    // reached the behaviour it names. On 2026-09-20 this probe was rewritten to
+    // use "Xylem"/"Ada" so it would agree with that guard — which is backwards.
+    // A probe rewritten to agree with the code under test cannot catch the code.
+    // The guard was the defect (found 2026-08-27, patches-zen/0083); it is gone,
+    // and these read single letters again.
     ok("entity parser: junk kind falls back to topic",
-       G.parseEntities('[{"name":"Xylem","kind":"weapon"}]')[0]?.kind === "topic");
+       G.parseEntities('[{"name":"X","kind":"weapon"}]')[0]?.kind === "topic");
     ok("entity parser: unnamed entries dropped",
        G.parseEntities('[{"kind":"person"},{"name":"Ada"}]').length === 1);
     ok("entity parser: a valid kind is preserved",
-       G.parseEntities('[{"name":"Ada","kind":"person"}]')[0]?.kind === "person");
-    ok("entity parser: single-character names are dropped as noise",
-       G.parseEntities('[{"name":"X"}]').length === 0);
+       G.parseEntities('[{"name":"A","kind":"person"}]')[0]?.kind === "person");
+    ok("entity parser: single-character names are KEPT",
+       G.parseEntities('[{"name":"X"},{"name":"Q"}]').length === 2);
+    ok("entity parser: duplicate names collapse case-insensitively",
+       G.parseEntities('[{"name":"Ada"},{"name":"ada"}]').length === 1);
     ok("entity parser: capped at 12",
        G.parseEntities(JSON.stringify(
          Array.from({length: 30}, (_, i) => ({name: "n" + i})))).length === 12);

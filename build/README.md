@@ -149,7 +149,7 @@ rebuild; `update` says so when it takes that path.
    own fresh profile, is one command — this is also what CI runs:
 
    ```
-   python3 build/marionette-ci.py            # substrate 104 + Phase 7 77 + restart 7
+   python3 build/marionette-ci.py            # substrate 104 + Phase 7 78 + restart 3+7
    ```
 
    To drive one probe by hand instead, launch the browser yourself and attach:

@@ -117,7 +117,7 @@ knowledge graph, automation, focus mode, offline mode (the text half), tab histo
 and L4-verified 2026-08-27 — `build/marionette-phase7.py` reports 75/75, after fixing
 three defects the first run exposed (a knowledge-graph module that never registered, an
 entity-name guard, and a focus-mode pref libpref pruned). They were then ported to the
-Firefox ESR base and run again there on 2026-09-20 (77/77). See ROADMAP "Phase 7" and
+Firefox ESR base and run again there on 2026-09-20 (78/78). See ROADMAP "Phase 7" and
 VERIFICATION §4d (Zen) and §4h (Firefox ESR).
 Still open from that row: the REST client, DOM-anchored highlights, PDF capture, and
 full-fidelity offline archiving.

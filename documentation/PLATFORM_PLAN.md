@@ -34,7 +34,7 @@ Power-user platform
 
 **"Shipped 2026-08-17" in rows 3, 4 and 5 is now backed by a run.** Patches 0082–0087
 were built and L4-verified 2026-08-27 (`build/marionette-phase7.py` 75/75, three
-run-only defects fixed), and re-verified on the Firefox ESR base 2026-09-20 (77/77);
+run-only defects fixed), and re-verified on the Firefox ESR base 2026-09-20 (78/78);
 see [VERIFICATION.md](VERIFICATION.md) §4d (Zen) and §4h (Firefox ESR).
 
 ## Workspace OS — target model (Phase 2 extension)

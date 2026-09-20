@@ -71,7 +71,8 @@ user-visible surface of the index and starts now (see Phase 3 checklist).
       resource caps (-j2, no debug symbols; hosted runners OOM-kill otherwise).
       Windows native was upstream-broken at the Zen pin (libwebrtc rule missing when
       linking xul.dll; Zen only cross-compiles Windows) — resolved by leaving Zen
-      (ADR 0020); a native Windows build is the first port milestone (M1).
+      (ADR 0020). **First native Windows build observed 2026-09-19** (M1,
+      VERIFICATION §4e): 30 min, installer produced, R3 passes.
 - [ ] **Update service (`updates.kavacha.app`) — blocker for any public release**
       (added 2026-07-31). `build/generate-branding.sh` points `MOZ_APPUPDATE_HOST`
       at `updates.kavacha.app` and CI already produces update MARs — but nothing

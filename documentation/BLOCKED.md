@@ -24,7 +24,7 @@ Last reviewed: 2026-08-01.
 
 | # | Item | Why it is blocked | What unblocks it |
 |---|---|---|---|
-| **B4** | **Windows native build** | ~~Upstream-broken at the Zen pin (libwebrtc rule missing when linking `xul.dll`; Zen only cross-compiles Windows).~~ **Decided 2026-09-19 ([ADR 0020](decisions/0020-firefox-esr-direct-overlay.md)): the Zen base is retired; Kavacha overlays Firefox ESR directly, where native Windows is a tier-1 path.** No longer blocked on a decision — it is ordinary work: a native build on a Windows host (this box), then a CI leg. Stays listed until a build is *observed* (milestone M1) and CI publishes a Windows asset (M4). | Nothing from you. Evidence: a build transcript, then a green CI run. |
+| **B4** | **Windows native build** | ~~Upstream-broken at the Zen pin (libwebrtc rule missing when linking `xul.dll`; Zen only cross-compiles Windows).~~ **Decided 2026-09-19 ([ADR 0020](decisions/0020-firefox-esr-direct-overlay.md)): the Zen base is retired; Kavacha overlays Firefox ESR directly, where native Windows is a tier-1 path.** No longer blocked on a decision — it is ordinary work: a native build on a Windows host (this box), then a CI leg. **M1 observed 2026-09-19** (VERIFICATION §4e: build, installer, launch, R3 pass on this host). Stays listed until CI publishes a Windows asset (M4). | Nothing from you. Evidence: a green CI run. |
 | **B5** | **Crash rate < 0.5 %** (v1.0 gate) | Kavacha ships no telemetry *by design*. There is no mechanism that could measure this, and inventing one is a product decision, not an implementation detail. | You decide the methodology: opt-in crash reporting, a manual soak-test protocol, or drop the numeric gate as unmeasurable-by-design. |
 
 ## 3. Decisions only you can make

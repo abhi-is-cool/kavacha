@@ -124,7 +124,9 @@ def macos_binary(app_path):
 
 
 def run(app_path, idle_seconds, headless=False):
-    binary = macos_binary(app_path)
+    # Absolute native path: CreateProcess on Windows rejects a relative
+    # forward-slash path that os.path.exists() happily accepts.
+    binary = os.path.abspath(macos_binary(app_path))
     if not os.path.exists(binary):
         print(f"ERROR: browser binary not found at {binary}", file=sys.stderr)
         return 1

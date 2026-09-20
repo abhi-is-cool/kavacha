@@ -34,7 +34,14 @@ pref("breakpad.reportURL", "");
 pref("app.shield.optoutstudies.enabled", false);
 pref("app.normandy.enabled", false);
 pref("app.normandy.api_url", "");
-pref("messaging-system.rsexperimentloader.enabled", false);
+pref("messaging-system.rsexperimentloader.enabled", false); // pre-153 gate; kept for older trees
+// Firefox 153 (Nimbus) enables the experiment loader when ANY of studies,
+// rollouts or Firefox Labs is on. Studies are off above; rollouts have a pref;
+// Labs has only an enterprise policy upstream, so patch 0002 adds this gate
+// (verified 2026-09-19: with the three earlier prefs alone, a fresh profile
+// still pulled nimbus-secure-experiments recipes over Remote Settings).
+pref("nimbus.rollouts.enabled", false);
+pref("nimbus.labs.enabled", false);
 
 // ---------------------------------------------------------------------------
 // Advertising, sponsorship, recommendations — none.

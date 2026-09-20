@@ -1,0 +1,22 @@
+# What: point the application-update host at updates.kavacha.app (SHIPPING.md R1).
+# Why a patch: modern Firefox reads the update URL from application.ini
+# ([AppUpdate] URL), which build/moz.build generates from a hard-coded
+# "aus5.mozilla.org"; the CONFIG override it checks has no configure option,
+# and the app.update.url pref is no longer consulted (verified on the first
+# Firefox 153 build: a fresh idle profile still asked aus5 for update.xml with
+# the pref set). Fails closed until the Kavacha update service exists.
+# Touches: build/moz.build 
+diff --git a/build/moz.build b/build/moz.build
+index 0182121940..34d991c6d0 100644
+--- a/build/moz.build
++++ b/build/moz.build
+@@ -92,7 +92,8 @@ if CONFIG["MOZ_APP_BASENAME"]:
+         if CONFIG[var]:
+             appini_defines[var] = True
+ 
+-    appini_defines["MOZ_APPUPDATE_HOST"] = "aus5.mozilla.org"
++    # Kavacha: first-party update service (SHIPPING.md R1); fails closed until it exists.
++    appini_defines["MOZ_APPUPDATE_HOST"] = "updates.kavacha.app"
+     if CONFIG["MOZ_APPUPDATE_HOST"]:
+         appini_defines["MOZ_APPUPDATE_HOST"] = CONFIG["MOZ_APPUPDATE_HOST"]
+ 

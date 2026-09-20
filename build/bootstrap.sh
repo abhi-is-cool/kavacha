@@ -335,16 +335,27 @@ roundtrip() {
     local patches=("$PATCHES_DIR"/*.patch)
     shopt -u nullglob
     [ ${#patches[@]} -gt 0 ] || { log "No patches — nothing to round-trip."; return 0; }
-    local wt
+    # A sparse worktree holding only the directories the series touches: a full
+    # Firefox checkout is ~400k files and minutes on Windows; this is seconds.
+    local wt dirs
     wt="$(mktemp -d "${TMPDIR:-/tmp}/kavacha-rt.XXXXXX")"
-    git -C "$SRC_DIR" worktree add -q --detach "$wt" HEAD
-    trap 'git -C "$SRC_DIR" worktree remove --force "$wt" >/dev/null 2>&1 || true' EXIT
+    dirs="$(grep -h '^+++ b/' "${patches[@]}" | sed 's#^+++ b/##' | xargs -n1 dirname | sort -u)"
+    git -C "$SRC_DIR" worktree add -q --no-checkout --detach "$wt" HEAD
+    # Expand now: the trap runs after this function's locals are gone.
+    # shellcheck disable=SC2064
+    trap "git -C '$SRC_DIR' worktree remove --force '$wt' >/dev/null 2>&1 || true" EXIT
+    git -C "$wt" sparse-checkout init --cone
+    # shellcheck disable=SC2086
+    git -C "$wt" sparse-checkout set $dirs
+    git -C "$wt" checkout -q --detach HEAD
     local p i
     for p in "${patches[@]}"; do git -C "$wt" apply --check "$p" && git -C "$wt" apply "$p"; done
     local first; first="$(git -C "$wt" diff HEAD | sha256sum | cut -d' ' -f1)"
     for (( i=${#patches[@]}-1; i>=0; i-- )); do git -C "$wt" apply -R "${patches[$i]}"; done
     git -C "$wt" diff --quiet HEAD || fail "Reverse pass left a diff."
-    [ -z "$(find "$wt" -name '*.rej' -o -name '*.orig' | head -1)" ] || fail "Reverse pass left .rej/.orig files."
+    # Only files the patch application CREATED count (Firefox's own tree ships
+    # files named *.orig), hence untracked status rather than a tree-wide find.
+    [ -z "$(git -C "$wt" status --porcelain --untracked-files=all | grep -E '\.(rej|orig)$' | head -1)" ] || fail "Reverse pass left .rej/.orig files."
     for p in "${patches[@]}"; do git -C "$wt" apply "$p"; done
     local second; second="$(git -C "$wt" diff HEAD | sha256sum | cut -d' ' -f1)"
     [ "$first" = "$second" ] || fail "Forward passes differ ($first vs $second)."
@@ -411,12 +422,12 @@ cmd_start() {
 }
 
 cmd_package() {
+    # On Windows `mach package` also runs the NSIS installer rule (make-package
+    # in toolkit/mozapps/installer/packager.mk) and writes
+    # dist/<app>-<version>.<locale>.win64.installer.exe next to the zip.
     mach package
-    if [ "$KV_OS" = "windows" ]; then
-        log "Building the NSIS installer..."
-        mach build installer
-    fi
     log "Packages in $(objdir)/dist/"
+    find "$(objdir)/dist" -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.tar.*' -o -name '*.zip' -o -name '*.installer.exe' \) -exec ls -la {} \;
 }
 
 case "${1:-setup}" in

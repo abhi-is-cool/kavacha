@@ -12,7 +12,7 @@
 > | | Milestone | Gate | Status |
 > |---|---|---|---|
 > | M0 | ADRs + docs; series moved to `patches-zen/` | docs consistent | **done 2026-09-19** |
-> | M1 | Firefox ESR 153 + Kavacha branding builds and launches on the Windows host | `kavacha.exe` launches; network-silence test passes | open |
+> | M1 | Firefox ESR 153 + Kavacha branding builds and launches on the Windows host | `kavacha.exe` launches; network-silence test passes | **done 2026-09-19** ([VERIFICATION](VERIFICATION.md) §4e; patches 0001/0002 came out of it) |
 > | M2 | Substrate: startup, workspaces model, palette, welcome, theme tokens, Settings panes | `build/marionette-substrate.py` | open |
 > | M3 | Port the 87 Zen-era patches tier by tier; parity commit deletes `patches-zen/` | per-subsystem L4 recipes re-run | open |
 > | M4 | Three-platform CI incl. Windows installer + Marionette step | one green scheduled run, three assets | open |

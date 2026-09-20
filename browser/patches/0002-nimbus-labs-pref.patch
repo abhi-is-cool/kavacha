@@ -1,0 +1,28 @@
+# What: gate Firefox Labs (Nimbus) on a pref, nimbus.labs.enabled, default true.
+# Why a patch: Firefox 153 runs the Nimbus experiment loader when studies,
+# rollouts OR Firefox Labs are enabled. Studies and rollouts have prefs;
+# Labs is allowed unless an enterprise policy forbids it, and shipping a
+# policies.json would brand every Kavacha as "managed by your organization".
+# Verified 2026-09-19: with all pref-level switches off, a fresh profile still
+# fetched nimbus-secure-experiments recipes. Kavacha sets the new pref false in
+# privacy/tracker-controls/kavacha.js; upstream behaviour is unchanged by default.
+# Touches: toolkit/components/nimbus/ExperimentAPI.sys.mjs 
+diff --git a/toolkit/components/nimbus/ExperimentAPI.sys.mjs b/toolkit/components/nimbus/ExperimentAPI.sys.mjs
+index b7a013c9b5..d57b5dfdfc 100644
+--- a/toolkit/components/nimbus/ExperimentAPI.sys.mjs
++++ b/toolkit/components/nimbus/ExperimentAPI.sys.mjs
+@@ -482,7 +482,13 @@ export const ExperimentAPI = new (class {
+   }
+ 
+   get labsEnabled() {
+-    return Services.policies.isAllowed("FirefoxLabs");
++    // Kavacha: Firefox Labs is the one Nimbus source with no pref, only an
++    // enterprise policy. Gate it on a pref (default: upstream behaviour) so a
++    // build can switch remote experimentation off without shipping a policy.
++    return (
++      Services.prefs.getBoolPref("nimbus.labs.enabled", true) &&
++      Services.policies.isAllowed("FirefoxLabs")
++    );
+   }
+ 
+   get rolloutsEnabled() {

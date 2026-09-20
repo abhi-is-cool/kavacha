@@ -12,10 +12,14 @@ Kavacha repo (this)                      browser/firefox-source/          binary
   overlay + patches + branding + prefs --->  Firefox ESR @ pin (mach) --->  kavacha(.exe/.app)
 ```
 
-> **Status:** this document describes the build system as designed in ADR 0020. Until port
-> milestone M1 has produced an observed build, treat every command below as the contract
-> `bootstrap.sh` is being written to, not as something that has run. M1 replaces this note
-> with the first build transcript's facts (times, paths, the Visual Studio answer).
+> **Observed 2026-09-19 (M1), Windows 11, 24 threads:** `setup` incl. `mach bootstrap` ~10 min
+> (toolchain downloads), first `build` **30 min**, `package` ~1 min producing
+> `kavacha-153.4.0.en-US.win64.zip` and `…win64.installer.exe`, `fast` ~1 min. macOS and Linux
+> have not yet been built on this base (port milestone M4 proves them in CI).
+>
+> **Do not edit `bootstrap.sh` while a build it launched is running.** bash reads a script
+> incrementally, so when `mach` returns the shell resumes at a stale offset and reports
+> `unexpected EOF` after a build that actually succeeded.
 
 ## Commands
 
@@ -25,7 +29,7 @@ Kavacha repo (this)                      browser/firefox-source/          binary
 | `./build/bootstrap.sh build` | `./mach build`. First build 1–4 h; incremental builds minutes |
 | `./build/bootstrap.sh fast` | `./mach build faster` — repackages JS/CSS/FTL/XHTML/jar content without compiling. Use after any overlay-only edit |
 | `./build/bootstrap.sh start` | `./mach run -- -purgecaches` |
-| `./build/bootstrap.sh package` | `./mach package`; on Windows also the NSIS installer |
+| `./build/bootstrap.sh package` | `./mach package` — zip/tar/DMG plus, on Windows, the NSIS `…installer.exe` (its `make-package` rule runs NSIS itself), all in `obj-*/dist/` |
 | `./build/bootstrap.sh brand` | Regenerate branding only |
 | `./build/bootstrap.sh update` | Reset the checkout to the pin (keeps the objdir), re-copy overlay, re-apply patches, re-brand |
 | `./build/bootstrap.sh overlay-export` | Copy overlay-path files edited in the checkout back into `browser/overlay/` |

@@ -44,7 +44,7 @@ anyone — even a developer preview — means shipping something that cannot be 
 |---|---|
 | Everything above | ❌ |
 | MVP checklist in [MASTER_PLAN.md](MASTER_PLAN.md) fully checked | ❌ **Currently unreadable** — every box is unchecked despite most having shipped, and one line is stale. See §6. |
-| Windows / macOS / Linux builds | ⚠️ macOS ✅ and Linux ✅ **on the retired Zen base** (nightly DMG 2026-07-10, Linux 2026-07-13) — both must be re-proven on the Firefox ESR base (port M4) · **Windows ❌** — R8, unblocked by ADR 0020, not yet built. |
+| Windows / macOS / Linux builds | ⚠️ macOS ✅ and Linux ✅ **on the retired Zen base** (nightly DMG 2026-07-10, Linux 2026-07-13) — both must be re-proven on the Firefox ESR base (port M4) · **Windows ⚠️** — native build, installer and R3 pass **observed locally 2026-09-19** ([VERIFICATION.md](VERIFICATION.md) §4e); R8 closes when CI publishes it (M4). |
 | Startup < 2 s | ❌ Unmeasured — R6, not blocked. |
 | Crash rate < 0.5 % | ❌ Unmeasurable as specified — R7, needs your decision. |
 
@@ -61,7 +61,7 @@ anyone — even a developer preview — means shipping something that cannot be 
 | **R5** | **Security disclosure program live** | Beta | Not started. Policy + intake, see [SECURITY.md](../SECURITY.md). |
 | **R6** | **Startup < 2 s** | v1.0 | Unmeasured. **Not blocked** — measurable locally today. |
 | **R7** | **Crash rate < 0.5 %** | v1.0 | Kavacha ships no telemetry *by design*, so no mechanism could measure this, and inventing one is a product decision (B5). Pick one: opt-in crash reporting, a manual soak-test protocol, or drop the numeric gate as unmeasurable-by-design and replace it with something observable. |
-| **R8** | **Windows native build** | v1.0 | **Unblocked 2026-09-19** by [ADR 0020](decisions/0020-firefox-esr-direct-overlay.md): the `xul.dll` link failure was Zen's native-Windows libwebrtc config, and the Zen base is retired. Closes when CI publishes a Windows installer to the `nightly` release (port milestone M4); a local native build observed on the Windows host (M1) is progress, not closure. |
+| **R8** | **Windows native build** | v1.0 | **Unblocked 2026-09-19** by [ADR 0020](decisions/0020-firefox-esr-direct-overlay.md): the `xul.dll` link failure was Zen's native-Windows libwebrtc config, and the Zen base is retired. Closes when CI publishes a Windows installer to the `nightly` release (port milestone M4). **M1 done 2026-09-19:** native build (30 min), `kavacha-153.4.0.en-US.win64.installer.exe`, launch and R3 pass all observed on the Windows host — progress, not closure. |
 | **R9** | **External review of the crypto design** | Blocks sync | Explicit Phase 5 blocker. By definition requires a third party — an agent reviewing a design an agent shaped is not an external review (B9). I can prepare the threat model and design doc for whoever you engage. |
 
 ---

@@ -232,7 +232,7 @@ jobs:
             browser/firefox-source/obj-*/dist/*.dmg
             browser/firefox-source/obj-*/dist/*.tar.*
             browser/firefox-source/obj-*/dist/*.zip
-            browser/firefox-source/obj-*/dist/install/sea/*.exe
+            browser/firefox-source/obj-*/dist/*.installer.exe
             browser/firefox-source/obj-*/dist/update/*.mar
           if-no-files-found: error
           retention-days: 14

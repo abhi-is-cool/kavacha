@@ -37,12 +37,13 @@ Kavacha repo (this)                      browser/firefox-source/          binary
 | `./build/bootstrap.sh patch-export NNNN-name` | `git diff HEAD -- <files>` in the checkout → `browser/patches/NNNN-name.patch`, with the required header |
 | `./build/bootstrap.sh roundtrip` | Reverse newest→oldest, forward oldest→newest in a scratch worktree; byte-identical or fail |
 
-Two static checks run over the overlay (`build/check-overlay.py`, also in CI). Both
-catch failures a successful build cannot: a Fluent id defined in two Kavacha `.ftl`
-files (every window loads them into one bundle, so the second is silently dropped),
-and a top-level `const`/`let`/`class` in a window script (those share `browser.js`'s
-scope, so the declaration throws and aborts that whole file). Both were real — see
-the script's header.
+Three static checks run over the overlay (`build/check-overlay.py`, also in CI), each
+catching a failure a build cannot: a Fluent id defined in two Kavacha `.ftl` files (every
+window loads them into one bundle, so the second is silently dropped); a top-level
+`const`/`let`/`class` in a window script (those share `browser.js`'s scope, so the
+declaration throws and aborts that whole file); and an unsorted `EXTRA_JS_MODULES`, which
+fails the `moz.build` read outright because mozbuild sorts case-insensitively and Python
+does not. All three were real — see the script's header.
 
 Run `mach` commands as `env -u CLAUDECODE -u CLAUDE_CODE ./build/bootstrap.sh build` when an
 agent is driving: `mach` detects one and suppresses the real error, leaving `*** Fix above

@@ -1,0 +1,41 @@
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src chrome:; img-src chrome: data:; style-src chrome: 'unsafe-inline'; object-src 'none'"
+    />
+    <title>Workflows</title>
+    <link
+      rel="stylesheet"
+      href="chrome://browser/content/kavacha/workflows/workflows.css"
+    />
+    <script src="chrome://browser/content/kavacha/theme/content-theme.js"></script>
+    <script src="chrome://browser/content/kavacha/workflows/workflows.js"></script>
+  </head>
+  <body>
+    <header class="kw-header">
+      <h1>Workflows</h1>
+      <p class="kw-sub">
+        A workflow is a trigger and a list of steps. Steps come from a fixed
+        list — a workflow is never code, so importing one can never run
+        anything this browser could not already do.
+      </p>
+    </header>
+
+    <main class="kw-main">
+      <aside class="kw-list-pane">
+        <button id="kw-new" class="kw-primary">New workflow</button>
+        <div id="kw-list" class="kw-list"></div>
+      </aside>
+
+      <section id="kw-editor" class="kw-editor">
+        <p class="kw-empty">Pick a workflow, or make one.</p>
+      </section>
+    </main>
+  </body>
+</html>

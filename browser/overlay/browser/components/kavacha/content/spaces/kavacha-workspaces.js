@@ -276,6 +276,23 @@
       return () => this.#switchListeners.delete(fn);
     }
 
+    /**
+     * Features add their submenus to the space context menu here:
+     * builder(popup, spaceId, insertBefore) runs on every popupshowing, after
+     * the built-in items and before the Delete section; nodes it appends must
+     * carry class "kavacha-space-context-feature" (they are cleared each time).
+     */
+    addContextMenuBuilder(fn) {
+      this.#menuBuilders.add(fn);
+      return () => this.#menuBuilders.delete(fn);
+    }
+    #menuBuilders = new Set();
+
+    /** The space a context-menu action targets (null for the "+" button). */
+    get contextSpaceId() {
+      return this.#contextSpaceId;
+    }
+
     async createAndSaveWorkspace(name, icon, dontChange = false, containerTabId = 0, extra = {}) {
       const ws = KavachaWorkspaces.createWorkspace({
         name,
@@ -615,12 +632,29 @@
       });
       archived.appendChild(archivedPopup);
       popup.appendChild(archived);
-      popup.appendChild(doc.createXULElement("menuseparator"));
+      // Feature submenus (search engine, extensions, settings, notes…) are
+      // inserted before this separator by the registered builders.
+      const featureAnchor = doc.createXULElement("menuseparator");
+      featureAnchor.id = "kavacha-space-context-feature-anchor";
+      popup.appendChild(featureAnchor);
       item("kavacha-space-context-delete", () => this.deleteWorkspace(this.#contextSpaceId), "kavacha-space-context-delete");
       popup.addEventListener("popupshowing", () => {
         const ws = this.getWorkspaceFromId(this.#contextSpaceId);
         const visible = this.#visible();
         const forSpace = !!ws;
+        for (const old of popup.querySelectorAll(".kavacha-space-context-feature")) {
+          old.remove();
+        }
+        if (forSpace) {
+          for (const build of this.#menuBuilders) {
+            try {
+              build(popup, ws.id, featureAnchor);
+            } catch (e) {
+              console.error("gKavachaWorkspaces: context menu builder threw", e);
+            }
+          }
+        }
+        featureAnchor.hidden = !popup.querySelector(".kavacha-space-context-feature");
         for (const id of ["kavacha-space-context-rename", "kavacha-space-context-archive", "kavacha-space-context-delete"]) {
           doc.getElementById(id).hidden = !forSpace;
         }

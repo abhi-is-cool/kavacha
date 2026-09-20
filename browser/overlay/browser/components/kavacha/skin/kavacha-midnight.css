@@ -1,0 +1,142 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* ==========================================================================
+   Kavacha Midnight — the default look, and the token floor every other theme
+   overrides (ROADMAP Phase 3).
+
+   %include'd near the END of zen-theme.css so these declarations win the
+   cascade over Zen's defaults at equal specificity. Strategy: override the BASE
+   surface tokens Zen derives everything from — hovers, inputs, borders and
+   gradients all re-derive through Zen's color-mix chains, so the whole chrome
+   takes the midnight cast from a handful of lines.
+
+   ---------------------------------------------------------------------------
+   PATCH 0061 — this file is now the ONLY floor, and it is complete.
+
+   It used to declare six of the eighteen tokens, at values that were then
+   overridden by kavacha-theme-fixes.inc.css (patch 0033), which is %include'd
+   after it. So there were three definitions of "Midnight" — this one, 0033's,
+   and the map in KavachaThemeEngine — and the one that reached the screen was
+   0033's, which is the one nobody thought to edit. 0033's values were the tuned
+   ones, so they are the values here now; its token block is deleted; and the
+   engine's BUILTIN_THEMES map mirrors this file exactly.
+
+   The other twelve tokens matter because of how the engine used to work: the
+   default theme returned early and set nothing, so tokens absent from this file
+   were absent FULL STOP at the shipped default, and their consumers fell back
+   to `color-mix(currentColor …)` — a text-derived colour standing in for a tab
+   colour. Switching to any other theme gave them real values and switching back
+   took them away again. All eighteen are declared here, so the vocabulary is
+   the same whatever theme is active.
+
+   Keep in step with:
+     - KavachaThemeEngine.sys.mjs BUILTIN_THEMES["kavacha-midnight"]
+     - customization/themes/kavacha-midnight/colors.json
+   ========================================================================== */
+
+:host(:is(.anonymous-content-host, notification-message)),
+:root {
+  /* --- Surfaces --- */
+  --kavacha-surface: #0b0912;
+  --kavacha-surface-elevated: #16131f;
+  --kavacha-surface-sunken: #060409;
+  --kavacha-border: #322b4a;
+
+  /* --- Text. User direction 2026-07-13: "darker, not dimmer; the text must
+         contrast". The engine now measures this: both pairs below clear WCAG
+         AA against the surfaces they sit on. --- */
+  --kavacha-text-primary: #f6f4fc;
+  --kavacha-text-secondary: #cabfe6;
+  --kavacha-text-disabled: #8a80a8;
+
+  /* --- No accent at the default. Kavacha ships no default accent (user
+         decision 2026-07-13; the reverted "gold accent" was #e8a33d, exactly
+         what a prior revision of this floor had baked back in). --kavacha-accent
+         stays UNDEFINED so its consumers fall to --kavacha-accent-fallback
+         below, which is the neutral "no accent chosen" state; --kavacha-accent
+         likewise stays user-owned. A user's pick, from any surface, wins over
+         both. --accent-hover/--accent-text have no consumers, so they are
+         simply omitted rather than given placeholder values. --- */
+
+  /* --- Tabs. Consumed by kavacha-polish.inc.css and kavacha-menu.inc.css,
+         which before 0061 only ever saw their currentColor fallbacks at the
+         default theme. --- */
+  --kavacha-tab-active-background: #241d3a;
+  --kavacha-tab-hover-background: #1a1530;
+
+  /* --- Regions --- */
+  --kavacha-sidebar-background: #060409;
+  --kavacha-urlbar-background: #16131f;
+
+  /* --- Status --- */
+  --kavacha-success: #5fbf77;
+  --kavacha-warning: #e8a33d;
+  --kavacha-danger: #e05c5c;
+  --kavacha-privacy-shield: #8b7bd8;
+
+  /* The colour to use when no accent has been chosen yet.
+
+     Kavacha ships no default accent by decision (2026-07-13): the welcome flow
+     asks, and until it is answered BOTH --kavacha-accent and
+     --kavacha-accent are the user's to fill. That gap is legitimate and
+     durable -- a user may simply never pick one -- but it had no name, so every
+     consumer invented its own literal for it and none of them said what it was.
+     An absent accent is a defined state, not an accident.
+
+     This is NOT a default accent. Nothing assigns it to --kavacha-accent,
+     it never reaches Zen's colour-mix chain, and any real accent -- from the
+     welcome flow, Settings, the Appearance panel or a theme package -- wins
+     over it. Consume it last:
+
+       var(--kavacha-accent, var(--kavacha-accent, var(--kavacha-accent-fallback))) */
+  --kavacha-accent-fallback: #8b7bd8;
+
+  /* The horizontal tab strip's height. Read by kavacha-horizontal-tabs.inc.css
+     in two places which, with nothing ever defining it, fell back to two
+     DIFFERENT literals -- 44px for #titlebar/#TabsToolbar and 42px for
+     #tabbrowser-tabs -- so the wrapper sat permanently 2px short of its own
+     row. Defining it once is the fix; the fallbacks stay as belt and braces. */
+  --kavacha-horizontal-strip-height: 44px;
+
+  /* Surfaces Zen defines directly rather than deriving. Only the dark half of
+     each light-dark() is ours; kavacha-theme-light.inc.css owns the other. */
+  --kavacha-content-bg: light-dark(
+    rgb(235, 235, 235),
+    var(--kavacha-surface)
+  );
+  --kavacha-dialog-bg: light-dark(#fafbff, var(--kavacha-surface-elevated));
+  --kavacha-urlbar-background: light-dark(
+    color-mix(in srgb, var(--kavacha-accent) 3%, #f4f4f4 97%),
+    color-mix(
+      in srgb,
+      var(--kavacha-accent) 4%,
+      var(--kavacha-surface-elevated) 96%
+    )
+  );
+  --kavacha-border: light-dark(
+    color-mix(in srgb, var(--kavacha-surface-2) 50%, transparent),
+    color-mix(in srgb, var(--kavacha-surface-2) 20%, var(--kavacha-border))
+  );
+}
+
+/* The base every --zen-colors-* mix derives from.
+
+   GATED (patch 0061), where it used to be unconditional.
+   --kavacha-surface-reverse is
+   `light-dark(var(--kavacha-surface), var(--kavacha-surface-light))`
+   (zen-theme.css:24), so under a LIGHT theme the "dark" branding colour is the
+   one that gets used -- and pointing it at the light surface made it
+   near-white, i.e. the reverse of a near-white background came out near-white.
+   Under a light theme Zen's stock #101010 is the correct value, so the override
+   simply does not apply there; kavacha-theme-light.inc.css points
+   --kavacha-surface-light at the surface instead.
+
+   `:not([kavacha-theme-mode="light"])` rather than
+   `[kavacha-theme-mode="dark"]` so this binds before KavachaThemeEngine has
+   stamped anything -- the attribute is absent for the first paint of every
+   window, and dark is the default look. */
+:root:not([kavacha-theme-mode="light"]) {
+  --kavacha-surface: var(--kavacha-surface);
+}

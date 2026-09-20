@@ -2,10 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-# Kavacha Settings pane "Appearance" — PLACEHOLDER (port milestone M2). The
-# Zen-era pane (patches 0021/0031/0032/0048-0050/0059/0063) lands here in M3;
-# this file exists so preferences.xhtml (patch 0004) can #include it and the
-# pane selects, which is what the substrate probe checks.
 <script type="text/javascript" src="chrome://browser/content/preferences/kavacha-appearance.js"/>
 <html:template id="template-paneKavachaAppearance">
 
@@ -16,8 +12,37 @@
 <html:h1 data-l10n-id="kavacha-appearance-title"/>
 </hbox>
 
-<groupbox id="kavachaAppearancePlaceholder" data-category="paneKavachaAppearance" hidden="true">
-  <description class="description-deemphasized" data-l10n-id="kavacha-pane-placeholder"/>
+<groupbox id="kavachaAppearanceThemeGroup" data-category="paneKavachaAppearance" hidden="true" class="highlighting-group">
+  <label><html:h2 data-l10n-id="kavacha-appearance-theme-header"/></label>
+  <description class="description-deemphasized" data-l10n-id="kavacha-appearance-theme-description"/>
+  <hbox class="kavacha-appearance-row" align="center">
+    <label data-l10n-id="kavacha-appearance-theme-label" control="kavachaAppearanceThemeSelect"/>
+    <menulist id="kavachaAppearanceThemeSelect">
+      <menupopup/>
+    </menulist>
+  </hbox>
+</groupbox>
+
+<groupbox id="kavachaAppearanceAccentGroup" data-category="paneKavachaAppearance" hidden="true" class="highlighting-group">
+  <label><html:h2 data-l10n-id="kavacha-appearance-accent-header"/></label>
+  <description class="description-deemphasized" data-l10n-id="kavacha-appearance-accent-description"/>
+  <hbox class="kavacha-appearance-row" align="center">
+    <label data-l10n-id="kavacha-appearance-accent-label" control="kavachaAppearanceAccentInput"/>
+    <html:input type="color" id="kavachaAppearanceAccentInput" class="kavacha-appearance-color"/>
+    <button id="kavachaAppearanceAccentReset" data-l10n-id="kavacha-appearance-accent-system"/>
+  </hbox>
+</groupbox>
+
+<groupbox id="kavachaAppearanceNewtabGroup" data-category="paneKavachaAppearance" hidden="true" class="highlighting-group">
+  <label><html:h2 data-l10n-id="kavacha-appearance-newtab-header"/></label>
+  <checkbox id="kavachaAppearanceNewtabDashboard" data-l10n-id="kavacha-appearance-newtab-dashboard"/>
+  <description class="description-deemphasized" data-l10n-id="kavacha-appearance-newtab-description"/>
+</groupbox>
+
+<groupbox id="kavachaAppearanceStudioGroup" data-category="paneKavachaAppearance" hidden="true" class="highlighting-group">
+  <hbox pack="start">
+    <button id="kavachaAppearanceStudioLink" class="kavacha-appearance-cta" data-l10n-id="kavacha-appearance-studio-link"/>
+  </hbox>
 </groupbox>
 
 </html:template>

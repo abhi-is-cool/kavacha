@@ -1,0 +1,39 @@
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src chrome:; img-src chrome: data:; style-src chrome: 'unsafe-inline'; object-src 'none'"
+    />
+    <title>Write</title>
+    <link
+      rel="stylesheet"
+      href="chrome://browser/content/kavacha/write/write.css"
+    />
+    <script src="chrome://browser/content/kavacha/theme/content-theme.js"></script>
+    <script src="chrome://browser/content/kavacha/write/write.js"></script>
+  </head>
+  <body>
+    <header class="kwr-bar">
+      <span id="kwr-target" class="kwr-target"></span>
+      <span class="kwr-spacer"></span>
+      <span id="kwr-count" class="kwr-count"></span>
+      <span id="kwr-saved" class="kwr-saved"></span>
+      <button id="kwr-preview" class="kwr-link">Preview</button>
+    </header>
+
+    <main class="kwr-stage">
+      <textarea
+        id="kwr-input"
+        class="kwr-input"
+        spellcheck="true"
+        placeholder="Just write. Saved as you go."
+      ></textarea>
+      <article id="kwr-rendered" class="kwr-rendered" hidden="hidden"></article>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,48 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* Kavacha appearance mode -> color-scheme (Firefox base; ADR 0020 §4e).
+ *
+ * KavachaThemeEngine stamps `kavacha-theme-mode` on the chrome root from the
+ * computed --kavacha-surface, and enables the matching built-in Firefox theme,
+ * which is what decides `color-scheme` on panels, menus and content and every
+ * lwt variable. That leaves this sheet one job the Zen-era version
+ * (patches 0061/0064, fighting ZenGradientGenerator) no longer has: keep the
+ * root and Kavacha's own surfaces in the right scheme during the first paint,
+ * before the engine has stamped anything, and make the toolbar text read on
+ * the theme's surface.
+ *
+ * `:not([kavacha-theme-mode='light'])` binds before the attribute exists, so
+ * the pre-JS frame is already dark — Kavacha's default look — and nothing
+ * repaints. Private windows keep Firefox's own treatment. */
+
+:root[windowtype='navigator:browser']:not([kavacha-theme-mode='light']) {
+  color-scheme: dark;
+}
+
+:root[windowtype='navigator:browser'][kavacha-theme-mode='light']:not(
+    [privatebrowsingmode='temporary']
+  ) {
+  color-scheme: light;
+}
+
+/* Kavacha's own popups and panels follow the mode explicitly (they are not
+ * themed by the built-in theme's lwt variables). */
+#kavacha-palette,
+#kavacha-space-context,
+#kavacha-toast-container {
+  color-scheme: inherit;
+}
+
+/* Toolbar text on the theme's surface: --kavacha-text-primary is already
+ * dark under light themes and light under dark ones, and has been through the
+ * engine's WCAG guard. Author !important so it outranks a theme's inline
+ * declaration (the only form that can). */
+:root[windowtype='navigator:browser'][kavacha-theme-mode] {
+  --toolbox-textcolor: color-mix(
+    in srgb,
+    var(--kavacha-text-primary) 80%,
+    transparent
+  ) !important;
+}

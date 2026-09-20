@@ -1,0 +1,64 @@
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src chrome:; img-src chrome: data:; style-src chrome: 'unsafe-inline'; object-src 'none'"
+    />
+    <title>Knowledge</title>
+    <link
+      rel="stylesheet"
+      href="chrome://browser/content/kavacha/knowledge/graph.css"
+    />
+    <script src="chrome://browser/content/kavacha/theme/content-theme.js"></script>
+    <script src="chrome://browser/content/kavacha/knowledge/graph.js"></script>
+  </head>
+  <body>
+    <header class="kg-header">
+      <h1>Knowledge</h1>
+      <p class="kg-sub">
+        Everything this browser knows about your reading — and nothing that
+        left this device.
+      </p>
+      <div id="kg-stats" class="kg-stats"></div>
+    </header>
+
+    <section class="kg-search">
+      <input
+        id="kg-query"
+        type="text"
+        class="kg-input"
+        placeholder="Search pages, notes, clips and names"
+        autocomplete="off"
+      />
+    </section>
+
+    <main class="kg-main">
+      <aside class="kg-list-pane">
+        <h2 class="kg-heading" id="kg-list-heading">Most connected</h2>
+        <div id="kg-list" class="kg-list"></div>
+      </aside>
+
+      <section id="kg-detail" class="kg-detail">
+        <p class="kg-empty">
+          Pick a page to see what it connects to.
+        </p>
+      </section>
+    </main>
+
+    <footer class="kg-footer">
+      <button id="kg-export" class="kg-link">Export notes &amp; clips</button>
+      <button id="kg-forget" class="kg-link kg-danger">
+        Delete the graph
+      </button>
+      <button id="kg-forget-all" class="kg-link kg-danger">
+        Delete everything, including notes
+      </button>
+      <span id="kg-footer-status" class="kg-footer-status"></span>
+    </footer>
+  </body>
+</html>

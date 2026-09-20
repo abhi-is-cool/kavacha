@@ -1,0 +1,86 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* ==========================================================================
+   Kavacha branch lineage in the Space strip (patch 0054).
+
+   Patch 0020 wrote parentSpaceId onto branched Spaces and nothing ever read
+   it, so a branch looked exactly like an ordinary Space in the switcher.
+   ZenSpaceIcons now stamps kavacha-branch-depth (1..3, clamped) and this is
+   the only thing that renders it.
+
+   Deliberately a MARKER, not an indent: the strip is a fixed-size row (or
+   column) of equal buttons, and indenting one would break its alignment in
+   both orientations. A short bar on the leading edge, one step dimmer per
+   level, reads as "this hangs off the one before it" without moving anything.
+   ========================================================================== */
+
+#kavacha-spaces-strip toolbarbutton[kavacha-branch-depth] {
+  position: relative;
+}
+
+#kavacha-spaces-strip toolbarbutton[kavacha-branch-depth]::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 1px;
+  inset-block: 30%;
+  width: 2px;
+  border-radius: 1px;
+  background: currentColor;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+#kavacha-spaces-strip toolbarbutton[kavacha-branch-depth="2"]::before {
+  opacity: 0.4;
+}
+
+#kavacha-spaces-strip toolbarbutton[kavacha-branch-depth="3"]::before {
+  opacity: 0.28;
+}
+
+/* Horizontal tabs (Kavacha's shipped default, patch 0010) lay the strip out as
+   a row, so the lineage marker belongs under the button rather than beside it.
+   Gated the way every other Kavacha layer gates on orientation -- the pref,
+   not a root attribute, because tabStyle flows through `zen.tabs.vertical`
+   (see kavacha-layout.inc.css). */
+/* stylelint-disable-next-line media-query-no-invalid */
+@media not -moz-pref("sidebar.verticalTabs") {
+  #kavacha-spaces-strip toolbarbutton[kavacha-branch-depth]::before {
+    inset-inline: 30%;
+    inset-block-start: auto;
+    inset-block-end: 1px;
+    width: auto;
+    height: 2px;
+  }
+}
+
+/* ==========================================================================
+   Kavacha grouped palette results (patch 0055).
+
+   The header is a child of the row, not a row of its own: a header row would
+   be selectable and would break arrow-key navigation through the palette.
+   Making the row's inner box wrap and giving the header a full-basis line
+   puts it above the row's contents without taking it out of the row.
+
+   Scoped to zen-actions dynamic rows so no other urlbar result is affected.
+   ========================================================================== */
+.urlbarView-row[dynamicType="zen-actions"] .urlbarView-row-inner {
+  flex-wrap: wrap;
+}
+
+.kavacha-palette-group {
+  order: -1;
+  flex: 0 0 100%;
+  font-size: 0.72em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.6;
+  margin-block: 2px 4px;
+}
+
+.kavacha-palette-group[hidden] {
+  display: none;
+}

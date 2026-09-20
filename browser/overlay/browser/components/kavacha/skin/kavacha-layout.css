@@ -1,0 +1,80 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* ==========================================================================
+   Kavacha layout engine — chrome layer (ROADMAP Phase 3; ADR 0008).
+
+   KavachaLayoutEngine.sys.mjs writes the layout document onto the chrome root
+   as attributes + a custom property; this file defines what they DO. Every
+   rule is gated on a non-default attribute value, so at the shipped defaults
+   (density=compact, sidebar=left, toolbar visible) this layer is inert — the
+   engine's presence never changes the out-of-box look.
+
+   tabStyle is NOT handled here: it flows through the `zen.tabs.vertical` pref,
+   which Zen and patch 0010 (kavacha-horizontal-tabs.inc.css) already react to.
+   ========================================================================== */
+
+/* --- Interface density ---------------------------------------------------
+   Compact is the baseline (no rule). Normal/comfortable add breathing room to
+   the tab strip; kept deliberately narrow in scope pending the build-verify
+   pass, since Zen owns most chrome spacing. */
+:root[kavacha-density="normal"] {
+  --kavacha-density-pad: 4px;
+}
+:root[kavacha-density="comfortable"] {
+  --kavacha-density-pad: 8px;
+}
+:root:is([kavacha-density="normal"], [kavacha-density="comfortable"])
+  .tabbrowser-tab {
+  padding-block: var(--kavacha-density-pad) !important;
+}
+
+/* --- Sidebar (vertical-tabs mode only) -----------------------------------
+   In horizontal mode there is no sidebar, so these only bind when the vertical
+   tab strip is active. Left is the baseline. */
+/* stylelint-disable-next-line media-query-no-invalid */
+@media -moz-pref("sidebar.verticalTabs") {
+  /* Sidebar width. Gated THREE ways, and each gate closes a real defect
+     (patch 0064):
+
+       [kavacha-sidebar-width-custom]  the engine stamps this only when the
+         layout document's sidebarWidth differs from the shipped 250. Without
+         it this rule fired for everyone, and `width: 250px !important` beat
+         the width Zen's #sidebar-splitter sets when the user drags it --
+         so dragging the sidebar edge snapped straight back and read as a
+         broken splitter.
+
+       [zen-sidebar-expanded="true"]   collapsing sets
+         max-width/min-width: 60px !important on the same element
+         (vertical-tabs.css). The clamp meant the used width came out right
+         anyway, but we were still asking for 250px on every frame of the
+         collapse animation against a 60px cap. Not our width to set once the
+         sidebar is collapsed.
+
+       :not([kavacha-sidebar="hidden"])  unchanged; hidden has its own rule. */
+  :root[kavacha-sidebar-width-custom][zen-sidebar-expanded="true"]:not(
+      [kavacha-sidebar="hidden"]
+    )
+    #navigator-toolbox {
+    width: var(--kavacha-sidebar-width, 250px) !important;
+  }
+
+  /* Put the sidebar on the trailing edge: #browser is the horizontal flex row
+     in vertical-tabs mode (toolbox + content), so reversing it moves the
+     toolbox to the right without reparenting anything. */
+  :root[kavacha-sidebar="right"] #browser {
+    flex-direction: row-reverse;
+  }
+
+  :root[kavacha-sidebar="hidden"] #navigator-toolbox {
+    display: none !important;
+  }
+}
+
+/* --- Toolbar visibility ---------------------------------------------------
+   Hidden hides the navigation/URL row; the tab strip and content stay. Users
+   reach it again by re-showing the toolbar from the palette / about:studio. */
+:root[kavacha-toolbar-hidden] #nav-bar {
+  display: none !important;
+}

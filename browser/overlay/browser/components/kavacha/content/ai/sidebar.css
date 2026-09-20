@@ -1,0 +1,299 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* Kavacha AI sidebar (ADR 0014). Every colour goes through the --kavacha-*
+ * vocabulary that content-theme.js stamps onto :root, with the literal
+ * fallback each Kavacha page carries for the moment before that script runs.
+ * The accent stays user-owned: --kavacha-accent first, then the theme's
+ * accent, then the neutral fallback (patch 0046/0069). */
+
+:root {
+  --ai-gap: 10px;
+  --ai-radius: 8px;
+  --ai-accent: var(
+    --kavacha-accent,
+    var(--kavacha-accent, var(--kavacha-accent-fallback, #8b7bd8))
+  );
+}
+
+body {
+  margin: 0;
+  padding: var(--ai-gap);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ai-gap);
+  min-height: 100vh;
+  box-sizing: border-box;
+  font: message-box;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--kavacha-text, #e8e6f0);
+  background: var(--kavacha-surface, #14111f);
+  /* The sidebar is narrow and resizable; nothing may push it wider. */
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------------- modes */
+
+.ai-modes {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--ai-radius);
+  background: var(--kavacha-surface-raised, #1d1930);
+}
+
+.ai-mode {
+  flex: 1;
+  padding: 5px 8px;
+  border: none;
+  border-radius: calc(var(--ai-radius) - 2px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ai-mode:hover {
+  background: var(--kavacha-surface-hover, #262040);
+}
+
+.ai-mode[aria-selected="true"] {
+  background: var(--kavacha-surface-hover, #262040);
+  box-shadow: inset 0 0 0 1px var(--ai-accent);
+}
+
+/* ---------------------------------------------------------------- views */
+
+.ai-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ai-gap);
+  flex: 1;
+  min-height: 0;
+}
+
+.ai-view[hidden] {
+  display: none;
+}
+
+.ai-page {
+  padding: 8px;
+  border-radius: var(--ai-radius);
+  background: var(--kavacha-surface-raised, #1d1930);
+}
+
+.ai-page-title {
+  font-weight: 600;
+  /* Two lines of title, then ellipsis — a long title must not shove the
+   * Summarize button below the fold in a 216px sidebar. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ai-page-host,
+.ai-label {
+  color: var(--kavacha-text-muted, #a29cba);
+  font-size: 12px;
+}
+
+.ai-row {
+  display: flex;
+  gap: 6px;
+}
+
+.ai-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid var(--kavacha-border, #322b4d);
+  border-radius: var(--ai-radius);
+  background: var(--kavacha-surface-raised, #1d1930);
+  color: inherit;
+  font: inherit;
+  resize: vertical;
+}
+
+.ai-input:focus-visible {
+  outline: 2px solid var(--ai-accent);
+  outline-offset: -1px;
+}
+
+.ai-primary,
+.ai-secondary {
+  padding: 6px 10px;
+  border-radius: var(--ai-radius);
+  border: 1px solid var(--kavacha-border, #322b4d);
+  background: var(--kavacha-surface-raised, #1d1930);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ai-primary {
+  border-color: var(--ai-accent);
+}
+
+.ai-primary:hover,
+.ai-secondary:hover {
+  background: var(--kavacha-surface-hover, #262040);
+}
+
+.ai-primary[disabled] {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* --------------------------------------------------------------- output */
+
+.ai-status {
+  padding: 8px;
+  border-radius: var(--ai-radius);
+  background: var(--kavacha-surface-raised, #1d1930);
+  color: var(--kavacha-text-muted, #a29cba);
+  font-size: 12px;
+}
+
+.ai-status[hidden] {
+  display: none;
+}
+
+.ai-status .ai-link {
+  margin-top: 6px;
+}
+
+.ai-output:empty {
+  display: none;
+}
+
+.ai-output {
+  /* The answer scrolls, the controls above it do not. */
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.ai-output p,
+.ai-output ul,
+.ai-output ol {
+  margin: 0 0 8px;
+  padding-inline-start: 1.1em;
+}
+
+.ai-output ul,
+.ai-output ol {
+  padding-inline-start: 1.3em;
+}
+
+.ai-output code,
+.ai-output pre {
+  font-family: monospace;
+  background: var(--kavacha-surface-raised, #1d1930);
+  border-radius: 4px;
+}
+
+.ai-output pre {
+  padding: 6px;
+  overflow-x: auto;
+}
+
+.ai-cite {
+  display: inline;
+  padding: 0 2px;
+  border: none;
+  background: none;
+  color: var(--ai-accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ai-cite:hover {
+  text-decoration: underline;
+}
+
+/* -------------------------------------------------------------- sources */
+
+.ai-sources:empty {
+  display: none;
+}
+
+.ai-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-sources-header {
+  color: var(--kavacha-text-muted, #a29cba);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ai-source {
+  display: block;
+  width: 100%;
+  text-align: start;
+  padding: 6px 8px;
+  border: 1px solid var(--kavacha-border, #322b4d);
+  border-radius: var(--ai-radius);
+  background: var(--kavacha-surface-raised, #1d1930);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ai-source:hover {
+  background: var(--kavacha-surface-hover, #262040);
+}
+
+.ai-source-index {
+  color: var(--ai-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.ai-source-title {
+  font-weight: 600;
+}
+
+.ai-source-meta,
+.ai-source-snippet {
+  color: var(--kavacha-text-muted, #a29cba);
+  font-size: 12px;
+}
+
+.ai-source-snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* --------------------------------------------------------------- footer */
+
+.ai-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--kavacha-border, #322b4d);
+  color: var(--kavacha-text-muted, #a29cba);
+  font-size: 11px;
+}
+
+.ai-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ai-accent);
+  font: inherit;
+  cursor: pointer;
+  text-align: start;
+}
+
+.ai-link:hover {
+  text-decoration: underline;
+}

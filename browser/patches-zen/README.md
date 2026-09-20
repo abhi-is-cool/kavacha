@@ -62,7 +62,11 @@ overlay/pref could not do it, and which upstream files it touches.
 
 | `0065-compact-mode-reversible.patch` | **"This is what I see when I launch it" — an empty window.** Not a rendering bug: it was Zen's compact mode, with `navigator-toolbox` measured at x = −247 and the tab strip and ⚙ button `visibility: hidden`. One click on `zen-toggle-compact-mode` persists through `zen.view.compact.enable-at-startup` (shipped `false`, commented "do not edit manually"), so every later launch looks empty, and recovery is a hover or a palette command — neither discoverable from an empty window. 0063 made Appearance one home and carried no compact-mode control; this adds one, reading the live `gZenCompactModeManager.preference`. The panel opens even with its anchor hidden, which is what makes it an escape hatch. Also records a correction: 0061's and 0064's headers claim `color-scheme: light` on `browser[type=content]` under a light theme — it computes `dark`, because content follows `browser.theme.content-theme`, not the chrome cascade. That behaviour is correct and kept; the claim was not |
 
-*Rows `0082`–`0087` below are **unbuilt**. Every other patch in this table has been
+*Rows `0082`–`0087` below were **unbuilt for as long as this series was live**. They were
+ported to the Firefox ESR base and finally executed on 2026-09-20 — 77 checks, 0 failures,
+and one real defect found on that first run (VERIFICATION.md §4h). The paragraph below is
+the Zen-era record, kept because it is the argument for never trusting a static gate.
+Every other patch in this table has been
 through at least one completed build; these six have not — two attempts were made and
 neither finished, the second for lack of memory on the development machine. They apply
 cleanly and round-trip byte-identically, and that is the whole of what is known. See

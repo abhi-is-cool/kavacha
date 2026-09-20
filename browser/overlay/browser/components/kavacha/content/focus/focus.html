@@ -1,0 +1,78 @@
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src chrome:; img-src chrome: data:; style-src chrome: 'unsafe-inline'; object-src 'none'"
+    />
+    <title>Focus</title>
+    <link
+      rel="stylesheet"
+      href="chrome://browser/content/kavacha/focus/focus.css"
+    />
+    <script src="chrome://browser/content/kavacha/theme/content-theme.js"></script>
+    <script src="chrome://browser/content/kavacha/focus/focus.js"></script>
+  </head>
+  <body>
+    <main class="kf-card">
+      <section id="kf-blocked" class="kf-blocked" hidden="hidden">
+        <h1 class="kf-title">Not right now</h1>
+        <p class="kf-lead">
+          <span id="kf-blocked-site" class="kf-site"></span> is set aside while
+          you focus.
+        </p>
+        <p id="kf-remaining" class="kf-remaining"></p>
+        <div class="kf-row">
+          <button id="kf-back" class="kf-primary">Back to what I was doing</button>
+          <button id="kf-end" class="kf-secondary">End focus session</button>
+        </div>
+        <p class="kf-fine">
+          Ending a session is one click on purpose. This is a tool for
+          attention, not a lock — the point is to make the distraction
+          deliberate, not impossible.
+        </p>
+      </section>
+
+      <section id="kf-idle" class="kf-idle">
+        <h1 class="kf-title">Focus</h1>
+        <p id="kf-state" class="kf-lead"></p>
+        <div class="kf-row">
+          <button class="kf-primary kf-start" data-minutes="25">25 min</button>
+          <button class="kf-primary kf-start" data-minutes="50">50 min</button>
+          <button class="kf-primary kf-start" data-minutes="90">90 min</button>
+          <button id="kf-end-2" class="kf-secondary" hidden="hidden">
+            End session
+          </button>
+        </div>
+        <p class="kf-fine">
+          While a session runs, the sites below are set aside and websites
+          cannot ask to send you notifications. Nothing is uninstalled and
+          nothing is reported anywhere.
+        </p>
+      </section>
+
+      <section class="kf-list-section">
+        <h2 class="kf-heading">Set aside during focus</h2>
+        <div class="kf-row">
+          <input
+            id="kf-add-input"
+            class="kf-input"
+            type="text"
+            placeholder="youtube.com"
+            autocomplete="off"
+          />
+          <button id="kf-add" class="kf-secondary">Add</button>
+        </div>
+        <div id="kf-list" class="kf-list"></div>
+        <p id="kf-list-empty" class="kf-fine" hidden="hidden">
+          Nothing is set aside yet, so a focus session will only mute
+          notifications.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

@@ -56,3 +56,33 @@
 .tabbrowser-tab[kavacha-space-id][hidden] {
   display: none;
 }
+
+/* Research-continuity panels (timeline, replay, compare). Under Zen this
+ * sizing was inline in popups.inc; it belongs in the stylesheet. */
+.kavacha-timeline-box {
+  width: 400px;
+  padding: 10px;
+  gap: 8px;
+}
+
+.kavacha-compare-box {
+  width: 420px;
+  padding: 10px;
+  gap: 8px;
+}
+
+#kavacha-timeline-list,
+#kavacha-timeline-step-tabs,
+#kavacha-compare-body {
+  overflow: auto;
+  max-height: 340px;
+  gap: 4px;
+}
+
+#kavacha-timeline-replay-view {
+  gap: 8px;
+}
+
+#kavacha-compare-discard {
+  margin-top: 6px;
+}

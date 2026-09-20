@@ -1,0 +1,141 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* ==========================================================================
+   Arc-style tabs (patch 0058).
+
+   REMAINING_WORK recorded this as "not yet a layout-engine capability, which
+   is why the Studio defers it". This is that capability. Arc is not a third
+   ORIENTATION -- it is vertical tabs with a different presentation, which is
+   why KavachaLayoutEngine sets the same `zen.tabs.vertical` pref for it and
+   additionally stamps kavacha-tab-style="arc" on the root for this layer to
+   bind to. Splitting "which way do tabs run" from "how do they look" is what
+   lets a presentation be added without teaching Zen's tab code a new mode.
+
+   Everything here is gated on that attribute, so at Kavacha's shipped
+   horizontal default -- and at plain vertical -- this file is inert, the same
+   discipline kavacha-layout.inc.css follows.
+
+   What "Arc-style" concretely means here, and nothing beyond it:
+     - tabs are separated CARDS with real gaps, not rows in a continuous list;
+     - the active card is a raised surface rather than a highlight;
+     - the favicon sits in a fixed leading column so titles align;
+     - per-tab controls stay out of the way until the row is hovered;
+     - the content area is inset with a rounded, floating frame.
+   ========================================================================== */
+
+:root[kavacha-tab-style="arc"] {
+  --kavacha-arc-gap: 3px;
+  --kavacha-arc-radius: 10px;
+  --kavacha-arc-inset: 8px;
+}
+
+/* --- Tabs as cards ------------------------------------------------------ */
+
+:root[kavacha-tab-style="arc"] #tabbrowser-tabs .tabbrowser-tab {
+  margin-block: var(--kavacha-arc-gap);
+  margin-inline: 6px;
+}
+
+:root[kavacha-tab-style="arc"]
+  #tabbrowser-tabs
+  .tabbrowser-tab
+  > .tab-stack
+  > .tab-background {
+  border-radius: var(--kavacha-arc-radius);
+  border: 1px solid transparent;
+  /* Patch 0056 puts an accent rail on the selected tab. In Arc the card
+     itself carries the emphasis, so the rail would be a second, redundant
+     marker on an already-raised surface. */
+  box-shadow: none;
+}
+
+:root[kavacha-tab-style="arc"]
+  #tabbrowser-tabs
+  .tabbrowser-tab[selected]
+  > .tab-stack
+  > .tab-background {
+  background: var(--kavacha-surface-elevated, var(--kavacha-surface-3));
+  border-color: color-mix(
+    in srgb,
+    var(--kavacha-border, currentColor) 70%,
+    transparent
+  );
+  box-shadow: 0 1px 3px rgb(0 0 0 / 22%);
+}
+
+:root[kavacha-tab-style="arc"]
+  #tabbrowser-tabs
+  .tabbrowser-tab:not([selected]):hover
+  > .tab-stack
+  > .tab-background {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+/* --- Aligned favicon column --------------------------------------------- */
+
+:root[kavacha-tab-style="arc"] #tabbrowser-tabs .tab-icon-stack {
+  /* A fixed column rather than intrinsic width: with variable icon sizes the
+     titles start at different x positions down the strip, which is most of
+     what makes an unstyled vertical strip look ragged. */
+  min-width: 20px;
+  justify-content: center;
+}
+
+:root[kavacha-tab-style="arc"] #tabbrowser-tabs .tab-label {
+  margin-inline-start: 2px;
+}
+
+/* --- Quiet per-tab controls --------------------------------------------- */
+
+:root[kavacha-tab-style="arc"]
+  #tabbrowser-tabs
+  .tabbrowser-tab
+  .tab-close-button {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+:root[kavacha-tab-style="arc"]
+  #tabbrowser-tabs
+  .tabbrowser-tab:is(:hover, [selected])
+  .tab-close-button,
+/* A control that only appears on hover must still appear on keyboard focus,
+   or it becomes unreachable without a pointer. */
+:root[kavacha-tab-style="arc"]
+  #tabbrowser-tabs
+  .tabbrowser-tab
+  .tab-close-button:focus-visible {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[kavacha-tab-style="arc"]
+    #tabbrowser-tabs
+    .tabbrowser-tab
+    .tab-close-button {
+    transition: none;
+  }
+}
+
+/* --- Floating content frame --------------------------------------------- */
+
+:root[kavacha-tab-style="arc"] #appcontent {
+  margin: var(--kavacha-arc-inset);
+  margin-inline-start: 0;
+  border-radius: var(--kavacha-arc-radius);
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 18%);
+}
+
+:root[kavacha-tab-style="arc"][kavacha-sidebar="right"] #appcontent {
+  margin-inline-start: var(--kavacha-arc-inset);
+  margin-inline-end: 0;
+}
+
+/* The sidebar is the window background in Arc, not a panel sitting on it. */
+:root[kavacha-tab-style="arc"] #navigator-toolbox {
+  background: transparent;
+  border-inline-end: none;
+}

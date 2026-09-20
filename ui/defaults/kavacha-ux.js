@@ -11,7 +11,8 @@
 // Shipped inside the app by build/generate-branding.sh, appended to the
 // branding default prefs (which load after zen.js/firefox.js defaults and
 // therefore win conflicts — libpref loads defaults reverse-alphabetically).
-pref("zen.tabs.vertical", false);
+// Firefox base (ADR 0020): the tab orientation pref is Firefox's own.
+pref("sidebar.verticalTabs", false);
 
 // Cmd+T opens a real new tab (user decision 2026-08-02): patch 0042 sets
 // zen.urlbar.replace-newtab=false in prefs/zen/zen-urlbar.yaml. The pref lives
@@ -25,7 +26,7 @@ pref("zen.tabs.vertical", false);
 // sidebar: tabbrowser inserts new tabs right after the pinned section, which
 // reads as "new tabs open on the left" in a top bar. Also moves the new-tab
 // button to follow the last tab. Zen exposes this in Settings > Looks & Feel.
-pref("zen.view.show-newtab-button-top", false);
+// (zen.view.show-newtab-button-top dropped: Firefox's new-tab button already follows the last tab.)
 
 // Tab memory management (KavachaTabMemory.sys.mjs): discard background tabs
 // untouched for this many minutes, freeing their memory while keeping them in
@@ -37,7 +38,13 @@ pref("kavacha.tabs.unload-after-minutes", 30);
 // 0=dark 1=light 2=auto) over the midnight surface palette %-included into
 // zen-theme.css. The welcome flow offers light/auto; no accent is set here
 // (user decision 2026-07-13 — the welcome flow asks).
-pref("zen.view.window.scheme", 0);
+// Theme mode is KavachaThemeEngine's (dark | light | system); mirrored here for
+// consumers that cannot reach the engine. The engine enables the matching
+// built-in Firefox theme, which is what schemes panels, menus and content.
+pref("kavacha.theme.mode", "dark");
+
+// New tabs open the Kavacha dashboard (KavachaNewTab); false = Firefox's page.
+pref("kavacha.newtab.dashboard", true);
 
 // Workspace state-history (ADR 0006): per-space snapshot retention bounds.
 pref("kavacha.history.max-snapshots-per-space", 100);
@@ -130,7 +137,12 @@ pref("kavacha.focus.default-minutes", 50);
 // that was there before is parked in the second pref and written back when the
 // session ends — explicit ownership, which is what patch 0066 cost us to learn.
 pref("kavacha.focus.block-notifications", true);
-pref("kavacha.focus.saved-notification-default", 0);
+// -1 = nothing saved. NOT 0: Gecko clears a pref's user value when you set
+// it to its own default, and 0 is the ordinary value of
+// permissions.default.desktop-notification, so a 0 default made "save the
+// previous value" a silent no-op and left notifications blocked forever
+// after a focus session (found 2026-09-20).
+pref("kavacha.focus.saved-notification-default", -1);
 
 // Automation (ADR 0017 / patch 0085): workflows are documents — a trigger and
 // a list of steps from a fixed allowlist — never code. The caps are the

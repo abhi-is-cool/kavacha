@@ -1,0 +1,154 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* about:focus. Same token vocabulary and literal fallbacks as the other
+ * Kavacha content pages — they are not in the chrome token cascade. */
+
+:root {
+  --kf-radius: 12px;
+  --kf-accent: var(
+    --kavacha-accent,
+    var(--kavacha-accent, var(--kavacha-accent-fallback, #8b7bd8))
+  );
+}
+
+body {
+  margin: 0;
+  padding: 40px 20px;
+  font: message-box;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--kavacha-text, #e8e6f0);
+  background: var(--kavacha-surface, #14111f);
+  display: flex;
+  justify-content: center;
+}
+
+.kf-card {
+  width: min(620px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.kf-title {
+  margin: 0 0 6px;
+  font-size: 26px;
+}
+
+.kf-lead {
+  margin: 0;
+  font-size: 15px;
+}
+
+.kf-site {
+  font-weight: 600;
+}
+
+.kf-remaining {
+  margin: 6px 0 0;
+  opacity: 0.75;
+}
+
+.kf-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 16px;
+}
+
+.kf-primary,
+.kf-secondary {
+  padding: 8px 14px;
+  border-radius: var(--kf-radius);
+  border: 1px solid var(--kavacha-border, #2e2748);
+  font: inherit;
+  cursor: pointer;
+}
+
+.kf-primary {
+  background: var(--kf-accent);
+  border-color: transparent;
+  color: #fff;
+}
+
+.kf-secondary {
+  background: var(--kavacha-surface-raised, #1d1930);
+  color: inherit;
+}
+
+.kf-input {
+  flex: 1;
+  min-width: 180px;
+  padding: 8px 12px;
+  border-radius: var(--kf-radius);
+  border: 1px solid var(--kavacha-border, #2e2748);
+  background: var(--kavacha-surface-raised, #1d1930);
+  color: inherit;
+  font: inherit;
+}
+
+.kf-fine {
+  margin: 14px 0 0;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.kf-heading {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+}
+
+.kf-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.kf-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--kf-radius);
+  background: var(--kavacha-surface-raised, #1d1930);
+  border: 1px solid var(--kavacha-border, #2e2748);
+}
+
+.kf-item-name {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.kf-badge {
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--kavacha-border, #2e2748);
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.kf-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--kf-accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.kf-link:hover {
+  text-decoration: underline;
+}
+
+.kf-danger {
+  color: var(--kavacha-danger, #e06c75);
+}

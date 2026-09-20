@@ -2,10 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-# Kavacha Settings pane "Privacy" — PLACEHOLDER (port milestone M2). The
-# Zen-era pane (patches 0021/0031/0032/0048-0050/0059/0063) lands here in M3;
-# this file exists so preferences.xhtml (patch 0004) can #include it and the
-# pane selects, which is what the substrate probe checks.
 <script type="text/javascript" src="chrome://browser/content/preferences/kavacha-privacy.js"/>
 <html:template id="template-paneKavachaPrivacy">
 
@@ -16,8 +12,193 @@
 <html:h1 data-l10n-id="kavacha-privacy-center-title"/>
 </hbox>
 
-<groupbox id="kavachaPrivacyPlaceholder" data-category="paneKavachaPrivacy" hidden="true">
-  <description class="description-deemphasized" data-l10n-id="kavacha-pane-placeholder"/>
+<groupbox id="kavachaPrivacyStatsGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
+  <label><html:h2 data-l10n-id="kavacha-privacy-stats-header"/></label>
+  <description class="description-deemphasized" data-l10n-id="kavacha-privacy-stats-description"/>
+  <description class="description-deemphasized" id="kavachaPrivacyStatsSince" hidden="true"/>
+  <html:div id="kavachaPrivacyCards">
+    <html:div class="kavacha-privacy-card">
+      <html:span class="kavacha-privacy-card-value" id="kavachaPrivacyValueAllTime">&#8212;</html:span>
+      <html:span class="kavacha-privacy-card-caption" data-l10n-id="kavacha-privacy-card-alltime"/>
+    </html:div>
+    <html:div class="kavacha-privacy-card">
+      <html:span class="kavacha-privacy-card-value" id="kavachaPrivacyValueWeek">&#8212;</html:span>
+      <html:span class="kavacha-privacy-card-caption" data-l10n-id="kavacha-privacy-card-week"/>
+    </html:div>
+    <html:div class="kavacha-privacy-card">
+      <html:span class="kavacha-privacy-card-value" id="kavachaPrivacyValueToday">&#8212;</html:span>
+      <html:span class="kavacha-privacy-card-caption" data-l10n-id="kavacha-privacy-card-today"/>
+    </html:div>
+    <html:div class="kavacha-privacy-card">
+      <html:span class="kavacha-privacy-card-value" id="kavachaPrivacyValueBandwidth">&#8212;</html:span>
+      <html:span class="kavacha-privacy-card-caption" data-l10n-id="kavacha-privacy-card-bandwidth"/>
+    </html:div>
+  </html:div>
+  <label><html:h3 data-l10n-id="kavacha-privacy-breakdown-header"/></label>
+  <vbox id="kavachaPrivacyBreakdown">
+    <hbox class="kavacha-privacy-row" align="center">
+      <label data-l10n-id="kavacha-privacy-row-trackers"/>
+      <html:span class="kavacha-privacy-row-value" id="kavachaPrivacyRowTrackers">0</html:span>
+    </hbox>
+    <hbox class="kavacha-privacy-row" align="center">
+      <label data-l10n-id="kavacha-privacy-row-cookies"/>
+      <html:span class="kavacha-privacy-row-value" id="kavachaPrivacyRowCookies">0</html:span>
+    </hbox>
+    <hbox class="kavacha-privacy-row" align="center">
+      <label data-l10n-id="kavacha-privacy-row-fingerprinters"/>
+      <html:span class="kavacha-privacy-row-value" id="kavachaPrivacyRowFingerprinters">0</html:span>
+    </hbox>
+    <hbox class="kavacha-privacy-row" align="center">
+      <label data-l10n-id="kavacha-privacy-row-cryptominers"/>
+      <html:span class="kavacha-privacy-row-value" id="kavachaPrivacyRowCryptominers">0</html:span>
+    </hbox>
+    <hbox class="kavacha-privacy-row" align="center">
+      <label data-l10n-id="kavacha-privacy-row-social"/>
+      <html:span class="kavacha-privacy-row-value" id="kavachaPrivacyRowSocial">0</html:span>
+    </hbox>
+  </vbox>
+  <description id="kavachaPrivacyPaused" class="description-deemphasized" data-l10n-id="kavacha-privacy-stats-paused" hidden="true"/>
+  <hbox pack="start">
+    <button id="kavachaPrivacyClearStats" data-l10n-id="kavacha-privacy-clear-stats"/>
+  </hbox>
+</groupbox>
+
+<groupbox id="kavachaSitesGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
+  <label><html:h2 data-l10n-id="kavacha-sites-header"/></label>
+  <description class="description-deemphasized" data-l10n-id="kavacha-sites-description"/>
+  <hbox id="kavachaSitesPickerRow" align="center">
+    <label data-l10n-id="kavacha-sites-picker-label" control="kavachaSitesPicker"/>
+    <menulist id="kavachaSitesPicker" flex="1">
+      <menupopup/>
+    </menulist>
+    <button id="kavachaSitesForget" data-l10n-id="kavacha-sites-forget"/>
+  </hbox>
+  <description id="kavachaSitesEmpty" class="description-deemphasized" data-l10n-id="kavacha-sites-empty" hidden="true"/>
+  <!-- The selected site's card, built by kavacha-privacy.js. -->
+  <vbox id="kavachaSitesProfile"/>
+</groupbox>
+
+<groupbox id="kavachaCookiesGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
+  <label><html:h2 data-l10n-id="kavacha-cookies-header"/></label>
+  <description class="description-deemphasized" data-l10n-id="kavacha-cookies-description"/>
+  <checkbox id="kavachaCookiesClearOnClose" data-l10n-id="kavacha-cookies-clear-on-close"/>
+  <description id="kavachaCookiesClearNote" class="description-deemphasized" data-l10n-id="kavacha-cookies-clear-on-close-note"/>
+  <label><html:h3 data-l10n-id="kavacha-cookies-rules-header"/></label>
+  <hbox id="kavachaCookiesAddRow" align="center">
+    <html:input id="kavachaCookiesDomain" type="text" data-l10n-id="kavacha-cookies-add-domain"/>
+    <button id="kavachaCookiesAddSession" data-l10n-id="kavacha-cookies-add-session"/>
+  </hbox>
+  <description id="kavachaCookiesAddError" class="kavacha-cookies-error" data-l10n-id="kavacha-cookies-add-invalid" hidden="true"/>
+  <!-- Rows built by kavacha-privacy.js from the "cookie" permission store. -->
+  <vbox id="kavachaCookiesRules"/>
+  <description class="description-deemphasized" data-l10n-id="kavacha-cookies-session-note"/>
+</groupbox>
+
+<groupbox id="kavachaPermissionsGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
+  <label><html:h2 data-l10n-id="kavacha-permissions-header"/></label>
+  <description class="description-deemphasized" data-l10n-id="kavacha-permissions-description"/>
+  <!-- Rows are built by kavacha-privacy.js from KAVACHA_PERMISSION_TYPES, so
+       the markup and the type table cannot drift apart. -->
+  <vbox id="kavachaPermissionsList"/>
+  <description id="kavachaPermissionsClipboardNote" class="description-deemphasized" data-l10n-id="kavacha-permissions-clipboard-note"/>
+  <hbox pack="start">
+    <button id="kavachaPermissionsClearAll" data-l10n-id="kavacha-permissions-clear-all"/>
+  </hbox>
+</groupbox>
+
+<groupbox id="kavachaPrivacySearchGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
+  <label><html:h2 data-l10n-id="kavacha-privacy-search-header"/></label>
+  <description class="description-deemphasized" data-l10n-id="kavacha-privacy-search-description"/>
+  <hbox class="kavacha-privacy-row" align="center">
+    <label data-l10n-id="kavacha-privacy-search-engine-label" control="kavachaPrivacySearchEngine"/>
+    <menulist id="kavachaPrivacySearchEngine">
+      <menupopup/>
+    </menulist>
+  </hbox>
+  <description id="kavachaPrivacySearchNote" class="description-deemphasized" data-l10n-id="kavacha-privacy-search-note"/>
+</groupbox>
+
+<groupbox id="kavachaPrivacyPostureGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
+  <label><html:h2 data-l10n-id="kavacha-privacy-posture-header"/></label>
+  <description class="description-deemphasized" data-l10n-id="kavacha-privacy-posture-description"/>
+  <hbox id="kavachaPrivacyScore" align="center">
+    <html:span id="kavachaPrivacyScoreValue">&#8212;</html:span>
+    <html:span id="kavachaPrivacyScoreSummary"/>
+  </hbox>
+  <vbox id="kavachaPrivacyImprove" hidden="true">
+    <label><html:h3 data-l10n-id="kavacha-privacy-score-improve"/></label>
+    <vbox id="kavachaPrivacyImproveList"/>
+  </vbox>
+  <vbox id="kavachaPrivacyPostureList">
+    <hbox class="kavacha-privacy-row" align="center">
+      <label data-l10n-id="kavacha-privacy-posture-etp"/>
+      <html:span class="kavacha-privacy-posture-status" id="kavachaPostureEtp"/>
+    </hbox>
+    <hbox class="kavacha-privacy-row" align="center">
+      <label data-l10n-id="kavacha-privacy-posture-tcp"/>
+      <html:span class="kavacha-privacy-posture-status" id="kavachaPostureTcp"/>
+    </hbox>
+    <hbox class="kavacha-privacy-row" align="center">
+      <label data-l10n-id="kavacha-privacy-posture-fpp"/>
+      <html:span class="kavacha-privacy-posture-status" id="kavachaPostureFpp"/>
+    </hbox>
+    <hbox class="kavacha-privacy-row" align="center">
+      <label data-l10n-id="kavacha-privacy-posture-qs"/>
+      <html:span class="kavacha-privacy-posture-status" id="kavachaPostureQs"/>
+    </hbox>
+    <hbox class="kavacha-privacy-row" align="center">
+      <label data-l10n-id="kavacha-privacy-posture-gpc"/>
+      <html:span class="kavacha-privacy-posture-status" id="kavachaPostureGpc"/>
+    </hbox>
+    <hbox class="kavacha-privacy-row" align="center">
+      <label data-l10n-id="kavacha-privacy-posture-banners"/>
+      <html:span class="kavacha-privacy-posture-status" id="kavachaPostureBanners"/>
+    </hbox>
+    <hbox class="kavacha-privacy-row" align="center">
+      <label data-l10n-id="kavacha-privacy-posture-doh"/>
+      <html:span class="kavacha-privacy-posture-status" id="kavachaPostureDoh"/>
+    </hbox>
+    <hbox class="kavacha-privacy-row" align="center">
+      <label data-l10n-id="kavacha-privacy-posture-clear-cookies"/>
+      <html:span class="kavacha-privacy-posture-status" id="kavachaPostureClearCookies"/>
+    </hbox>
+  </vbox>
+</groupbox>
+
+<groupbox id="kavachaIndexGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
+  <label><html:h2 data-l10n-id="kavacha-index-header"/></label>
+  <description class="description-deemphasized" data-l10n-id="kavacha-index-description"/>
+  <checkbox id="kavachaIndexEnabled" data-l10n-id="kavacha-index-enabled"/>
+  <hbox class="kavacha-privacy-row" align="center">
+    <label data-l10n-id="kavacha-index-status-label"/>
+    <html:span class="kavacha-privacy-row-value" id="kavachaIndexStatus">—</html:span>
+  </hbox>
+  <hbox pack="start">
+    <button id="kavachaIndexClear" data-l10n-id="kavacha-index-clear"/>
+  </hbox>
+  <description class="description-deemphasized" data-l10n-id="kavacha-index-note"/>
+</groupbox>
+
+<groupbox id="kavachaAIGroup" data-category="paneKavachaPrivacy" hidden="true" class="highlighting-group">
+  <label><html:h2 data-l10n-id="kavacha-ai-header"/></label>
+  <description class="description-deemphasized" data-l10n-id="kavacha-ai-description"/>
+  <checkbox id="kavachaAIEnabled" data-l10n-id="kavacha-ai-enabled"/>
+  <hbox class="kavacha-privacy-row" align="center">
+    <label data-l10n-id="kavacha-ai-endpoint-label" control="kavachaAIEndpoint"/>
+    <html:input id="kavachaAIEndpoint" type="text" style="flex: 1; min-width: 16em;"/>
+  </hbox>
+  <hbox class="kavacha-privacy-row" align="center">
+    <label data-l10n-id="kavacha-ai-model-label" control="kavachaAIModel"/>
+    <menulist id="kavachaAIModel" flex="1">
+      <menupopup/>
+    </menulist>
+    <button id="kavachaAIRefresh" data-l10n-id="kavacha-ai-refresh"/>
+  </hbox>
+  <hbox class="kavacha-privacy-row" align="center">
+    <label data-l10n-id="kavacha-ai-status-label"/>
+    <html:span class="kavacha-privacy-posture-status" id="kavachaAIStatus">—</html:span>
+  </hbox>
+  <description class="description-deemphasized" data-l10n-id="kavacha-ai-note"/>
 </groupbox>
 
 </html:template>

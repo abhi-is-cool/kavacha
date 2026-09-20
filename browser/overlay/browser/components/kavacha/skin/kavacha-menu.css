@@ -1,0 +1,609 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* ==========================================================================
+   Kavacha menu button + registry-driven panel (patch 0030). Styles the gear
+   button in the top-right cluster (#kavacha-menu-button) and the panel it
+   opens (#kavacha-menu-panel). %include'd from zen-theme.css after the other
+   Kavacha layers.
+
+   Colors use the --kavacha-* surface tokens (patch 0016 bakes the Midnight
+   floor; the theme engine, patch 0023, re-tints them live) with plain
+   fallbacks, so the panel follows the active theme. The XUL panel chrome is
+   themed by pointing --panel-background / --panel-border-color at those tokens.
+   ========================================================================== */
+
+/* --- The toolbar button: gear icon --------------------------------------- */
+#kavacha-menu-button {
+  list-style-image: url("chrome://global/skin/icons/settings.svg");
+}
+
+/* --- The panel ----------------------------------------------------------- */
+#kavacha-menu-panel {
+  --panel-background: var(--kavacha-surface-elevated, #1d1930);
+  --panel-border-color: var(--kavacha-border, #2e2846);
+  --panel-color: var(--kavacha-text-primary, #edeaf7);
+  /* Wide enough that opening a section usually does not resize the panel.
+     Measured at the shipped registry: five of the six sections fit inside
+     340px, so only Appearance (374px, its labels are the longest) still nudges
+     the width. At the old 280px every single section resized it. */
+  min-width: 340px;
+  padding: 6px;
+}
+
+/* Patch 0060 collapses and filters the panel by setting the `hidden` attribute
+   on rows, section bodies and the empty state. Every one of those carries an
+   explicit `display` below, and a class rule beats the UA's [hidden] rule — so
+   without this block `hidden` would set an attribute and change nothing on
+   screen. Any new class here that sets `display` belongs in this list. */
+.kavacha-menu-item[hidden],
+.kavacha-menu-section[hidden],
+.kavacha-menu-section-body[hidden],
+.kavacha-menu-empty[hidden] {
+  display: none;
+}
+
+/* --- Filter field (patch 0060) ------------------------------------------- */
+/* A child of the panel rather than the scrollbox, so it stays put while the
+   results scroll under it. */
+.kavacha-menu-search {
+  padding: 2px 2px 6px;
+}
+
+.kavacha-menu-filter {
+  width: 100%;
+  box-sizing: border-box;
+  appearance: none;
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--kavacha-border, #2e2846);
+  border-radius: 8px;
+  background: var(--kavacha-surface, #16132a);
+  color: var(--kavacha-text-primary, #edeaf7);
+  font: inherit;
+}
+
+.kavacha-menu-filter::placeholder {
+  color: var(--kavacha-text-secondary, #a79fc4);
+  opacity: 0.85;
+}
+
+.kavacha-menu-filter:focus-visible {
+  outline: none;
+  border-color: var(--kavacha-accent, var(--kavacha-accent-fallback));
+}
+
+/* --- Domain sections (patch 0060) ---------------------------------------- */
+/* One row per domain, collapsed by default: chevron, name, command count. */
+.kavacha-menu-section {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 8px 10px;
+  appearance: none;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--kavacha-text-primary, #edeaf7);
+  font: inherit;
+  font-weight: 600;
+  text-align: start;
+  cursor: pointer;
+}
+
+.kavacha-menu-section:hover,
+.kavacha-menu-section:focus-visible {
+  background-color: var(
+    --kavacha-tab-hover-background,
+    color-mix(in srgb, currentColor 10%, transparent)
+  );
+  outline: none;
+}
+
+.kavacha-menu-section-label {
+  flex: 1;
+}
+
+/* The count is the half of collapsing that keeps the information: a closed
+   section still says how much is behind it, and while filtering it says how
+   many of those matched. */
+.kavacha-menu-count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--kavacha-text-secondary, #a79fc4);
+}
+
+/* Two borders of a square, rotated: right when closed, down when open. */
+.kavacha-menu-chevron {
+  width: 6px;
+  height: 6px;
+  margin-inline-start: 3px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  opacity: 0.5;
+  transform: rotate(-45deg);
+  transition: transform 120ms ease;
+}
+
+.kavacha-menu-section[aria-expanded="true"] .kavacha-menu-chevron {
+  transform: rotate(45deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kavacha-menu-chevron {
+    transition: none;
+  }
+}
+
+/* An open section's rows, hung off a hairline so the nesting reads without
+   indenting far enough to start wrapping the labels. */
+.kavacha-menu-section-body {
+  display: block;
+  margin: 2px 0 4px;
+  margin-inline-start: 15px;
+  padding-inline-start: 6px;
+  border-inline-start: 1px solid var(--kavacha-border, #2e2846);
+}
+
+.kavacha-menu-empty {
+  display: block;
+  padding: 14px 10px;
+  text-align: center;
+  font-size: 0.9em;
+  color: var(--kavacha-text-secondary, #a79fc4);
+}
+
+/* Settings is pinned above the sections; the gap is the only separation it
+   needs, so no rule is drawn. */
+.kavacha-menu-pinned {
+  margin-block-end: 6px;
+}
+
+/* Rows: icon + label, full-width, subtle theme-aware hover. */
+.kavacha-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--kavacha-text-primary, #edeaf7);
+  background: transparent;
+  -moz-box-align: center;
+}
+
+.kavacha-menu-item > .toolbarbutton-icon {
+  width: 16px;
+  height: 16px;
+  margin-inline-end: 0;
+}
+
+.kavacha-menu-item > .toolbarbutton-text {
+  text-align: start;
+}
+
+.kavacha-menu-item:hover,
+.kavacha-menu-item:focus {
+  background-color: var(
+    --kavacha-tab-hover-background,
+    color-mix(in srgb, currentColor 10%, transparent)
+  );
+}
+
+.kavacha-menu-item:active {
+  background-color: var(
+    --kavacha-tab-active-background,
+    color-mix(in srgb, currentColor 16%, transparent)
+  );
+}
+
+/* The panel is generated from the registry, so its height grows with every
+   feature, marketplace component and plugin that registers a command. Measured
+   over Marionette at 27 entries: 722px tall in a 758px window, anchored at
+   y=81, so it ran 44px past the viewport with overflow visible and no
+   max-height -- the bottom entries were unreachable and nothing scrolled.
+   Cap it against the viewport and let the overflow scroll. */
+#kavacha-menu-panel {
+  max-height: calc(100vh - 8rem);
+}
+
+/* The scrollbox owns the scrolling; it is capped so the panel, anchored just
+   below the toolbar, still ends above the window bottom. */
+.kavacha-menu-scrollbox {
+  display: block;
+  max-height: calc(100vh - 9rem);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* ==========================================================================
+   The Appearance panel (patch 0063). Opened from the pinned Appearance row,
+   anchored to the same button as the menu.
+
+   Every colour below is a --kavacha-* token with a literal Midnight fallback,
+   which is this file's existing convention and, more to the point, the reason
+   this panel can show you a light theme without going white-on-white. Hardcoded
+   hex is what patch 0061 spent its time removing; do not add any here.
+   ========================================================================== */
+
+#kavacha-appearance-panel {
+  --panel-background: var(--kavacha-surface-elevated, #16131f);
+  --panel-border-color: var(--kavacha-border, #322b4a);
+  --panel-color: var(--kavacha-text-primary, #f6f4fc);
+  /* Wide enough for three theme cards on one row and the ten accent swatches
+     on another, which is what decides this number -- narrower and the palette
+     wraps into something that no longer reads as a palette. */
+  min-width: 360px;
+  max-width: 360px;
+  padding: 10px;
+}
+
+.kavacha-appearance-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* The panel measures the space below its anchor and sets this property on
+     open (see KavachaAppearancePanel.open). The calc() fallback is only for a
+     panel shown some other way, and is deliberately conservative: `100vh`
+     inside a XUL popup is the POPUP's viewport, measured at 808px in a 758px
+     window, so a vh-based cap over-estimates the room available. */
+  max-height: var(--kavacha-appearance-max, calc(100vh - 14rem));
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.kavacha-appearance-heading {
+  margin-block: 10px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--kavacha-text-secondary, #cabfe6);
+}
+
+/* --- Segmented controls (mode, tabs, density, sidebar) ------------------- */
+.kavacha-appearance-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-block: 3px;
+}
+
+.kavacha-appearance-row-label {
+  flex: 0 0 62px;
+  font-size: 12px;
+  color: var(--kavacha-text-secondary, #cabfe6);
+}
+
+.kavacha-appearance-segments {
+  display: flex;
+  flex: 1;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--kavacha-surface-sunken, #060409);
+}
+
+.kavacha-appearance-segment {
+  flex: 1;
+  padding: 5px 6px;
+  appearance: none;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--kavacha-text-secondary, #cabfe6);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.kavacha-appearance-segment:hover {
+  background: var(
+    --kavacha-tab-hover-background,
+    color-mix(in srgb, currentColor 10%, transparent)
+  );
+}
+
+/* aria-pressed is both the accessible state and the selected style, so the
+   two cannot drift apart. */
+.kavacha-appearance-segment[aria-pressed="true"] {
+  background: var(--kavacha-tab-active-background, #241d3a);
+  color: var(--kavacha-text-primary, #f6f4fc);
+}
+
+.kavacha-appearance-segment:focus-visible {
+  outline: 2px solid var(--kavacha-accent, var(--kavacha-accent-fallback));
+  outline-offset: -2px;
+}
+
+.kavacha-appearance-mode {
+  margin-block-end: 2px;
+}
+
+/* --- Theme cards: the palette ------------------------------------------- */
+.kavacha-appearance-themes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 8px;
+}
+
+.kavacha-appearance-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px;
+  appearance: none;
+  border: 1px solid var(--kavacha-border, #322b4a);
+  border-radius: 10px;
+  background: var(--kavacha-surface, #0b0912);
+  color: var(--kavacha-text-primary, #f6f4fc);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.kavacha-appearance-card:hover {
+  border-color: var(--kavacha-accent, var(--kavacha-accent-fallback));
+}
+
+.kavacha-appearance-card[aria-pressed="true"] {
+  border-color: var(--kavacha-accent, var(--kavacha-accent-fallback));
+  box-shadow: inset 0 0 0 1px
+    var(--kavacha-accent, var(--kavacha-accent-fallback));
+}
+
+.kavacha-appearance-card:focus-visible {
+  outline: 2px solid var(--kavacha-accent, var(--kavacha-accent-fallback));
+  outline-offset: 1px;
+}
+
+/* Five bands of the theme's own colours. The bands are painted from inline
+   styles set by the panel, not from tokens here: they must show the colours of
+   the theme on the card, not the colours of the theme you are wearing. */
+.kavacha-appearance-swatch {
+  display: flex;
+  height: 26px;
+  border-radius: 6px;
+  overflow: hidden;
+  /* A theme whose surface matches the card's would otherwise have no edge. */
+  border: 1px solid var(--kavacha-border, #322b4a);
+}
+
+.kavacha-appearance-band {
+  flex: 1;
+}
+
+.kavacha-appearance-card-name {
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+/* Shown when the engine's WCAG check says this theme's text cannot be read on
+   its own surface. The engine repairs it on apply; this says so beforehand. */
+.kavacha-appearance-warn {
+  font-size: 10px;
+  color: var(--kavacha-warning, #e8a33d);
+}
+
+/* --- Accent palette ------------------------------------------------------ */
+.kavacha-appearance-accents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding-block: 2px;
+}
+
+.kavacha-appearance-accent {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  appearance: none;
+  border: 1px solid var(--kavacha-border, #322b4a);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.kavacha-appearance-accent[aria-pressed="true"] {
+  outline: 2px solid var(--kavacha-text-primary, #f6f4fc);
+  outline-offset: 2px;
+}
+
+.kavacha-appearance-accent:focus-visible {
+  outline: 2px solid var(--kavacha-accent, var(--kavacha-accent-fallback));
+  outline-offset: 2px;
+}
+
+/* "Use the system accent" paints itself with the system colour, so the button
+   is a preview of what choosing it does. */
+.kavacha-appearance-accent-system {
+  background: AccentColor;
+}
+
+.kavacha-appearance-accent-custom {
+  background: var(--kavacha-surface-sunken, #060409);
+  /* Strip the native colour input's chrome so it sits in the row as one more
+     swatch rather than as a button with a swatch inside it. */
+  padding: 2px;
+  inline-size: 24px;
+  block-size: 24px;
+}
+
+.kavacha-appearance-layout {
+  margin-block-start: 10px;
+}
+
+.kavacha-appearance-footer {
+  margin-block-start: 10px;
+  padding-block-start: 6px;
+  border-block-start: 1px solid var(--kavacha-border, #322b4a);
+}
+
+/* ==========================================================================
+   First-launch coach mark (patch 0056). Shown once per profile, pointing at
+   the menu button. Sized so it reads as an aside, not a dialog.
+   ========================================================================== */
+#kavacha-coachmark .kavacha-coachmark-body {
+  max-width: 280px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#kavacha-coachmark .kavacha-coachmark-title {
+  font-weight: 650;
+}
+
+#kavacha-coachmark .kavacha-coachmark-text {
+  opacity: 0.8;
+  font-size: 0.92em;
+  line-height: 1.45;
+}
+
+/* ==========================================================================
+   Widget dashboard (patch 0057). The panel is built by KavachaWidgetHost from
+   whatever widgets are enabled, so this styles a shape rather than a fixed
+   set of cards.
+   ========================================================================== */
+#kavacha-dashboard-panel .kavacha-dashboard {
+  width: 380px;
+  max-height: 560px;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#kavacha-dashboard-panel .kavacha-dashboard-slot {
+  position: relative;
+  border: 1px solid var(--kavacha-border, currentColor);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+#kavacha-dashboard-panel .kavacha-widget-title {
+  margin: 0 0 6px;
+  font-size: 0.78em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+#kavacha-dashboard-panel .kavacha-widget-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+#kavacha-dashboard-panel .kavacha-widget-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: start;
+  appearance: none;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 5px 6px;
+  cursor: pointer;
+}
+
+#kavacha-dashboard-panel .kavacha-widget-row:hover {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+#kavacha-dashboard-panel .kavacha-widget-row[aria-current="true"] {
+  font-weight: 650;
+}
+
+#kavacha-dashboard-panel .kavacha-widget-row-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#kavacha-dashboard-panel .kavacha-widget-badge {
+  font-size: 0.72em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.55;
+}
+
+#kavacha-dashboard-panel .kavacha-widget-empty {
+  margin: 0;
+  opacity: 0.6;
+}
+
+/* Notes can be arbitrarily long; the card scrolls rather than the panel. */
+#kavacha-dashboard-panel .kavacha-widget-note {
+  max-height: 200px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+#kavacha-dashboard-panel .kavacha-widget-note :is(p, ul, ol, pre) {
+  margin: 0 0 0.5em;
+}
+
+/* Arrangement controls sit in the card's top-right and stay dim until the
+   card is hovered — present, but not competing with the content. */
+#kavacha-dashboard-panel .kavacha-dashboard-controls {
+  position: absolute;
+  inset-block-start: 6px;
+  inset-inline-end: 6px;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+#kavacha-dashboard-panel .kavacha-dashboard-slot:hover
+  .kavacha-dashboard-controls,
+#kavacha-dashboard-panel .kavacha-dashboard-controls:focus-within {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #kavacha-dashboard-panel .kavacha-dashboard-controls {
+    transition: none;
+  }
+}
+
+#kavacha-dashboard-panel .kavacha-dashboard-control {
+  appearance: none;
+  border: 1px solid var(--kavacha-border, currentColor);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85em;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+
+#kavacha-dashboard-panel .kavacha-dashboard-control:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+#kavacha-dashboard-panel .kavacha-dashboard-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  opacity: 0.8;
+}
+
+#kavacha-dashboard-panel .kavacha-dashboard-add-label {
+  font-size: 0.85em;
+}

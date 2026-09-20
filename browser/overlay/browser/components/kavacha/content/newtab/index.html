@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>New Tab</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="chrome://browser/content/kavacha/newtab/favicon.png">
+  <link rel="stylesheet" href="chrome://browser/content/kavacha/newtab/newtab.css">
+  <!-- Patch 0062: see kavacha-theme/content-theme.js. This page hardcoded
+       white-on-#1c1d22 and used no theme token at all, so a light theme gave a
+       white browser with a black new tab. -->
+  <script src="chrome://browser/content/kavacha/theme/content-theme.js"></script>
+</head>
+<body>
+  <!-- Gradient-of-the-day background layer; the day's Wikimedia featured
+       picture fades in on top when it loads -->
+  <div id="bg" class="bg"></div>
+  <div id="photo" class="photo"></div>
+  <div id="scrim" class="scrim hidden"></div>
+
+  <!-- First run: ask for a name -->
+  <div id="onboarding" class="onboarding hidden">
+    <form id="name-form" class="name-form">
+      <label for="name-input" class="name-label">What should we call you?</label>
+      <input id="name-input" class="name-input" type="text" autocomplete="off"
+             spellcheck="false" maxlength="40" placeholder="Type your name and press Enter">
+      <button id="name-skip" class="name-skip" type="button">Skip</button>
+    </form>
+  </div>
+
+  <!-- Dashboard -->
+  <main id="dash" class="dash hidden">
+    <div class="center">
+      <div id="clock" class="clock">--:--</div>
+      <h1 id="greeting" class="greeting"></h1>
+    </div>
+
+    <figure class="quote">
+      <blockquote id="quote-text"></blockquote>
+      <figcaption id="quote-author"></figcaption>
+    </figure>
+  </main>
+
+  <!-- Photo attribution (bottom-right) -->
+  <a id="credit" class="credit hidden" href="#"></a>
+
+  <!-- Settings pointer (bottom-left): first-run users find preferences here
+       without opening the command palette. -->
+  <a id="settings" class="settings" href="about:preferences">⚙ Settings</a>
+
+  <script src="chrome://browser/content/kavacha/newtab/newtab.js"></script>
+</body>
+</html>

@@ -1,0 +1,49 @@
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src chrome:; img-src chrome: data:; style-src chrome: 'unsafe-inline'; object-src 'none'"
+    />
+    <title>Plugins</title>
+    <link rel="stylesheet" href="chrome://browser/content/kavacha/plugins/plugins.css" />
+    <!-- Patch 0062: see kavacha-theme/content-theme.js. Puts the active theme's
+         --kavacha-* tokens into this document's cascade. -->
+    <script src="chrome://browser/content/kavacha/theme/content-theme.js"></script>
+    <script src="chrome://browser/content/kavacha/plugins/plugins.js"></script>
+  </head>
+  <body>
+    <header class="plugins-header">
+      <div class="plugins-title">
+        <h1>Plugins</h1>
+        <p class="plugins-subtitle">
+          Extend Kavacha with small, permissioned add-ons. A plugin can only do
+          what you explicitly allow — and can never touch your passwords,
+          history, or private data.
+        </p>
+      </div>
+    </header>
+
+    <main class="plugins-body">
+      <div class="plugins-note" role="note">
+        Plugins are <strong>sideloaded</strong> into your profile at
+        <code>kavacha-plugins/</code>. Drop a plugin folder there, then enable
+        it below. Installing plugins from the Marketplace is a later
+        integration.
+      </div>
+
+      <section id="plugin-list" class="plugin-list" aria-live="polite">
+        <!-- plugin cards injected by plugins.js -->
+      </section>
+
+      <p id="plugins-empty" class="plugins-empty" hidden>
+        No plugins installed yet. Add a plugin folder to
+        <code>kavacha-plugins/</code> in your profile and reload this page.
+      </p>
+    </main>
+  </body>
+</html>

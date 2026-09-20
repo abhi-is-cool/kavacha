@@ -1,0 +1,498 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* Customization Studio (about:studio). Styled from Kavacha's theme tokens so
+ * the Studio follows the active theme. ADR 0009.
+ *
+ * Patch 0062: those tokens now actually arrive. This is a CONTENT document, so
+ * the chrome token floor in zen-theme.css was never in its cascade and every
+ * var() below resolved to its literal fallback -- the Studio stayed black even
+ * while you were using it to select a light theme. content-theme.js stamps the
+ * live values onto the document root, and sets color-scheme from the theme's
+ * mode instead of the `color-scheme: dark` that used to be pinned here. */
+
+:root {
+  /* The fallbacks are Kavacha Midnight, and are reached only if
+     content-theme.js fails to run -- a readable dark page rather than an
+     unstyled one. Keep them in step with kavacha-midnight.inc.css. */
+  --studio-surface: var(--kavacha-surface, #0b0912);
+  --studio-elevated: var(--kavacha-surface-elevated, #16131f);
+  --studio-sunken: var(--kavacha-surface-sunken, #060409);
+  --studio-border: var(--kavacha-border, #322b4a);
+  --studio-text: var(--kavacha-text-primary, #f6f4fc);
+  --studio-text-dim: var(--kavacha-text-secondary, #cabfe6);
+  /* Canonical definition and rationale: kavacha-midnight.inc.css. Repeated
+     here because this is a content document -- the chrome token floor is not
+     in its cascade -- not because the value is local. */
+  --kavacha-accent-fallback: #8b7bd8;
+  --studio-accent: var(
+    --kavacha-accent,
+    var(--kavacha-accent, var(--kavacha-accent-fallback))
+  );
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0 0 64px;
+  font: message-box;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--studio-text);
+  background: var(--studio-surface);
+  min-height: 100vh;
+}
+
+.studio-header {
+  padding: 40px max(24px, 50% - 460px) 24px;
+  background: linear-gradient(
+    180deg,
+    var(--studio-elevated),
+    var(--studio-surface)
+  );
+  border-bottom: 1px solid var(--studio-border);
+}
+
+.studio-title h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.studio-subtitle {
+  margin: 6px 0 0;
+  color: var(--studio-text-dim);
+  max-width: 52ch;
+}
+
+.studio-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 max(24px, 50% - 460px);
+  border-bottom: 1px solid var(--studio-border);
+  background: var(--studio-surface);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.studio-tab {
+  appearance: none;
+  border: none;
+  background: none;
+  color: var(--studio-text-dim);
+  font: inherit;
+  font-weight: 600;
+  padding: 14px 16px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.studio-tab:hover {
+  color: var(--studio-text);
+}
+
+.studio-tab[aria-selected="true"] {
+  color: var(--studio-text);
+  border-bottom-color: var(--studio-accent);
+}
+
+.studio-body {
+  padding: 28px max(24px, 50% - 460px) 0;
+  max-width: 920px;
+  margin: 0 auto;
+}
+
+.studio-panel[hidden] {
+  display: none;
+}
+
+.studio-card {
+  background: var(--studio-elevated);
+  border: 1px solid var(--studio-border);
+  border-radius: 14px;
+  padding: 20px 22px;
+  margin-bottom: 18px;
+}
+
+.studio-card[data-requires][hidden] {
+  display: none;
+}
+
+.studio-card h2 {
+  margin: 0 0 4px;
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.studio-hint {
+  margin: 0 0 14px;
+  color: var(--studio-text-dim);
+  font-size: 13px;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.field-label {
+  min-width: 76px;
+  color: var(--studio-text-dim);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Segmented radio-button group */
+.segmented {
+  display: inline-flex;
+  background: var(--studio-sunken);
+  border: 1px solid var(--studio-border);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 2px;
+}
+
+.segmented button {
+  appearance: none;
+  border: none;
+  background: none;
+  color: var(--studio-text-dim);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.segmented button:hover {
+  color: var(--studio-text);
+}
+
+.segmented button[aria-checked="true"] {
+  background: var(--studio-accent);
+  color: #fff;
+}
+
+input[type="range"] {
+  flex: 1;
+  min-width: 160px;
+  accent-color: var(--studio-accent);
+}
+
+output {
+  font-variant-numeric: tabular-nums;
+  color: var(--studio-text-dim);
+  min-width: 52px;
+  text-align: right;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  cursor: pointer;
+}
+
+.checkbox-row input {
+  accent-color: var(--studio-accent);
+  width: 16px;
+  height: 16px;
+}
+
+.studio-actions {
+  margin: 4px 0 24px;
+}
+
+.studio-button {
+  appearance: none;
+  font: inherit;
+  font-weight: 600;
+  border-radius: 10px;
+  padding: 10px 18px;
+  cursor: pointer;
+  border: 1px solid var(--studio-border);
+}
+
+.studio-button.ghost {
+  background: transparent;
+  color: var(--studio-text-dim);
+}
+
+.studio-button.ghost:hover {
+  color: var(--studio-text);
+  background: var(--studio-elevated);
+}
+
+.studio-button.primary {
+  background: var(--studio-accent);
+  color: #fff;
+  border-color: transparent;
+}
+
+.studio-button.primary:hover {
+  filter: brightness(1.08);
+}
+
+/* Theme grid */
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 14px;
+}
+
+.theme-card {
+  appearance: none;
+  text-align: left;
+  border: 2px solid var(--studio-border);
+  border-radius: 12px;
+  padding: 0;
+  overflow: hidden;
+  background: var(--studio-sunken);
+  color: var(--studio-text);
+  cursor: pointer;
+  font: inherit;
+}
+
+.theme-card:hover {
+  border-color: var(--studio-text-dim);
+}
+
+.theme-card[aria-checked="true"] {
+  border-color: var(--studio-accent);
+}
+
+.theme-swatch {
+  height: 68px;
+  display: flex;
+}
+
+.theme-swatch span {
+  flex: 1;
+}
+
+.theme-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+
+.theme-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.theme-active-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--studio-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.theme-card:not([aria-checked="true"]) .theme-active-badge {
+  display: none;
+}
+
+/* Advanced: live CSS editor */
+.advanced-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.safe-mode-row {
+  margin-top: 0;
+  flex-shrink: 0;
+}
+
+/* --- CSS editor + syntax highlighting (patch 0056) ------------------------
+   The textarea is the real editing surface and stays on top, transparent; the
+   <pre> behind it paints the colours. EVERY typography and box property below
+   is shared between the two -- font, size, line-height, tab-size, padding,
+   border width, white-space -- because any difference between them shows up
+   directly as text drifting out from under the caret. */
+.css-editor-wrap {
+  position: relative;
+  margin-top: 4px;
+  min-height: 260px;
+  display: grid;
+}
+
+.css-editor,
+.css-highlight {
+  grid-area: 1 / 1;
+  width: 100%;
+  min-height: 260px;
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  tab-size: 2;
+  white-space: pre;
+  overflow: auto;
+  box-sizing: border-box;
+}
+
+.css-editor {
+  position: relative;
+  z-index: 1;
+  border-color: var(--studio-border);
+  background: transparent;
+  /* The text itself is painted by the layer underneath; only the caret and
+     the selection come from the textarea. */
+  color: transparent;
+  caret-color: var(--studio-text);
+  resize: vertical;
+}
+
+.css-editor::selection {
+  /* A transparent-text selection would be invisible, so tint the box. */
+  background: color-mix(in srgb, var(--studio-accent) 35%, transparent);
+}
+
+.css-editor::placeholder {
+  color: var(--studio-text-dim);
+}
+
+.css-highlight {
+  background: var(--studio-sunken);
+  color: var(--studio-text);
+  /* Never intercept a click: the textarea above owns all interaction. */
+  pointer-events: none;
+  /* Scrolled programmatically in lockstep with the textarea. */
+  overflow: hidden;
+}
+
+.css-highlight code {
+  font: inherit;
+  white-space: inherit;
+}
+
+.css-editor:focus {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: -1px;
+}
+
+/* Token colours. Chosen for contrast against --studio-sunken rather than for
+   resemblance to any particular editor theme. */
+.css-highlight .tok-comment {
+  color: var(--studio-text-dim);
+  font-style: italic;
+}
+
+.css-highlight .tok-selector {
+  color: var(--studio-text);
+  font-weight: 600;
+}
+
+.css-highlight .tok-property {
+  color: #7fb6ff;
+}
+
+.css-highlight .tok-value {
+  color: #9be3a8;
+}
+
+.css-highlight .tok-string {
+  color: #e8c07d;
+}
+
+.css-highlight .tok-number,
+.css-highlight .tok-color {
+  color: #e8a33d;
+}
+
+.css-highlight .tok-atrule {
+  color: #c792ea;
+  font-weight: 600;
+}
+
+.css-highlight .tok-important {
+  color: #e06c75;
+  font-weight: 600;
+}
+
+.css-highlight .tok-punct {
+  color: var(--studio-text-dim);
+}
+
+.editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0 0;
+}
+
+.css-status {
+  color: var(--studio-text-dim);
+  font-size: 13px;
+}
+
+.studio-button.small {
+  padding: 5px 12px;
+  font-size: 12px;
+}
+
+.css-history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.css-history-empty {
+  color: var(--studio-text-dim);
+  font-size: 13px;
+}
+
+.css-history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--studio-border);
+}
+
+.css-history-item:last-child {
+  border-bottom: none;
+}
+
+.css-history-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.css-history-when {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--studio-text-dim);
+}
+
+.css-history-preview {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--studio-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

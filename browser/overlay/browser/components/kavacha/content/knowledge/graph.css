@@ -1,0 +1,241 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* about:knowledge (ADR 0016). Same token vocabulary and literal fallbacks as
+ * the other Kavacha content pages: these documents are not in the chrome
+ * token cascade, which is why every var() here carries its own fallback
+ * (see the note in REMAINING_WORK about why they are declared twice). */
+
+:root {
+  --kg-gap: 16px;
+  --kg-radius: 10px;
+  --kg-accent: var(
+    --kavacha-accent,
+    var(--kavacha-accent, var(--kavacha-accent-fallback, #8b7bd8))
+  );
+}
+
+body {
+  margin: 0;
+  padding: var(--kg-gap);
+  font: message-box;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--kavacha-text, #e8e6f0);
+  background: var(--kavacha-surface, #14111f);
+  display: flex;
+  flex-direction: column;
+  gap: var(--kg-gap);
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+h1 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.kg-sub {
+  margin: 4px 0 0;
+  opacity: 0.75;
+}
+
+.kg-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.kg-stat {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--kavacha-surface-raised, #1d1930);
+  border: 1px solid var(--kavacha-border, #2e2748);
+  font-size: 12px;
+}
+
+.kg-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: var(--kg-radius);
+  border: 1px solid var(--kavacha-border, #2e2748);
+  background: var(--kavacha-surface-raised, #1d1930);
+  color: inherit;
+  font: inherit;
+}
+
+.kg-main {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  gap: var(--kg-gap);
+  align-items: start;
+  flex: 1;
+}
+
+@media (max-width: 720px) {
+  .kg-main {
+    grid-template-columns: 1fr;
+  }
+}
+
+.kg-heading,
+.kg-section-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+}
+
+.kg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kg-row,
+.kg-link-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--kg-radius);
+  border: 1px solid transparent;
+  background: var(--kavacha-surface-raised, #1d1930);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.kg-row:hover,
+.kg-link-row:hover {
+  border-color: var(--kg-accent);
+}
+
+.kg-row-title,
+.kg-link-label {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.kg-row-meta,
+.kg-link-url {
+  font-size: 12px;
+  opacity: 0.7;
+  overflow-wrap: anywhere;
+}
+
+.kg-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kg-gap);
+  padding: var(--kg-gap);
+  border-radius: var(--kg-radius);
+  background: var(--kavacha-surface-raised, #1d1930);
+  border: 1px solid var(--kavacha-border, #2e2748);
+  min-height: 240px;
+}
+
+.kg-detail-title {
+  margin: 0;
+  font-size: 18px;
+}
+
+.kg-detail-url {
+  font-size: 12px;
+  opacity: 0.7;
+  overflow-wrap: anywhere;
+}
+
+.kg-detail-tools {
+  display: flex;
+  gap: 14px;
+  margin-top: 8px;
+}
+
+.kg-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kg-note-body,
+.kg-quote-body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.kg-quote-body {
+  padding-inline-start: 10px;
+  border-inline-start: 3px solid var(--kg-accent);
+  opacity: 0.92;
+}
+
+.kg-kind {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.65;
+}
+
+.kg-chip {
+  display: inline-block;
+  margin: 0 6px 6px 0;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--kavacha-border, #2e2748);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.kg-chip:hover {
+  border-color: var(--kg-accent);
+}
+
+.kg-muted,
+.kg-empty {
+  opacity: 0.7;
+  margin: 0;
+}
+
+.kg-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--kg-accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.kg-link:hover {
+  text-decoration: underline;
+}
+
+.kg-danger {
+  color: var(--kavacha-danger, #e06c75);
+}
+
+.kg-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: baseline;
+  padding-top: 10px;
+  border-top: 1px solid var(--kavacha-border, #2e2748);
+  font-size: 12px;
+}
+
+.kg-footer-status {
+  opacity: 0.7;
+  overflow-wrap: anywhere;
+}

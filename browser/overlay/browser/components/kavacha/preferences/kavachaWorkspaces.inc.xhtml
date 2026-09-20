@@ -2,10 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-# Kavacha Settings pane "Workspaces" — PLACEHOLDER (port milestone M2). The
-# Zen-era pane (patches 0021/0031/0032/0048-0050/0059/0063) lands here in M3;
-# this file exists so preferences.xhtml (patch 0004) can #include it and the
-# pane selects, which is what the substrate probe checks.
 <script type="text/javascript" src="chrome://browser/content/preferences/kavacha-workspaces.js"/>
 <html:template id="template-paneKavachaWorkspaces">
 
@@ -16,8 +12,53 @@
 <html:h1 data-l10n-id="kavacha-workspaces-title"/>
 </hbox>
 
-<groupbox id="kavachaWorkspacesPlaceholder" data-category="paneKavachaWorkspaces" hidden="true">
-  <description class="description-deemphasized" data-l10n-id="kavacha-pane-placeholder"/>
+<groupbox id="kavachaWorkspacesMemoryGroup" data-category="paneKavachaWorkspaces" hidden="true" class="highlighting-group">
+  <label><html:h2 data-l10n-id="kavacha-workspaces-memory-header"/></label>
+  <description class="description-deemphasized" data-l10n-id="kavacha-workspaces-memory-description"/>
+  <hbox class="kavacha-workspaces-row" align="center">
+    <label data-l10n-id="kavacha-workspaces-unload-label" control="kavachaWorkspacesUnloadMinutes"/>
+    <html:input type="number" id="kavachaWorkspacesUnloadMinutes" class="kavacha-workspaces-number" min="0" max="1440" step="5"/>
+    <label data-l10n-id="kavacha-workspaces-unload-suffix"/>
+  </hbox>
+  <hbox pack="start">
+    <button id="kavachaWorkspacesSleepNow" data-l10n-id="kavacha-workspaces-sleep-now"/>
+  </hbox>
+</groupbox>
+
+<groupbox id="kavachaWorkspacesSessionGroup" data-category="paneKavachaWorkspaces" hidden="true" class="highlighting-group">
+  <label><html:h2 data-l10n-id="kavacha-workspaces-session-header"/></label>
+  <description class="description-deemphasized" data-l10n-id="kavacha-workspaces-session-description"/>
+  <checkbox id="kavachaWorkspacesClearUnpinned" data-l10n-id="kavacha-workspaces-clear-unpinned-checkbox"/>
+  <description class="description-deemphasized" data-l10n-id="kavacha-workspaces-session-note"/>
+</groupbox>
+
+<groupbox id="kavachaWorkspacesIsolationGroup" data-category="paneKavachaWorkspaces" hidden="true" class="highlighting-group">
+  <label><html:h2 data-l10n-id="kavacha-workspaces-isolation-header"/></label>
+  <description class="description-deemphasized" data-l10n-id="kavacha-workspaces-isolation-description"/>
+  <checkbox id="kavachaWorkspacesIsolateContainers" data-l10n-id="kavacha-workspaces-isolate-checkbox"/>
+  <description class="description-deemphasized" data-l10n-id="kavacha-workspaces-isolation-note"/>
+</groupbox>
+
+<groupbox id="kavachaWorkspacesTemplatesGroup" data-category="paneKavachaWorkspaces" hidden="true" class="highlighting-group">
+  <label><html:h2 data-l10n-id="kavacha-workspaces-templates-header"/></label>
+  <description class="description-deemphasized" data-l10n-id="kavacha-workspaces-templates-description"/>
+  <hbox class="kavacha-workspaces-row" pack="start">
+    <button id="kavachaWorkspacesTemplateStudent" data-l10n-id="kavacha-workspaces-template-student"/>
+    <button id="kavachaWorkspacesTemplateDeveloper" data-l10n-id="kavacha-workspaces-template-developer"/>
+    <button id="kavachaWorkspacesTemplatePrivate" data-l10n-id="kavacha-workspaces-template-private"/>
+  </hbox>
+</groupbox>
+
+<groupbox id="kavachaWorkspacesArchivedGroup" data-category="paneKavachaWorkspaces" hidden="true" class="highlighting-group">
+  <label><html:h2 data-l10n-id="kavacha-workspaces-archived-header"/></label>
+  <description class="description-deemphasized" data-l10n-id="kavacha-workspaces-archived-description"/>
+  <hbox pack="start">
+    <button id="kavachaWorkspacesRestore" data-l10n-id="kavacha-workspaces-restore"/>
+  </hbox>
+</groupbox>
+
+<groupbox id="kavachaWorkspacesMoreGroup" data-category="paneKavachaWorkspaces" hidden="true" class="highlighting-group">
+  <description class="description-deemphasized" data-l10n-id="kavacha-workspaces-more-description"/>
 </groupbox>
 
 </html:template>

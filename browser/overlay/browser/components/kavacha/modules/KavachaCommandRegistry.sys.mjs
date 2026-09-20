@@ -530,7 +530,7 @@ const BUILTIN = [
         selected
       );
       if (ok) {
-        spaces.unarchiveWorkspace(archived[selected.value].uuid).catch(e =>
+        spaces.unarchiveWorkspace(archived[selected.value].id).catch(e =>
           console.error("Kavacha: restore archived space failed", e)
         );
       }

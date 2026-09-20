@@ -1,0 +1,240 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* about:workflows (ADR 0017). Same token vocabulary and literal fallbacks as
+ * the other Kavacha content pages. */
+
+:root {
+  --kw-gap: 16px;
+  --kw-radius: 10px;
+  --kw-accent: var(
+    --kavacha-accent,
+    var(--kavacha-accent, var(--kavacha-accent-fallback, #8b7bd8))
+  );
+}
+
+body {
+  margin: 0;
+  padding: var(--kw-gap);
+  font: message-box;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--kavacha-text, #e8e6f0);
+  background: var(--kavacha-surface, #14111f);
+  display: flex;
+  flex-direction: column;
+  gap: var(--kw-gap);
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+h1 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.kw-sub {
+  margin: 4px 0 0;
+  opacity: 0.75;
+  max-width: 70ch;
+}
+
+.kw-main {
+  display: grid;
+  grid-template-columns: minmax(200px, 280px) 1fr;
+  gap: var(--kw-gap);
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .kw-main {
+    grid-template-columns: 1fr;
+  }
+}
+
+.kw-list-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kw-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kw-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--kw-radius);
+  border: 1px solid transparent;
+  background: var(--kavacha-surface-raised, #1d1930);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.kw-row:hover,
+.kw-row.is-active {
+  border-color: var(--kw-accent);
+}
+
+.kw-row-name {
+  font-weight: 600;
+}
+
+.kw-row-meta {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.kw-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: var(--kw-gap);
+  border-radius: var(--kw-radius);
+  background: var(--kavacha-surface-raised, #1d1930);
+  border: 1px solid var(--kavacha-border, #2e2748);
+  min-height: 300px;
+}
+
+.kw-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--kw-radius);
+  border: 1px solid var(--kavacha-border, #2e2748);
+}
+
+.kw-heading {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+}
+
+.kw-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.kw-field-label {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.kw-input,
+.kw-select {
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--kavacha-border, #2e2748);
+  background: var(--kavacha-surface, #14111f);
+  color: inherit;
+  font: inherit;
+}
+
+.kw-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kw-step {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--kavacha-surface, #14111f);
+  border: 1px solid var(--kavacha-border, #2e2748);
+}
+
+.kw-step-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.kw-step-index {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--kw-accent);
+  color: #fff;
+  font-size: 12px;
+}
+
+.kw-step-name {
+  flex: 1;
+  font-weight: 600;
+}
+
+.kw-row-tools,
+.kw-tools {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.kw-primary,
+.kw-secondary {
+  padding: 7px 14px;
+  border-radius: var(--kw-radius);
+  border: 1px solid var(--kavacha-border, #2e2748);
+  font: inherit;
+  cursor: pointer;
+}
+
+.kw-primary {
+  background: var(--kw-accent);
+  border-color: transparent;
+  color: #fff;
+}
+
+.kw-secondary {
+  background: var(--kavacha-surface, #14111f);
+  color: inherit;
+}
+
+.kw-link {
+  padding: 0 2px;
+  border: none;
+  background: none;
+  color: var(--kw-accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.kw-link:hover {
+  text-decoration: underline;
+}
+
+.kw-danger {
+  color: var(--kavacha-danger, #e06c75);
+}
+
+.kw-note,
+.kw-empty,
+.kw-status {
+  font-size: 12px;
+  opacity: 0.75;
+  margin: 0;
+}
+
+.kw-status {
+  min-height: 1.4em;
+}

@@ -147,10 +147,18 @@ try {
        G.parseEntities('Sure! [{"name":"Kerala","kind":"place"}]').length === 1);
     ok("entity parser: refusal yields nothing",
        G.parseEntities("I cannot help with that.").length === 0);
+    // Names are required to be >= 2 characters (single letters are LLM noise),
+    // so these cases need real names — the originals used "X" and "A" and were
+    // rejected for the LENGTH, never reaching the behaviour under test. Found
+    // 2026-09-20, the first time this probe was ever executed.
     ok("entity parser: junk kind falls back to topic",
-       G.parseEntities('[{"name":"X","kind":"weapon"}]')[0].kind === "topic");
+       G.parseEntities('[{"name":"Xylem","kind":"weapon"}]')[0]?.kind === "topic");
     ok("entity parser: unnamed entries dropped",
-       G.parseEntities('[{"kind":"person"},{"name":"A"}]').length === 1);
+       G.parseEntities('[{"kind":"person"},{"name":"Ada"}]').length === 1);
+    ok("entity parser: a valid kind is preserved",
+       G.parseEntities('[{"name":"Ada","kind":"person"}]')[0]?.kind === "person");
+    ok("entity parser: single-character names are dropped as noise",
+       G.parseEntities('[{"name":"X"}]').length === 0);
     ok("entity parser: capped at 12",
        G.parseEntities(JSON.stringify(
          Array.from({length: 30}, (_, i) => ({name: "n" + i})))).length === 12);

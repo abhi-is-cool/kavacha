@@ -1,0 +1,98 @@
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src chrome:; img-src chrome: data:; style-src chrome: 'unsafe-inline'; object-src 'none'"
+    />
+    <title>Kavacha Knowledge</title>
+    <link
+      rel="stylesheet"
+      href="chrome://browser/content/kavacha/knowledge/knowledge.css"
+    />
+    <!-- Patch 0062's shared theming, before the page script so the first
+         paint is already themed (see the AI sidebar for the full reasoning). -->
+    <script src="chrome://browser/content/kavacha/theme/content-theme.js"></script>
+    <script src="chrome://browser/content/kavacha/knowledge/knowledge.js"></script>
+  </head>
+  <body>
+    <nav class="kn-modes" role="tablist">
+      <button id="mode-page" class="kn-mode" role="tab" aria-selected="true">
+        This page
+      </button>
+      <button id="mode-library" class="kn-mode" role="tab" aria-selected="false">
+        Library
+      </button>
+    </nav>
+
+    <section id="view-page" class="kn-view" role="tabpanel">
+      <div class="kn-page">
+        <div id="page-title" class="kn-page-title">—</div>
+        <div id="page-host" class="kn-page-host"></div>
+      </div>
+
+      <div class="kn-row">
+        <button id="clip-page" class="kn-primary">Clip page</button>
+        <button id="clip-selection" class="kn-secondary">
+          Highlight selection
+        </button>
+      </div>
+      <div id="page-status" class="kn-status" hidden="hidden"></div>
+
+      <div class="kn-note-head">
+        <label class="kn-label" for="note-input">Note</label>
+        <div class="kn-note-tools">
+          <span id="note-saved" class="kn-saved"></span>
+          <button id="note-preview-toggle" class="kn-link">Preview</button>
+        </div>
+      </div>
+      <textarea
+        id="note-input"
+        class="kn-input"
+        rows="7"
+        placeholder="What matters about this page? Markdown works. Saved as you type; empty removes it."
+      ></textarea>
+      <article id="note-preview" class="kn-preview" hidden="hidden"></article>
+
+      <h2 id="page-items-heading" class="kn-heading" hidden="hidden">
+        Saved from this page
+      </h2>
+      <div id="page-items" class="kn-items"></div>
+    </section>
+
+    <section id="view-library" class="kn-view" role="tabpanel" hidden="hidden">
+      <div class="kn-row">
+        <input
+          id="library-filter"
+          class="kn-input kn-filter"
+          type="text"
+          placeholder="Filter your notes, highlights and clips"
+        />
+      </div>
+      <div class="kn-row kn-kinds">
+        <button class="kn-chip is-active" data-kind="">All</button>
+        <button class="kn-chip" data-kind="note">Notes</button>
+        <button class="kn-chip" data-kind="highlight">Highlights</button>
+        <button class="kn-chip" data-kind="clip">Clips</button>
+      </div>
+      <div id="library-status" class="kn-status" hidden="hidden"></div>
+      <div id="library-items" class="kn-items"></div>
+    </section>
+
+    <section id="view-reader" class="kn-view" role="tabpanel" hidden="hidden">
+      <button id="reader-back" class="kn-link">← Back</button>
+      <div id="reader-title" class="kn-page-title"></div>
+      <div id="reader-meta" class="kn-page-host"></div>
+      <article id="reader-body" class="kn-reader"></article>
+    </section>
+
+    <footer class="kn-footer">
+      <span id="kn-footer-status" class="kn-footer-status"></span>
+      <button id="kn-export" class="kn-link">Export</button>
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,42 @@
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src chrome:; img-src chrome: data:; style-src chrome: 'unsafe-inline'; object-src 'none'"
+    />
+    <title>Kavacha Marketplace</title>
+    <link
+      rel="stylesheet"
+      href="chrome://browser/content/kavacha/marketplace/marketplace.css"
+    />
+    <!-- Patch 0062: see kavacha-theme/content-theme.js. Puts the active theme's
+         --kavacha-* tokens into this document's cascade. -->
+    <script src="chrome://browser/content/kavacha/theme/content-theme.js"></script>
+    <script src="chrome://browser/content/kavacha/marketplace/marketplace.js"></script>
+  </head>
+  <body>
+    <header class="market-header">
+      <div class="market-title">
+        <h1>Kavacha Marketplace</h1>
+        <p class="market-subtitle">
+          Install components — themes, layouts, and bundles — then apply them
+          with a click. Everything applies live through Kavacha's own engines.
+        </p>
+      </div>
+      <p class="market-note">
+        Sideloaded &amp; offline. These components ship with Kavacha and install
+        locally into your profile — no account or network needed. Remote install,
+        ratings, and auto-update arrive with Kavacha accounts (Phase 5).
+      </p>
+    </header>
+
+    <main id="market-body" class="market-body">
+      <!-- catalog sections injected by marketplace.js -->
+    </main>
+  </body>
+</html>

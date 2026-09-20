@@ -62,6 +62,14 @@ jobs:
           for f in "${files[@]}"; do node --check "$f"; done
           echo "${#files[@]} overlay script(s) parse"
 
+      # Two silent failures a build cannot catch: a Fluent id defined in two
+      # Kavacha .ftl files (they share one bundle, so the second is dropped),
+      # and a top-level const/let/class in a window script (it shares
+      # browser.js's scope, so it aborts that whole file). Both were real —
+      # see the script's header.
+      - name: Overlay static checks (Fluent ids, window-script scope)
+        run: python3 build/check-overlay.py
+
       - name: Kavacha patches apply cleanly to Firefox ESR
         run: |
           shopt -s nullglob

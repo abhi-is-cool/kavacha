@@ -14,9 +14,51 @@ XPCOM_MANIFESTS += ["components.conf"]
 
 # resource:///modules/Kavacha*.sys.mjs — the import path every Kavacha module
 # and probe already uses.
+# resource:///actors/… — the URI JSWindowActor registrations use.
+FINAL_TARGET_FILES.actors += [
+    "actors/KavachaIndexerChild.sys.mjs",
+    "actors/KavachaIndexerParent.sys.mjs",
+]
+
 EXTRA_JS_MODULES += [
+    "modules/KavachaAboutFocus.sys.mjs",
+    "modules/KavachaAboutKnowledge.sys.mjs",
+    "modules/KavachaAboutMarketplace.sys.mjs",
+    "modules/KavachaAboutPlugins.sys.mjs",
+    "modules/KavachaAboutStudio.sys.mjs",
     "modules/KavachaAboutWelcome.sys.mjs",
+    "modules/KavachaAboutWorkflows.sys.mjs",
+    "modules/KavachaAboutWrite.sys.mjs",
+    "modules/KavachaAIBridge.sys.mjs",
+    "modules/KavachaAISidebar.sys.mjs",
+    "modules/KavachaAppearancePanel.sys.mjs",
+    "modules/KavachaAskHistory.sys.mjs",
+    "modules/KavachaCitations.sys.mjs",
     "modules/KavachaCommandRegistry.sys.mjs",
+    "modules/KavachaFocusMode.sys.mjs",
+    "modules/KavachaKnowledge.sys.mjs",
+    "modules/KavachaKnowledgeGraph.sys.mjs",
+    "modules/KavachaKnowledgeSidebar.sys.mjs",
+    "modules/KavachaLayoutEngine.sys.mjs",
+    "modules/KavachaMarkdown.sys.mjs",
+    "modules/KavachaMarketplace.sys.mjs",
+    "modules/KavachaMenu.sys.mjs",
+    "modules/KavachaNewTab.sys.mjs",
+    "modules/KavachaPersonalIndex.sys.mjs",
+    "modules/KavachaPlacesAttribution.sys.mjs",
+    "modules/KavachaPluginManager.sys.mjs",
+    "modules/KavachaPluginPermissions.sys.mjs",
+    "modules/KavachaSDK.sys.mjs",
+    "modules/KavachaSessionCleanup.sys.mjs",
+    "modules/KavachaSpaceHistory.sys.mjs",
+    "modules/KavachaSpaceNotes.sys.mjs",
     "modules/KavachaStartup.sys.mjs",
+    "modules/KavachaTabAssistant.sys.mjs",
+    "modules/KavachaTabHistory.sys.mjs",
+    "modules/KavachaTabMemory.sys.mjs",
+    "modules/KavachaThemeEngine.sys.mjs",
+    "modules/KavachaUserCSS.sys.mjs",
+    "modules/KavachaWidgetHost.sys.mjs",
+    "modules/KavachaWorkflows.sys.mjs",
     "modules/KavachaWorkspaces.sys.mjs",
 ]

@@ -6,6 +6,208 @@
  * from preferences.xhtml by patch 0004. The Zen-era rules (zen-preferences.css
  * hunks of patches 0021/0031/0032/0048/0049/0050) move here in port milestone M3. */
 
-[kavacha-placeholder] + groupbox {
-  opacity: 0.8;
+/* ---- Zen-era rules (zen-preferences.css hunks of patches 0021/0031/0032/0048/0049/0050), ported ---- */
+
+/* ---- from 0021-privacy-center.patch ---- */
+
+/* Kavacha Privacy Center */
+#kavachaPrivacyCards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-block: 16px 20px;
 }
+
+.kavacha-privacy-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--kavacha-border);
+  border-radius: 8px;
+  background: var(--kavacha-surface-3);
+}
+
+.kavacha-privacy-card-value {
+  font-size: 1.7em;
+  font-weight: 600;
+}
+
+.kavacha-privacy-card-caption {
+  opacity: 0.7;
+  font-size: 0.95em;
+}
+
+.kavacha-privacy-row {
+  justify-content: space-between;
+  padding-block: 7px;
+  border-bottom: 1px solid var(--kavacha-border);
+}
+
+.kavacha-privacy-row:last-child {
+  border-bottom: none;
+}
+
+.kavacha-privacy-row-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.kavacha-privacy-posture-status {
+  font-weight: 600;
+  opacity: 0.6;
+}
+
+.kavacha-privacy-posture-status.on {
+  color: light-dark(#1c7d40, #6fd08c);
+  opacity: 1;
+}
+
+#kavachaPrivacyClearStats {
+  margin-top: 12px;
+}
+
+/* ---- from 0031-settings-panes-appearance-customization.patch ---- */
+
+/* Kavacha Appearance & Themes + Customization panes (patch 0031) */
+.kavacha-appearance-row,
+.kavacha-customization-row {
+  gap: 12px;
+  padding-block: 6px;
+}
+
+.kavacha-appearance-row > label,
+.kavacha-customization-row > label {
+  min-width: 140px;
+}
+
+#kavachaAppearanceThemeSelect,
+#kavachaCustomizationTabStyle,
+#kavachaCustomizationSidebar,
+#kavachaCustomizationDensity {
+  min-width: 200px;
+}
+
+.kavacha-appearance-color {
+  width: 48px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--kavacha-border);
+  border-radius: 6px;
+  background: transparent;
+}
+
+.kavacha-appearance-cta,
+.kavacha-customization-cta {
+  font-weight: 600;
+}
+
+/* ---- from 0032-workspaces-pane-and-accessibility.patch ---- */
+
+/* Kavacha Workspaces pane (patch 0032) */
+.kavacha-workspaces-row {
+  gap: 10px;
+  padding-block: 6px;
+}
+
+.kavacha-workspaces-number {
+  width: 84px;
+}
+
+/* ---- from 0048-central-permission-manager.patch ---- */
+
+/* Kavacha central permission manager (Privacy Center, Phase 4). */
+.kavacha-permission-count {
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+  margin-inline-end: 8px;
+}
+
+.kavacha-permission-sites {
+  margin: 2px 0 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--kavacha-border);
+  border-radius: 8px;
+  background: var(--kavacha-surface-3);
+}
+
+.kavacha-permission-site {
+  padding-block: 4px;
+}
+
+/* Origins can be long; let the column shrink rather than push the controls
+   off the pane. */
+.kavacha-permission-origin {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kavacha-permission-state {
+  opacity: 0.7;
+  margin-inline-end: 8px;
+}
+
+.kavacha-permission-clear-type {
+  margin-top: 4px;
+}
+
+/* ---- from 0049-session-scoped-cookie-rules.patch ---- */
+
+/* Kavacha session-scoped cookie rules (Privacy Center, Phase 4). */
+#kavachaCookiesAddRow {
+  gap: 8px;
+  margin-block: 10px 4px;
+}
+
+#kavachaCookiesDomain {
+  flex: 1;
+  min-width: 0;
+}
+
+.kavacha-cookies-error {
+  color: light-dark(#b3261e, #f2b8b5);
+}
+
+/* ---- from 0050-privacy-score-and-site-profiles.patch ---- */
+
+/* Kavacha privacy score + site trust profiles (Privacy Center, Phase 4). */
+#kavachaPrivacyScore {
+  gap: 12px;
+  margin-block: 8px 12px;
+}
+
+#kavachaPrivacyScoreValue {
+  font-size: 2.2em;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+#kavachaPrivacyScoreValue.good {
+  color: light-dark(#1c7d40, #6fd08c);
+}
+
+#kavachaPrivacyScoreSummary {
+  opacity: 0.7;
+}
+
+.kavacha-privacy-improve-row {
+  gap: 12px;
+  padding-block: 6px;
+  border-bottom: 1px solid var(--kavacha-border);
+}
+
+.kavacha-privacy-improve-row:last-child {
+  border-bottom: none;
+}
+
+.kavacha-privacy-improve-text {
+  flex: 1;
+}
+
+#kavachaSitesPickerRow {
+  gap: 8px;
+  margin-block: 10px 6px;
+}
+
+[kavacha-placeholder] + groupbox { opacity: 0.8; }

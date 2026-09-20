@@ -1,7 +1,7 @@
 # Kavacha — Remaining Work
 
-<!-- PHASE7-TEST-STATUS: UNTESTED -->
-> ## ⛔ READ FIRST — the re-platform is in progress; Phase 7 is still **UNTESTED**
+<!-- PHASE7-TEST-STATUS: TESTED 20260920090557 -->
+> ## READ FIRST — the re-platform: M0–M3 and M5 done, M4 (CI) open
 >
 > **2026-09-19:** Kavacha is moving off Zen onto a direct **Firefox ESR 153** overlay built
 > with `mach`, with native Windows first ([ADR 0020](decisions/0020-firefox-esr-direct-overlay.md),
@@ -14,14 +14,16 @@
 > | M0 | ADRs + docs; series moved to `patches-zen/` | docs consistent | **done 2026-09-19** |
 > | M1 | Firefox ESR 153 + Kavacha branding builds and launches on the Windows host | `kavacha.exe` launches; network-silence test passes | **done 2026-09-19** ([VERIFICATION](VERIFICATION.md) §4e; patches 0001/0002 came out of it) |
 > | M2 | Substrate: startup, workspaces model, palette, welcome, theme tokens, Settings panes | `build/marionette-substrate.py` + `marionette-restart.py` | **done 2026-09-19** (43/43 + 7/7, [VERIFICATION](VERIFICATION.md) §4f; patches 0003/0004) |
-> | M3 | Port the 87 Zen-era patches tier by tier; parity commit deletes `patches-zen/` | per-subsystem L4 recipes re-run | open |
-> | M4 | Three-platform CI incl. Windows installer + Marionette step | one green scheduled run, three assets | open |
-> | M5 | **Phase 7's first-ever probe** (`marionette-phase7.py` on the Windows build) | probe transcript | open |
+> | M3 | Port every Zen-era feature into `browser/overlay/` | substrate probe 104/104 on a fresh profile | **done 2026-09-20** ([VERIFICATION](VERIFICATION.md) §4g) |
+> | M4 | Three-platform CI incl. Windows installer + Marionette step | one green scheduled run, three assets | **open — the only milestone left** |
+> | M5 | **Phase 7's first-ever probe** | `marionette-phase7.py` 77/77 on a fresh profile | **done 2026-09-20** ([VERIFICATION](VERIFICATION.md) §4h) |
 >
-> Phase 7 (`0082`–`0087`) was committed under Zen **without a completed build and without a
-> single runtime probe**; the marker above flips to `TESTED <sha>` only at M5, and only
-> from a transcript. Until M3 completes, *every* feature in this file is "written under
-> Zen, not yet ported" — nothing below has run on the Firefox base.
+> Phase 7 ran for the first time on 2026-09-20 and passes 77/77; the marker above is
+> flipped on that transcript, not on a hope. Its first execution found a real defect
+> (focus mode never restored the notification default) — see
+> [VERIFICATION](VERIFICATION.md) §4h. Everything in this file below now runs on the
+> Firefox base; what a *release* still waits on is unchanged (R1 update service, R2
+> signing).
 >
 > **Known regression against the Zen build, accepted deliberately:** per-space bookmarks
 > (ADR 0005 decision 1 relied on Zen's Places side table) are deferred; the schema default
@@ -49,7 +51,8 @@ Two things are deliberately elsewhere:
   Separate products, gated on the browser shipping.
 
 Where we are: **Phases 1–4, 6 and 7 feature-complete** through patch 0087 (2026-08-17)
-— with the caveat that Phase 7's six patches are **written but never built** (§6),
+— and since 2026-09-20 all of it is ported to the Firefox ESR base and probe-verified,
+Phase 7 included (§6; [VERIFICATION](VERIFICATION.md) §4g/§4h),
 **except** the open Phase 1 **update-service blocker** (see ROADMAP.md — no path to ship a
 security fix until `updates.kavacha.app` exists) and the release gates in
 [SHIPPING.md](SHIPPING.md). **Phase 5 (accounts and sync) has not started** and is now
@@ -317,7 +320,7 @@ model must be off by default, clearly labeled, and per-request opt-in. Patch 007
 endpoint guarantee holds for all of Phase 6 — page text, questions and tab titles reach
 `kavacha.ai.endpoint` or nowhere.
 
-## 6. Phase 7 — Browser, later (6 of 6 written 2026-08-17, patches 0082–0087; **unbuilt**)
+## 6. Phase 7 — Browser, later (written 2026-08-17; **built, ported and TESTED 2026-09-20**)
 
 Browser features, no servers, no accounts. Built ahead of its post-v1.0 slot because
 none of it needs an account; **it moves no release gate**. Per-item reasoning in

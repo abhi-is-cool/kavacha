@@ -398,9 +398,14 @@ press rather than by invoking the registered command.
 
 ---
 
-## 4d. Phase 7 (0082–0087) — chain-verified, **never built, L4 never run**
+## 4d. Phase 7 (0082–0087) — the Zen-era record, superseded by §4h
 
-<!-- PHASE7-TEST-STATUS: UNTESTED -->
+> **Superseded 2026-09-20.** Phase 7 was ported to the Firefox ESR base, built and driven
+> at runtime: see [§4h](#4h-phase-7--tested-2026-09-20). This section is kept as the record
+> of the fifteen months it spent written-but-unrun, and of what that cost — the first
+> execution found a real defect (focus mode never restored the notification default) that
+> the code's own header claimed had been pre-empted.
+
 **Committed untested, deliberately and on the record.** Phase 7 was committed in this
 state so the work is not lost, not because it is done. The next session builds it, runs
 `build/marionette-phase7.py`, fixes what that finds, recommits, and then replaces the
@@ -592,6 +597,114 @@ per-space search engine / extensions / settings overrides (they hook the switch 
 in M3, which already exists — `addSwitchListener`); container retargeting of fresh tabs;
 Firefox's quick-actions urlbar integration; the notes/branching/timeline members of the
 facade, which log "not ported yet" and return empty.
+
+## 4g. Firefox ESR 153 base — M3: the port, observed (2026-09-20)
+
+Every Kavacha-authored file of the Zen era now lives in `browser/overlay/` and runs on
+the Firefox base. Build `20260920090557`, Firefox 153.4.0, Windows x86_64 (clang-cl 21.1.8
++ lld-link; the packaged MSVC sysroot supplies headers and libs only).
+
+**All numbers below are from FRESH PROFILES.** Chaining probes through one profile
+contaminates them — the restart probe "regressed" to 4/7 that way and is 7/7 on a clean
+run. Probes get their own `--profile` now.
+
+| Probe | Result |
+|---|---|
+| `marionette-substrate.py` | **104 / 104** |
+| `marionette-phase7.py` | **77 / 77** (see §4h) |
+| `marionette-restart.py` (two phases around a real relaunch) | **7 / 7** |
+| `network_silence_test.py` (R3) | **PASSED** — 0 denylisted hosts |
+| `bootstrap.sh roundtrip` | byte-identical, 4 patches |
+| `check-overlay.py` | pass |
+
+Ported: 40 modules, 11 `about:` pages, 4 Settings panes, 15 Phase 7 page files, the token
+floor and every stylesheet. The substrate probe drives the spaces model end to end
+(create / switch / hide / archive / delete / restart), per-space settings and search
+engine through the switch chokepoint, notes with markdown preview, universal search,
+snapshot → branch → timeline → compare, the palette, the ⚙ menu, `about:studio`, the four
+Settings panes with live Privacy Center counters, and asserts that **every** ported module
+imports and **every** Kavacha `about:` page loads with content — the 0059 check, since
+"present and packaged" is not "works".
+
+**Three defects the port found, each now guarded by a check proved against the real bug**
+(`build/check-overlay.py`, wired into CI):
+
+- **`redeclaration of const lazy`** in the ported universal search. Window scripts share
+  `browser.js`'s scope, so one top-level `const` aborted that whole file — and
+  `KavachaStartup`'s single try/catch then skipped every *later* script and every window
+  hook. The window came up with no menu button, no palette and no theme, and nothing said
+  why. Fixed both halves: the script is block-scoped, and startup now isolates each piece.
+  This is the Zen-era patch 0059 failure, recurring.
+- **Four duplicate Fluent ids.** Under Zen, `zen-command-palette.ftl` and
+  `zen-preferences.ftl` were separate bundles, so the ⚙ appearance panel and the Settings
+  pane could both define `kavacha-appearance-title`. On the Firefox base every window
+  loads them into ONE bundle and Fluent silently drops the second definition.
+- **An unsorted `EXTRA_JS_MODULES`**, which fails the `moz.build` read outright. mozbuild
+  sorts case-insensitively (`util.py`, `key=lambda x: x.lower()`), which is not Python's
+  default: `KavachaAIBridge` sorts before `KavachaAboutFocus` in ASCII and after it here.
+  **§4d recorded this defect class as caught by no static gate. It is caught by one now.**
+
+**Two defects in the port's own new code, found only by a from-scratch profile:**
+
+- **The theme mode and the chrome disagreed on a fresh profile.** `XPIProvider` *installs*
+  `default-theme` asynchronously during first-run startup, and installing a theme makes it
+  active — undoing the built-in theme Kavacha had enabled. A first-run user got Firefox's
+  default chrome while `kavacha-theme-mode` said `dark`. Invisible on any profile that had
+  run before, because the theme was left enabled from the previous run. Fixed by a
+  **bounded, surgical** re-assert at delayed startup: it re-takes the theme only from
+  `default-theme@mozilla.org` (the one XPIProvider installs), gives up after ~10 s, and
+  never overrides a theme the user chose. Two earlier diagnoses — "AddonManager not ready"
+  and "run the hook later" — were both wrong; reading `XPIProvider.sys.mjs` settled it.
+- **Restored tabs lost their space.** Session restore creates tabs (firing `TabOpen`)
+  *before* applying their saved state, so the `TabOpen` handler stamped every restored tab
+  with the active space. Fixed by deferring that assignment one task and making the saved
+  `SessionStore` value authoritative over the mirrored attribute.
+
+**Deliberately not ported** (ADR 0020 §4g): Zen compact mode, split view, glance, mods /
+boosts, Zen sync, the gradient generator, Zen folders (Firefox tab groups replace them),
+and every `zen.*` pref. **Deferred** (ADR 0021): per-space bookmarks — the one Zen feature
+Kavacha adopted rather than built; history attribution ported in full.
+
+**M3 does NOT claim:** macOS or Linux on this base (M4), R8 (needs a CI-published
+installer), any L4 arm in §3 that this probe does not exercise, or subjective visual
+sign-off (B7).
+
+## 4h. Phase 7 — TESTED (2026-09-20)
+
+<!-- PHASE7-TEST-STATUS: TESTED 20260920090557 -->
+**Phase 7 has been built and driven at runtime.** `build/marionette-phase7.py`, written
+2026-08-17 and never once executed until today, ran clean on a fresh profile against build
+`20260920090557`: **77 checks, 0 failures** — knowledge capture (notes, highlights, clips,
+search, export, per-page delete), the knowledge graph (edge dedup and weighting, self-edge
+and non-web refusal, hubs, describe, the entity parser), focus sessions, automation
+workflows, the tab-history tree, citations and writing mode.
+
+Getting there took four fixes, and the first-ever run is what found all of them:
+
+- **A real defect: focus mode left desktop notifications blocked permanently.**
+  `kavacha.focus.saved-notification-default` shipped with default `0`. In Gecko,
+  `setIntPref(p, v)` where `v` equals `p`'s default *clears* the user value instead of
+  storing one — and `0` is also the ordinary value of
+  `permissions.default.desktop-notification` ("ask"). So "save the previous value" stored
+  nothing, `_restoreNotifications` found nothing saved and returned early, and every focus
+  session ended with notifications still blocked, across restarts. Fixed with a `-1`
+  sentinel and one shared accessor. **Patch 0084's own header claims the opposite** — "the
+  notification default is restored exactly on end; patch 0066's lesson applied before the
+  bug". It was not, and could not be known either way, because the code had never run.
+- **Two port gaps:** the tab-history-tree and saved-session panels lived in Zen's
+  `popups.inc` and had no Firefox-base equivalent, so `KavachaTabHistory.showPanel()`
+  silently did nothing and `kavachaOpenSavedSessions` was still a stub. Both panels are
+  built now and the session manager (restore / rename / delete) is implemented.
+- **Three of the probe's own assertions were wrong.** Its entity-parser cases used
+  one-character names (`"X"`, `"A"`), which the parser deliberately rejects as LLM noise
+  (`name.length < 2`), so they never reached the behaviour under test. A probe that has
+  never executed has unverified expectations too; corrected, with a case added for the
+  length rule itself.
+
+**Still not claimed for Phase 7:** the capture paths that need a real http(s) page
+(`CaptureSelection`, citation metadata from live page markup) — the indexer actor matches
+http/https only and this probe runs on `about:` pages; its modules are packaged at
+`resource:///actors/` and parse. Those are L4 arms for a session with a real page load.
 
 ## 7. Release-gate verification still unbuilt
 

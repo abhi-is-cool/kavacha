@@ -1,0 +1,66 @@
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src chrome:; img-src chrome: data:; style-src chrome: 'unsafe-inline'; object-src 'none'"
+    />
+    <title>Kavacha AI</title>
+    <link rel="stylesheet" href="chrome://browser/content/kavacha/ai/sidebar.css" />
+    <!-- Patch 0062's shared theming: this document is not in the chrome token
+         cascade, so without it every var(--kavacha-*) below would resolve to
+         its literal dark fallback and the sidebar would stay black under a
+         light theme. Synchronous and before sidebar.js so the first paint is
+         already themed. -->
+    <script src="chrome://browser/content/kavacha/theme/content-theme.js"></script>
+    <script src="chrome://browser/content/kavacha/ai/sidebar.js"></script>
+  </head>
+  <body>
+    <nav class="ai-modes" role="tablist">
+      <button id="mode-summarize" class="ai-mode" role="tab" aria-selected="true">
+        Summarize
+      </button>
+      <button id="mode-ask" class="ai-mode" role="tab" aria-selected="false">
+        Ask
+      </button>
+    </nav>
+
+    <section id="view-summarize" class="ai-view" role="tabpanel">
+      <div class="ai-page">
+        <div id="page-title" class="ai-page-title">—</div>
+        <div id="page-host" class="ai-page-host"></div>
+      </div>
+      <button id="summarize-run" class="ai-primary">Summarize this page</button>
+      <div id="summarize-status" class="ai-status" hidden="hidden"></div>
+      <article id="summarize-out" class="ai-output"></article>
+    </section>
+
+    <section id="view-ask" class="ai-view" role="tabpanel" hidden="hidden">
+      <label class="ai-label" for="ask-input">
+        Ask about anything you have visited
+      </label>
+      <textarea
+        id="ask-input"
+        class="ai-input"
+        rows="3"
+        placeholder="Where did I find that paper on flood mapping?"
+      ></textarea>
+      <div class="ai-row">
+        <button id="ask-run" class="ai-primary">Ask</button>
+        <button id="ask-stop" class="ai-secondary" hidden="hidden">Stop</button>
+      </div>
+      <div id="ask-status" class="ai-status" hidden="hidden"></div>
+      <article id="ask-out" class="ai-output"></article>
+      <div id="ask-sources" class="ai-sources"></div>
+    </section>
+
+    <footer class="ai-footer">
+      <span id="ai-footer-status" class="ai-footer-status"></span>
+      <button id="ai-settings" class="ai-link">AI settings</button>
+    </footer>
+  </body>
+</html>

@@ -2,10 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-# Kavacha Settings pane "Customization" — PLACEHOLDER (port milestone M2). The
-# Zen-era pane (patches 0021/0031/0032/0048-0050/0059/0063) lands here in M3;
-# this file exists so preferences.xhtml (patch 0004) can #include it and the
-# pane selects, which is what the substrate probe checks.
 <script type="text/javascript" src="chrome://browser/content/preferences/kavacha-customization.js"/>
 <html:template id="template-paneKavachaCustomization">
 
@@ -16,8 +12,61 @@
 <html:h1 data-l10n-id="kavacha-customization-title"/>
 </hbox>
 
-<groupbox id="kavachaCustomizationPlaceholder" data-category="paneKavachaCustomization" hidden="true">
-  <description class="description-deemphasized" data-l10n-id="kavacha-pane-placeholder"/>
+<groupbox id="kavachaCustomizationLayoutGroup" data-category="paneKavachaCustomization" hidden="true" class="highlighting-group">
+  <label><html:h2 data-l10n-id="kavacha-customization-layout-header"/></label>
+  <description class="description-deemphasized" data-l10n-id="kavacha-customization-layout-description"/>
+  <hbox class="kavacha-customization-row" align="center">
+    <label data-l10n-id="kavacha-customization-tabstyle-label" control="kavachaCustomizationTabStyle"/>
+    <menulist id="kavachaCustomizationTabStyle">
+      <menupopup>
+        <menuitem value="horizontal" data-l10n-id="kavacha-customization-tabstyle-horizontal"/>
+        <menuitem value="vertical" data-l10n-id="kavacha-customization-tabstyle-vertical"/>
+        <!-- Arc (patch 0058) was missing here, so a user on Arc opened this
+             pane, saw a menulist matching none of its options, and lost the
+             setting the moment they touched it. -->
+        <menuitem value="arc" data-l10n-id="kavacha-customization-tabstyle-arc"/>
+      </menupopup>
+    </menulist>
+  </hbox>
+  <hbox class="kavacha-customization-row" align="center">
+    <label data-l10n-id="kavacha-customization-sidebar-label" control="kavachaCustomizationSidebar"/>
+    <menulist id="kavachaCustomizationSidebar">
+      <menupopup>
+        <menuitem value="left" data-l10n-id="kavacha-customization-sidebar-left"/>
+        <menuitem value="right" data-l10n-id="kavacha-customization-sidebar-right"/>
+        <menuitem value="hidden" data-l10n-id="kavacha-customization-sidebar-hidden"/>
+      </menupopup>
+    </menulist>
+  </hbox>
+  <hbox class="kavacha-customization-row" align="center">
+    <label data-l10n-id="kavacha-customization-density-label" control="kavachaCustomizationDensity"/>
+    <menulist id="kavachaCustomizationDensity">
+      <menupopup>
+        <menuitem value="compact" data-l10n-id="kavacha-customization-density-compact"/>
+        <menuitem value="normal" data-l10n-id="kavacha-customization-density-normal"/>
+        <menuitem value="comfortable" data-l10n-id="kavacha-customization-density-comfortable"/>
+      </menupopup>
+    </menulist>
+  </hbox>
+  <checkbox id="kavachaCustomizationToolbarVisible" data-l10n-id="kavacha-customization-toolbar-visible"/>
+</groupbox>
+
+<groupbox id="kavachaCustomizationAdvancedGroup" data-category="paneKavachaCustomization" hidden="true" class="highlighting-group">
+  <label><html:h2 data-l10n-id="kavacha-customization-advanced-header"/></label>
+  <description class="description-deemphasized" data-l10n-id="kavacha-customization-advanced-description"/>
+  <checkbox id="kavachaCustomizationSafeMode" data-l10n-id="kavacha-customization-safemode"/>
+  <hbox pack="start">
+    <button id="kavachaCustomizationCssLink" class="kavacha-customization-cta" data-l10n-id="kavacha-customization-css-link"/>
+  </hbox>
+</groupbox>
+
+<groupbox id="kavachaCustomizationMoreGroup" data-category="paneKavachaCustomization" hidden="true" class="highlighting-group">
+  <label><html:h2 data-l10n-id="kavacha-customization-more-header"/></label>
+  <description class="description-deemphasized" data-l10n-id="kavacha-customization-more-description"/>
+  <hbox class="kavacha-customization-row" pack="start">
+    <button id="kavachaCustomizationMarketplaceLink" class="kavacha-customization-cta" data-l10n-id="kavacha-customization-marketplace-link"/>
+    <button id="kavachaCustomizationPluginsLink" class="kavacha-customization-cta" data-l10n-id="kavacha-customization-plugins-link"/>
+  </hbox>
 </groupbox>
 
 </html:template>

@@ -1,0 +1,126 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* ==========================================================================
+   Kavacha workspace-notes markdown preview (patch 0052).
+
+   %include'd into zen-theme.css, so this is CHROME css -- the notes panel
+   lives in the browser window, not in a content document, which is also why
+   the renderer (KavachaMarkdown) builds nodes instead of parsing HTML.
+
+   Sizing is deliberately matched to the textarea it replaces (min-height
+   220px, same box) so toggling Preview does not resize the panel under the
+   pointer.
+   ========================================================================== */
+
+#kavacha-notes-preview {
+  min-height: 220px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: var(--input-bgcolor);
+  font: inherit;
+  line-height: 1.5;
+  /* Long unbroken URLs in a note must not widen the panel. */
+  overflow-wrap: anywhere;
+}
+
+#kavacha-notes-preview > :first-child {
+  margin-top: 0;
+}
+
+#kavacha-notes-preview > :last-child {
+  margin-bottom: 0;
+}
+
+#kavacha-notes-preview :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0.8em 0 0.35em;
+  line-height: 1.25;
+  font-weight: 650;
+}
+
+#kavacha-notes-preview h1 {
+  font-size: 1.35em;
+}
+
+#kavacha-notes-preview h2 {
+  font-size: 1.2em;
+}
+
+#kavacha-notes-preview h3 {
+  font-size: 1.08em;
+}
+
+#kavacha-notes-preview :is(h4, h5, h6) {
+  font-size: 1em;
+  opacity: 0.85;
+}
+
+#kavacha-notes-preview p {
+  margin: 0 0 0.6em;
+}
+
+#kavacha-notes-preview :is(ul, ol) {
+  margin: 0 0 0.6em;
+  padding-inline-start: 1.4em;
+}
+
+#kavacha-notes-preview li {
+  margin: 0.15em 0;
+}
+
+#kavacha-notes-preview blockquote {
+  margin: 0 0 0.6em;
+  padding-inline-start: 10px;
+  border-inline-start: 2px solid var(--kavacha-border, currentColor);
+  opacity: 0.85;
+}
+
+#kavacha-notes-preview :is(pre, code) {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+#kavacha-notes-preview code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+#kavacha-notes-preview pre {
+  margin: 0 0 0.6em;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  /* Code must scroll, not stretch the panel. */
+  overflow-x: auto;
+  white-space: pre;
+}
+
+#kavacha-notes-preview pre code {
+  padding: 0;
+  background: none;
+}
+
+#kavacha-notes-preview hr {
+  border: none;
+  border-top: 1px solid var(--kavacha-border, currentColor);
+  margin: 0.8em 0;
+}
+
+#kavacha-notes-preview a {
+  color: var(
+    --kavacha-accent,
+    var(--kavacha-accent, var(--kavacha-accent-fallback))
+  );
+  text-decoration: underline;
+}
+
+/* An empty note in preview mode would otherwise be an unexplained blank box. */
+#kavacha-notes-preview:empty::before {
+  content: attr(data-empty-label);
+  opacity: 0.6;
+}

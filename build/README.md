@@ -37,6 +37,13 @@ Kavacha repo (this)                      browser/firefox-source/          binary
 | `./build/bootstrap.sh patch-export NNNN-name` | `git diff HEAD -- <files>` in the checkout → `browser/patches/NNNN-name.patch`, with the required header |
 | `./build/bootstrap.sh roundtrip` | Reverse newest→oldest, forward oldest→newest in a scratch worktree; byte-identical or fail |
 
+Two static checks run over the overlay (`build/check-overlay.py`, also in CI). Both
+catch failures a successful build cannot: a Fluent id defined in two Kavacha `.ftl`
+files (every window loads them into one bundle, so the second is silently dropped),
+and a top-level `const`/`let`/`class` in a window script (those share `browser.js`'s
+scope, so the declaration throws and aborts that whole file). Both were real — see
+the script's header.
+
 Run `mach` commands as `env -u CLAUDECODE -u CLAUDE_CODE ./build/bootstrap.sh build` when an
 agent is driving: `mach` detects one and suppresses the real error, leaving `*** Fix above
 errors` with nothing above it.
@@ -87,6 +94,14 @@ errors` with nothing above it.
   probes.
 - Optional: `sccache` (used automatically when on PATH), Python `pillow` for icon rendering
   (`pip install pillow`; required by `generate-branding.sh`).
+
+  **`sccache` on Windows is flaky.** Its server has been seen to die mid-build —
+  `sccache: error: failed to execute compile` / `error reading compile response from
+  server` (os error 10054) while compiling `gkrust`, losing an 18-minute build
+  (2026-09-20). It is only a cache: when it misbehaves, build with
+  `KV_NO_SCCACHE=1` rather than retrying blind, and check `sccache --show-stats`
+  (an empty cache after a crash means it restarted and there was nothing to reuse
+  anyway).
 
 ## Editing workflow
 

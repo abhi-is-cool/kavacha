@@ -204,8 +204,15 @@ write_mozconfig() {
                 echo "ac_add_options --enable-default-toolkit=cairo-gtk3-wayland"
                 ;;
         esac
+        # KV_NO_SCCACHE=1 builds without the compiler cache. sccache is an
+        # optimization, and on Windows its server has been seen to die
+        # mid-build ("error reading compile response from server", os error
+        # 10054, while linking gkrust — 2026-09-20), which costs the whole
+        # build. When it misbehaves, turn it off rather than retrying blind.
         local sc="${KV_SCCACHE:-}"
-        if [ -z "$sc" ] && command -v sccache >/dev/null 2>&1; then
+        if [ -n "${KV_NO_SCCACHE:-}" ]; then
+            sc=""
+        elif [ -z "$sc" ] && command -v sccache >/dev/null 2>&1; then
             sc="$(command -v sccache)"
             [ "$KV_OS" = "windows" ] && sc="$(cygpath -m "$sc")"
         fi

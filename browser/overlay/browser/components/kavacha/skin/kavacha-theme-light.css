@@ -1,0 +1,94 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* ==========================================================================
+   Kavacha light themes — the light half of the 0016 bridge (patch 0056).
+
+   Patch 0016 wired Kavacha's tokens into Zen with
+   `--kavacha-surface: var(--kavacha-surface)` plus a column of
+   `light-dark(stock-light, var(--kavacha-*))`. Every one of those maps a
+   Kavacha token onto the DARK side only, which is exactly why ADR 0008
+   recorded "light themes are a follow-up": a bright surface produced
+   dark-derived chrome with light text sitting on it.
+
+   This file is the mirror image, and nothing more. It binds only when
+   KavachaThemeEngine has stamped kavacha-theme-mode="light" on the chrome
+   root, which the engine DERIVES from the active theme's own surface
+   luminance -- so at Kavacha's shipped dark default this whole layer is inert,
+   exactly as kavacha-layout.inc.css is at the default layout.
+
+   Ordering: %include'd AFTER kavacha-midnight.inc.css so these declarations
+   win at equal specificity, which is the same reason 0016 sits at the end of
+   zen-theme.css.
+   ========================================================================== */
+
+:root[kavacha-theme-mode="light"] {
+  /* The base every --zen-colors-* mix derives from. 0016 points the dark
+     branding colour at the surface; a light theme has to point the paper one
+     there instead, or every mix keeps deriving from Zen's stock #e2e2e2. */
+  --kavacha-surface-light: var(--kavacha-surface);
+
+  /* Surfaces Zen defines directly rather than deriving. Mirrors the block in
+     kavacha-midnight.inc.css, light side. Both halves of each light-dark()
+     are filled: the pair must agree, because color-scheme is itself derived
+     from the surface and the two must not be able to disagree. */
+  --kavacha-content-bg: light-dark(
+    var(--kavacha-surface),
+    var(--kavacha-surface)
+  );
+  --kavacha-dialog-bg: light-dark(
+    var(--kavacha-surface-elevated),
+    var(--kavacha-surface-elevated)
+  );
+  --kavacha-urlbar-background: light-dark(
+    color-mix(
+      in srgb,
+      var(--kavacha-accent) 3%,
+      var(--kavacha-surface-elevated) 97%
+    ),
+    color-mix(
+      in srgb,
+      var(--kavacha-accent) 4%,
+      var(--kavacha-surface-elevated) 96%
+    )
+  );
+  --kavacha-border: light-dark(
+    color-mix(in srgb, var(--kavacha-surface-2) 50%, var(--kavacha-border)),
+    color-mix(in srgb, var(--kavacha-surface-2) 20%, var(--kavacha-border))
+  );
+
+  /* Zen's stock light values for these are tuned for near-white paper; a
+     tinted light surface needs them derived from the theme instead, or the
+     input and toolbar chrome float unattached above the background. */
+  --input-bgcolor: color-mix(
+    in srgb,
+    var(--kavacha-text-primary) 6%,
+    transparent
+  ) !important;
+  --toolbar-background-color: color-mix(
+    in srgb,
+    var(--kavacha-surface-elevated) 70%,
+    transparent
+  );
+  --kavacha-toolbar-element-bg: color-mix(
+    in srgb,
+    var(--kavacha-text-primary) 8%,
+    transparent
+  );
+  --kavacha-toolbar-element-bg-hover: color-mix(
+    in srgb,
+    var(--kavacha-text-primary) 12%,
+    transparent
+  );
+
+  /* These two carry hard-coded dark values that no color-scheme change
+     reaches, so the tab strip keeps a dark seam on an otherwise light
+     window until they are re-pointed at the theme. */
+  --tabstrip-inner-border: color-mix(
+    in srgb,
+    var(--kavacha-border) 60%,
+    transparent
+  );
+  --kavacha-surface: var(--kavacha-surface);
+}

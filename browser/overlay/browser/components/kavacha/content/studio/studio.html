@@ -1,0 +1,223 @@
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src chrome:; img-src chrome: data:; style-src chrome: 'unsafe-inline'; object-src 'none'"
+    />
+    <title>Customization Studio</title>
+    <link rel="stylesheet" href="chrome://browser/content/kavacha/studio/studio.css" />
+    <!-- Patch 0062: puts the active theme's --kavacha-* tokens into this
+         document's cascade. Without it the var() chains in studio.css always
+         resolved to their dark literals, so the Studio stayed black no matter
+         which theme you selected in it. Synchronous and before studio.js so
+         the first paint is already themed. -->
+    <script src="chrome://browser/content/kavacha/theme/content-theme.js"></script>
+    <script src="chrome://browser/content/kavacha/studio/studio.js"></script>
+  </head>
+  <body>
+    <header class="studio-header">
+      <div class="studio-title">
+        <h1>Customization Studio</h1>
+        <p class="studio-subtitle">
+          Redesign your browser — no CSS required. Changes apply live to every
+          window.
+        </p>
+      </div>
+    </header>
+
+    <nav class="studio-tabs" role="tablist" aria-label="Studio sections">
+      <button
+        id="tab-layout"
+        class="studio-tab"
+        role="tab"
+        aria-selected="true"
+        aria-controls="panel-layout"
+        data-tab="layout"
+      >
+        Layout
+      </button>
+      <button
+        id="tab-themes"
+        class="studio-tab"
+        role="tab"
+        aria-selected="false"
+        aria-controls="panel-themes"
+        data-tab="themes"
+      >
+        Themes
+      </button>
+      <button
+        id="tab-advanced"
+        class="studio-tab"
+        role="tab"
+        aria-selected="false"
+        aria-controls="panel-advanced"
+        data-tab="advanced"
+      >
+        Advanced
+      </button>
+    </nav>
+
+    <main class="studio-body">
+      <!-- ============================ LAYOUT ============================ -->
+      <section
+        id="panel-layout"
+        class="studio-panel"
+        role="tabpanel"
+        aria-labelledby="tab-layout"
+      >
+        <div class="studio-card">
+          <h2>Tabs</h2>
+          <p class="studio-hint">
+            Horizontal is Kavacha's default. Vertical brings back a sidebar
+            strip. Arc is that sidebar with tabs as separated cards and the
+            page in a floating frame &mdash; same layout, different look.
+          </p>
+          <div class="segmented" role="radiogroup" aria-label="Tab layout" data-control="tabStyle">
+            <button role="radio" data-value="horizontal">Horizontal</button>
+            <button role="radio" data-value="vertical">Vertical</button>
+            <button role="radio" data-value="arc">Arc</button>
+          </div>
+        </div>
+
+        <div class="studio-card" data-requires="vertical">
+          <h2>Sidebar</h2>
+          <p class="studio-hint">Only applies while tabs are vertical.</p>
+          <div class="field">
+            <span class="field-label">Position</span>
+            <div class="segmented" role="radiogroup" aria-label="Sidebar position" data-control="sidebar">
+              <button role="radio" data-value="left">Left</button>
+              <button role="radio" data-value="right">Right</button>
+              <button role="radio" data-value="hidden">Hidden</button>
+            </div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="sidebar-width">Width</label>
+            <input
+              id="sidebar-width"
+              type="range"
+              min="48"
+              max="600"
+              step="1"
+              data-control="sidebarWidth"
+            />
+            <output id="sidebar-width-value" for="sidebar-width">250px</output>
+          </div>
+        </div>
+
+        <div class="studio-card">
+          <h2>Density</h2>
+          <p class="studio-hint">Breathing room around tabs and controls.</p>
+          <div class="segmented" role="radiogroup" aria-label="Interface density" data-control="density">
+            <button role="radio" data-value="compact">Compact</button>
+            <button role="radio" data-value="normal">Normal</button>
+            <button role="radio" data-value="comfortable">Comfortable</button>
+          </div>
+        </div>
+
+        <div class="studio-card">
+          <h2>Toolbar</h2>
+          <!-- Toolbar position (top/bottom) is engine substrate but has no CSS
+               behind it yet, so no control is offered here — an option that did
+               nothing was worse than its absence. -->
+          <label class="checkbox-row">
+            <input type="checkbox" data-control="toolbarVisible" />
+            <span>Show the navigation toolbar</span>
+          </label>
+        </div>
+
+        <div class="studio-actions">
+          <button id="reset-layout" class="studio-button ghost">
+            Reset layout to default
+          </button>
+        </div>
+      </section>
+
+      <!-- ============================ THEMES ============================ -->
+      <section
+        id="panel-themes"
+        class="studio-panel"
+        role="tabpanel"
+        aria-labelledby="tab-themes"
+        hidden
+      >
+        <div class="studio-card">
+          <h2>Theme</h2>
+          <p class="studio-hint">
+            Themes tint the browser's surfaces. Your accent color stays yours —
+            change it any time from Settings.
+          </p>
+          <div id="theme-grid" class="theme-grid" role="radiogroup" aria-label="Theme">
+            <!-- theme cards injected by studio.js -->
+          </div>
+        </div>
+      </section>
+
+      <!-- =========================== ADVANCED =========================== -->
+      <section
+        id="panel-advanced"
+        class="studio-panel"
+        role="tabpanel"
+        aria-labelledby="tab-advanced"
+        hidden
+      >
+        <div class="studio-card">
+          <div class="advanced-head">
+            <div>
+              <h2>Custom chrome CSS</h2>
+              <p class="studio-hint">
+                Style the browser itself, like userChrome.css — but versioned
+                and revertible. Targets chrome, never web pages. The XUL
+                namespace is added for you.
+              </p>
+            </div>
+            <label class="checkbox-row safe-mode-row">
+              <input type="checkbox" data-control="safeMode" />
+              <span>Safe mode (disable all custom CSS)</span>
+            </label>
+          </div>
+          <!-- Patch 0056: syntax highlighting. The textarea stays the real,
+               fully native editing surface (caret, selection, undo, IME, a11y)
+               and is simply made transparent; the highlighted copy is a <pre>
+               painted behind it in the same box with the same typography, and
+               kept scroll-synced. Nothing about editing is reimplemented, so
+               nothing about editing can regress. -->
+          <div class="css-editor-wrap">
+            <pre class="css-highlight" id="css-highlight" aria-hidden="true"><code id="css-highlight-code"></code></pre>
+            <textarea
+              id="css-editor"
+              class="css-editor"
+              spellcheck="false"
+              autocomplete="off"
+              wrap="off"
+              placeholder="/* e.g. hide the forward button */&#10;#forward-button { display: none !important; }"
+            ></textarea>
+          </div>
+          <div class="studio-actions editor-actions">
+            <button id="apply-css" class="studio-button primary">Apply</button>
+            <button id="revert-css" class="studio-button ghost">
+              Revert changes
+            </button>
+            <span id="css-status" class="css-status" role="status"></span>
+          </div>
+        </div>
+
+        <div class="studio-card">
+          <h2>History</h2>
+          <p class="studio-hint">
+            Every Apply snapshots the previous CSS. Restore any version —
+            restoring is itself undoable.
+          </p>
+          <ul id="css-history" class="css-history">
+            <!-- history entries injected by studio.js -->
+          </ul>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

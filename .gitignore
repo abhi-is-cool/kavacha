@@ -27,3 +27,6 @@ __pycache__/
 
 # Logs
 *.log
+
+# Zen-era file reconstruction (build/reconstruct-zen-files.py) — derived, never committed
+browser/patches-zen/.recon/

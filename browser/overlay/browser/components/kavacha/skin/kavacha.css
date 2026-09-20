@@ -7,8 +7,21 @@
  * zen-theme.css used to %include the kavacha-*.inc.css files; each feature
  * ships its own file under skin/ and adds a line here. */
 @import url("chrome://browser/skin/kavacha/kavacha-tokens.css");
+/* Zen-era zen-theme.css %include order (patches 0016..0061), tokens first. */
+@import url("chrome://browser/skin/kavacha/kavacha-midnight.css");
+@import url("chrome://browser/skin/kavacha/kavacha-layout.css");
+@import url("chrome://browser/skin/kavacha/kavacha-polish.css");
+@import url("chrome://browser/skin/kavacha/kavacha-menu.css");
+@import url("chrome://browser/skin/kavacha/kavacha-theme-fixes.css");
+@import url("chrome://browser/skin/kavacha/kavacha-notes.css");
+@import url("chrome://browser/skin/kavacha/kavacha-spaces-branches.css");
+@import url("chrome://browser/skin/kavacha/kavacha-theme-light.css");
+@import url("chrome://browser/skin/kavacha/kavacha-arc-tabs.css");
+@import url("chrome://browser/skin/kavacha/kavacha-theme-scheme.css");
+/* M2 substrate surfaces. */
 @import url("chrome://browser/skin/kavacha/kavacha-spaces.css");
 @import url("chrome://browser/skin/kavacha/kavacha-palette.css");
+@import url("chrome://browser/skin/kavacha/kavacha-search.css");
 
 /* Marker the Marionette probe can read to prove this sheet applied. */
 :root {

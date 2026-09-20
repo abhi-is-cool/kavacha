@@ -1,0 +1,309 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* Kavacha Knowledge sidebar (ADR 0015). Same token vocabulary and same
+ * literal fallbacks as the AI sidebar: content-theme.js stamps the real
+ * --kavacha-* values onto :root, and the fallback covers the frame before it
+ * runs. The accent stays user-owned (patch 0046/0069 chain). */
+
+:root {
+  --kn-gap: 10px;
+  --kn-radius: 8px;
+  --kn-accent: var(
+    --kavacha-accent,
+    var(--kavacha-accent, var(--kavacha-accent-fallback, #8b7bd8))
+  );
+}
+
+body {
+  margin: 0;
+  padding: var(--kn-gap);
+  display: flex;
+  flex-direction: column;
+  gap: var(--kn-gap);
+  min-height: 100vh;
+  box-sizing: border-box;
+  font: message-box;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--kavacha-text, #e8e6f0);
+  background: var(--kavacha-surface, #14111f);
+  overflow-wrap: anywhere;
+}
+
+/* ----------------------------------------------------------------- modes */
+
+.kn-modes {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--kn-radius);
+  background: var(--kavacha-surface-raised, #1d1930);
+}
+
+.kn-mode {
+  flex: 1;
+  padding: 5px 8px;
+  border: none;
+  border-radius: calc(var(--kn-radius) - 2px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.kn-mode:hover {
+  background: var(--kavacha-surface-hover, #262040);
+}
+
+.kn-mode[aria-selected="true"] {
+  background: var(--kavacha-surface-hover, #262040);
+  box-shadow: inset 0 -2px 0 0 var(--kn-accent);
+}
+
+.kn-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kn-gap);
+  flex: 1;
+}
+
+/* ------------------------------------------------------------ page header */
+
+.kn-page {
+  padding: 8px 10px;
+  border-radius: var(--kn-radius);
+  background: var(--kavacha-surface-raised, #1d1930);
+}
+
+.kn-page-title {
+  font-weight: 600;
+}
+
+.kn-page-host {
+  opacity: 0.7;
+  font-size: 12px;
+}
+
+/* --------------------------------------------------------------- controls */
+
+.kn-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.kn-primary,
+.kn-secondary {
+  padding: 6px 10px;
+  border-radius: var(--kn-radius);
+  border: 1px solid var(--kavacha-border, #2e2748);
+  font: inherit;
+  cursor: pointer;
+}
+
+.kn-primary {
+  background: var(--kn-accent);
+  color: #fff;
+  border-color: transparent;
+  flex: 1;
+}
+
+.kn-secondary {
+  background: var(--kavacha-surface-raised, #1d1930);
+  color: inherit;
+  flex: 1;
+}
+
+.kn-primary:disabled,
+.kn-secondary:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.kn-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--kn-accent);
+  font: inherit;
+  cursor: pointer;
+  text-align: start;
+}
+
+.kn-link:hover {
+  text-decoration: underline;
+}
+
+.kn-danger {
+  color: var(--kavacha-danger, #e06c75);
+}
+
+.kn-label {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.kn-note-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.kn-note-tools {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.kn-saved {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.kn-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px;
+  border-radius: var(--kn-radius);
+  border: 1px solid var(--kavacha-border, #2e2748);
+  background: var(--kavacha-surface-raised, #1d1930);
+  color: inherit;
+  font: inherit;
+  resize: vertical;
+}
+
+.kn-filter {
+  resize: none;
+}
+
+.kn-status {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.kn-heading {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.75;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* --------------------------------------------------------------- filters */
+
+.kn-kinds {
+  flex-wrap: wrap;
+}
+
+.kn-chip {
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--kavacha-border, #2e2748);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.kn-chip.is-active {
+  background: var(--kavacha-surface-hover, #262040);
+  border-color: var(--kn-accent);
+}
+
+/* ----------------------------------------------------------------- items */
+
+.kn-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kn-item {
+  padding: 8px 10px;
+  border-radius: var(--kn-radius);
+  background: var(--kavacha-surface-raised, #1d1930);
+  border: 1px solid var(--kavacha-border, #2e2748);
+}
+
+.kn-item-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.kn-kind {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.kn-kind-highlight {
+  color: var(--kn-accent);
+}
+
+.kn-item-page {
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.kn-item-body {
+  margin-top: 4px;
+  white-space: pre-wrap;
+}
+
+.kn-item-comment {
+  margin-top: 4px;
+  padding-inline-start: 8px;
+  border-inline-start: 2px solid var(--kn-accent);
+  opacity: 0.9;
+}
+
+.kn-item-tools {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+/* ---------------------------------------------------------------- reader */
+
+.kn-reader p {
+  margin: 0 0 0.8em;
+  white-space: pre-wrap;
+}
+
+/* -------------------------------------------------------- preview/footer */
+
+.kn-preview {
+  padding: 8px;
+  border-radius: var(--kn-radius);
+  background: var(--kavacha-surface-raised, #1d1930);
+  border: 1px solid var(--kavacha-border, #2e2748);
+}
+
+.kn-preview :is(h1, h2, h3) {
+  font-size: 1.05em;
+  margin: 0.4em 0;
+}
+
+.kn-footer {
+  margin-top: auto;
+  padding-top: 6px;
+  border-top: 1px solid var(--kavacha-border, #2e2748);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.kn-footer-status {
+  opacity: 0.7;
+  overflow-wrap: anywhere;
+}

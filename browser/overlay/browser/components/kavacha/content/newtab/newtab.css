@@ -1,0 +1,293 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* Kavacha dashboard new tab — calm Momentum-style layout, fully offline:
+   gradient of the day, clock, greeting, bundled quote. No network, ever. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  /* Patch 0062. The base layer follows the theme, so the moment before the
+     gradient paints -- and any edge the backdrop does not cover -- matches the
+     browser around it instead of being a fixed #1c1d22 slab.
+
+     DELIBERATELY NOT THEMED: everything above this layer. The dashboard is a
+     photo backdrop, and .credit/.settings/.clock/.greeting/.quote are white
+     with scrims and text-shadows tuned against the IMAGE, not against a theme
+     surface (see the contrast note at .scrim below, measured for exactly that).
+     Recolouring them from --kavacha-text-primary would put dark text on a dark
+     photo under a light theme -- the opposite of the fix. A light theme gets a
+     light browser around a photographic new tab, the way a light desktop keeps
+     whatever wallpaper you chose.
+
+     `color` stays #fff for that reason: .clock and .greeting set no colour of
+     their own and inherit it from here, so pointing it at a theme token would
+     drop dark text onto a dark photograph the moment you chose a light theme.
+     Only the background moves. */
+  color: #fff;
+  background: var(--kavacha-surface-sunken, #1c1d22);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ---- gradient background ---- */
+.bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  opacity: 0;
+  transition: opacity 0.8s ease;
+  /* set from JS: --g1..--g3 palette stops */
+  background:
+    radial-gradient(
+      ellipse 120% 80% at 70% 10%,
+      var(--g2, #2b3a55) 0%,
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 100% 90% at 15% 95%,
+      var(--g3, #16324f) 0%,
+      transparent 55%
+    ),
+    linear-gradient(160deg, var(--g1, #1c2733) 0%, var(--g4, #0d1420) 100%);
+}
+
+.bg.loaded {
+  opacity: 1;
+}
+
+/* ---- Wikimedia photo of the day (fades in over the gradient) ---- */
+.photo {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-size: cover;
+  background-position: center;
+  opacity: 0;
+  transition: opacity 1.2s ease;
+}
+
+.photo.loaded {
+  opacity: 1;
+}
+
+/* gentle darkening so text stays legible on any photo */
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.35) 0%,
+    rgba(0, 0, 0, 0.05) 35%,
+    rgba(0, 0, 0, 0.05) 60%,
+    rgba(0, 0, 0, 0.45) 100%
+  );
+}
+
+.credit {
+  position: fixed;
+  bottom: 1rem;
+  right: 1.4rem;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.75);
+  text-decoration: none;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.6);
+  max-width: 44vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 0.2s;
+}
+
+.credit:hover {
+  color: #fff;
+}
+
+.settings {
+  position: fixed;
+  bottom: 1rem;
+  left: 1.4rem;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.6);
+  text-decoration: none;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.6);
+  opacity: 0.85;
+  transition:
+    color 0.2s,
+    opacity 0.2s;
+}
+
+.settings:hover {
+  color: #fff;
+  opacity: 1;
+}
+
+/* ---- onboarding ---- */
+.onboarding {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fade 0.6s ease;
+}
+
+.name-form {
+  text-align: center;
+  width: min(90vw, 640px);
+}
+
+.name-label {
+  display: block;
+  font-size: clamp(1.6rem, 4vw, 3rem);
+  font-weight: 600;
+  margin-bottom: 1.2rem;
+  text-shadow: 0 1px 14px rgba(0, 0, 0, 0.4);
+}
+
+.name-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.55);
+  color: #fff;
+  text-align: center;
+  font-size: clamp(1.4rem, 3.5vw, 2.4rem);
+  font-weight: 600;
+  padding: 0.4rem 0.2rem;
+  outline: none;
+}
+
+.name-input::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 1rem;
+}
+
+.name-skip {
+  margin-top: 1.6rem;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.95rem;
+  cursor: pointer;
+  padding: 0.4rem 1rem;
+}
+
+.name-skip:hover {
+  color: #fff;
+}
+
+/* ---- dashboard ---- */
+.dash {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4rem 2rem;
+  animation: fade 0.8s ease;
+}
+
+.center {
+  text-align: center;
+}
+
+.clock {
+  font-size: clamp(4rem, 13vw, 9rem);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.35);
+  font-variant-numeric: tabular-nums;
+}
+
+.greeting {
+  font-size: clamp(1.4rem, 4vw, 2.4rem);
+  font-weight: 600;
+  margin-top: 0.4rem;
+  text-shadow: 0 1px 16px rgba(0, 0, 0, 0.4);
+  cursor: text;
+}
+
+.greeting .name {
+  border-bottom: 1px dashed transparent;
+  transition: border-color 0.2s;
+}
+
+.greeting:hover .name {
+  border-bottom-color: rgba(255, 255, 255, 0.5);
+}
+
+/* ---- quote ---- */
+.quote {
+  position: fixed;
+  left: 50%;
+  bottom: 3.2rem;
+  transform: translateX(-50%);
+  width: min(90vw, 720px);
+  text-align: center;
+  text-shadow: 0 1px 14px rgba(0, 0, 0, 0.45);
+  animation: fade 1.2s ease;
+}
+
+.quote blockquote {
+  font-size: clamp(1rem, 2.2vw, 1.35rem);
+  font-weight: 500;
+  line-height: 1.5;
+  font-style: italic;
+}
+
+.quote figcaption {
+  margin-top: 0.6rem;
+  font-size: 0.95rem;
+  opacity: 0.85;
+  font-style: normal;
+}
+
+.quote figcaption::before {
+  content: "\2014\00a0"; /* em dash */
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bg,
+  .onboarding,
+  .dash,
+  .quote {
+    transition: none;
+    animation: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .quote {
+    display: none;
+  }
+}

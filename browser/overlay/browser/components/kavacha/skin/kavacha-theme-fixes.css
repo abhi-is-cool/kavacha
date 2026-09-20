@@ -1,0 +1,33 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* ==========================================================================
+   Kavacha menu icon fix (patch 0033). %include'd LAST in zen-theme.css.
+
+   Menu gear icon: zen-icons are context-fill SVGs, so without
+   -moz-context-properties/fill they paint transparent and the icon-only button
+   looks empty. Set on the button AND its icon box so it renders.
+
+   ---------------------------------------------------------------------------
+   PATCH 0061 removed this file's second half — a `:root` block re-declaring six
+   --kavacha-* tokens plus --kavacha-surface.
+
+   Those declarations were the tuned ones (user direction 2026-07-13: "darker,
+   not dimmer; the text must contrast; bright accent colours are fine") and they
+   were correct. The problem was where they lived. Being %include'd last, this
+   file beat kavacha-midnight.inc.css, so the floor that every comment, the
+   theme engine's BUILTIN_THEMES map and customization/themes/kavacha-midnight/
+   colors.json all described was NOT the floor on screen. Three sources of
+   truth, and the winning one was the one named "fixes".
+
+   The values moved to kavacha-midnight.inc.css, which is where a theme's
+   colours belong, and the engine's map was brought into step with them. Nothing
+   was lightened; this is a move, not a retune.
+   ========================================================================== */
+
+#kavacha-menu-button,
+#kavacha-menu-button .toolbarbutton-icon {
+  -moz-context-properties: fill, fill-opacity;
+  fill: currentColor;
+}

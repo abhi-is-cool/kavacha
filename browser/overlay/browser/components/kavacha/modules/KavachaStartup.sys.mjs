@@ -28,6 +28,11 @@
 const WINDOW_SCRIPTS = [
   "chrome://browser/content/kavacha/kavacha-window.js",
   "chrome://browser/content/kavacha/spaces/kavacha-workspaces.js",
+  "chrome://browser/content/kavacha/spaces/kavacha-space-identity.js",
+  "chrome://browser/content/kavacha/spaces/kavacha-space-notes.js",
+  "chrome://browser/content/kavacha/spaces/kavacha-space-research.js",
+  "chrome://browser/content/kavacha/spaces/kavacha-sessions.js",
+  "chrome://browser/content/kavacha/search/kavacha-universal-search.js",
   "chrome://browser/content/kavacha/palette/kavacha-palette.js",
 ];
 const WINDOW_SHEET = "chrome://browser/skin/kavacha/kavacha.css";
@@ -36,6 +41,7 @@ const WINDOW_FTL = [
   "browser/kavacha/kavacha-workspaces.ftl",
   "browser/kavacha/kavacha-commands.ftl",
   "browser/kavacha/kavacha-palette.ftl",
+  "browser/kavacha/kavacha-preferences.ftl",
 ];
 
 /**
@@ -45,12 +51,26 @@ const WINDOW_FTL = [
  */
 const PROCESS_MODULES = [
   { module: "KavachaWorkspaces" }, // ADR 0021: the Spaces store
-  // Filled in by port milestone M3, subsystem by subsystem. Known order from
-  // the Zen-era ZenStartup: NewTab, TabMemory, SpaceHistory, LayoutEngine,
-  // ThemeEngine, UserCSS, WidgetHost (must precede Marketplace), Marketplace,
-  // PluginManager, Menu, SessionCleanup, PersonalIndex, KnowledgeGraph,
-  // FocusMode (must run even with no session: it ends expired ones),
-  // Workflows.
+  { module: "KavachaNewTab" }, // dashboard new tab (patch 0011)
+  { module: "KavachaTabMemory" }, // sleep idle background tabs (patch 0013)
+  { module: "KavachaSpaceHistory" }, // ADR 0006 snapshots substrate
+  { module: "KavachaLayoutEngine" }, // ADR 0008
+  { module: "KavachaThemeEngine" }, // ADR 0008; theme-mode authority (§4e)
+  { module: "KavachaUserCSS" }, // ADR 0009
+  { module: "KavachaMenu" }, // the ⚙ menu (patch 0030); per-window UI below
+  // WidgetHost must precede Marketplace: the marketplace registers `widget`
+  // components into it as it re-applies what is installed (ADR 0010).
+  { module: "KavachaWidgetHost" },
+  { module: "KavachaMarketplace" }, // ADR 0010
+  { module: "KavachaPluginManager" }, // ADR 0011
+  { module: "KavachaSessionCleanup" }, // pinned-only restore, pref-gated (patch 0034)
+  { module: "KavachaPersonalIndex" }, // ADR 0012
+  { module: "KavachaKnowledgeGraph" }, // ADR 0016 (owns the Places deletion contract)
+  // FocusMode must come up even with no session running: init() is what ENDS
+  // a session whose clock ran out while the browser was closed, restoring the
+  // notification default it changed (ADR 0018).
+  { module: "KavachaFocusMode" },
+  { module: "KavachaWorkflows" }, // ADR 0017
 ];
 
 /**
@@ -62,16 +82,68 @@ const PROCESS_MODULES = [
 const WINDOW_HOOKS = [
   { global: "gKavachaWorkspaces", call: "init" },
   { global: "gKavachaPalette", call: "init" },
-  // M3: PlacesAttribution.init(window), LayoutEngine.applyToWindow,
-  // ThemeEngine.applyToWindow, UserCSS.applyToWindow, Menu.setupWindow,
-  // KnowledgeGraph.attachToWindow, TabHistory.attachToWindow, Workflows.onStartup.
+  { module: "KavachaLayoutEngine", call: "applyToWindow" },
+  { module: "KavachaThemeEngine", call: "applyToWindow" },
+  { module: "KavachaUserCSS", call: "applyToWindow" },
+  { module: "KavachaMenu", call: "setupWindow" },
+  { module: "KavachaPlacesAttribution", call: "init" }, // ADR 0005: per-space history attribution (window listener)
+  // Records the two relationships Places never stores — page A led to page B,
+  // and B was opened FROM A. Refuses private windows itself (ADR 0016).
+  { module: "KavachaKnowledgeGraph", call: "attachToWindow" },
+  // The branches ordinary session history truncates (ADR 0019); per window,
+  // since it listens to that window's tab navigations.
+  { module: "KavachaTabHistory", call: "attachToWindow" },
 ];
 
 /** Per-window hooks that need the window painted (toolbars built, SidebarController ready). */
 const DELAYED_WINDOW_HOOKS = [
   { global: "gKavachaWorkspaces", call: "render" }, // the strip widget exists by now
-  // M3: AISidebar.register(window), KnowledgeSidebar.register(window).
+  // Firefox's fresh-profile setup enables default-theme AFTER our
+  // before-show apply, disabling ours; re-assert now that startup has
+  // settled (idempotent — see reassertBuiltInTheme).
+  { module: "KavachaThemeEngine", call: "reassertBuiltInTheme" },
+  // Per window because SidebarController is; costs no network request — the
+  // page probes only when asked to do something (ADR 0014).
+  { module: "KavachaAISidebar", call: "register" },
+  // Separate from the AI sidebar because it must keep working with AI
+  // switched off; per window for the same reason (ADR 0015).
+  { module: "KavachaKnowledgeSidebar", call: "register" },
+  // Startup-triggered workflows run after a delay so they never compete with
+  // session restore (ADR 0017).
+  { module: "KavachaWorkflows", call: "onStartup" },
 ];
+
+/**
+ * JSWindowActors Kavacha registers. Under Zen these were entries in
+ * ZenActorsManager; on the Firefox base each is registered here, which is
+ * also where they are documented.
+ */
+const WINDOW_ACTORS = {
+  // Personal index (ADR 0012, patch 0078): captures readable page text for
+  // local full-text search. http/https only; the parent actor is the policy
+  // gate (enabled pref, private windows, attribution).
+  KavachaIndexer: {
+    parent: { esModuleURI: "resource:///actors/KavachaIndexerParent.sys.mjs" },
+    child: {
+      esModuleURI: "resource:///actors/KavachaIndexerChild.sys.mjs",
+      events: { DOMContentLoaded: {}, pageshow: {} },
+    },
+    matches: ["https://*/*", "http://*/*"],
+  },
+};
+
+function registerActors() {
+  for (const [name, config] of Object.entries(WINDOW_ACTORS)) {
+    try {
+      ChromeUtils.registerWindowActor(name, config);
+    } catch (e) {
+      // Already registered (a second process init) is not an error.
+      if (e.result !== Cr.NS_ERROR_NOT_AVAILABLE) {
+        lazy.log.error(`actor ${name} failed to register`, e);
+      }
+    }
+  }
+}
 
 /** CustomizableUI widgets are process-wide; register once, render per window. */
 function registerWidgets() {
@@ -161,6 +233,7 @@ export class KavachaStartup {
     } catch (e) {
       lazy.log.error("widget registration failed", e);
     }
+    registerActors();
     this.#initProcess();
     for (const topic of [
       "browser-window-before-show",
@@ -210,6 +283,13 @@ export class KavachaStartup {
     if (!isBrowserWindow(win)) {
       return;
     }
+    // Each piece is isolated: a stylesheet that fails to load, a missing FTL,
+    // or one window script that throws must cost exactly itself. Wrapping the
+    // whole block and returning on the first error meant a single bad script
+    // silently skipped every later script AND every window hook — the window
+    // then came up with no menu button, no palette and no theme, and nothing
+    // said why. (Observed 2026-09-20; the probe caught it as a wave of
+    // unrelated failures.)
     try {
       // Author-level sheet so the token floor and every Kavacha rule cascade
       // like a chrome stylesheet would; loaded before first paint.
@@ -217,15 +297,22 @@ export class KavachaStartup {
         WINDOW_SHEET,
         win.windowUtils.AUTHOR_SHEET
       );
-      for (const ftl of WINDOW_FTL) {
-        win.MozXULElement.insertFTLIfNeeded(ftl);
-      }
-      for (const script of WINDOW_SCRIPTS) {
-        Services.scriptloader.loadSubScript(script, win);
-      }
     } catch (e) {
-      lazy.log.error("window boot failed", e);
-      return;
+      lazy.log.error("stylesheet failed to load", e);
+    }
+    for (const ftl of WINDOW_FTL) {
+      try {
+        win.MozXULElement.insertFTLIfNeeded(ftl);
+      } catch (e) {
+        lazy.log.error(`FTL ${ftl} failed to load`, e);
+      }
+    }
+    for (const script of WINDOW_SCRIPTS) {
+      try {
+        Services.scriptloader.loadSubScript(script, win);
+      } catch (e) {
+        lazy.log.error(`window script ${script} threw`, e);
+      }
     }
     runHooks(WINDOW_HOOKS, win, "before-show");
     if (win.gKavacha) {

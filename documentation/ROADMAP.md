@@ -606,7 +606,13 @@ actor child scripts do not load on a local macOS build (content sandbox vs. syml
 out of the bundle — Zen's own actors fail the same way), so patch 0078's *passive*
 capture has never run in a default local session. See [VERIFICATION.md](VERIFICATION.md) §4c.
 
-## Phase 7 — Browser, later (post-v1.0) — **written 2026-08-17 (patches 0082–0087), never built or run**
+## Phase 7 — Browser, later (post-v1.0) — written 2026-08-17; **built and TESTED 2026-09-20**
+
+> Ported to the Firefox ESR base with everything else and driven at runtime for the first
+> time on 2026-09-20: `marionette-phase7.py`, 77 checks, 0 failures
+> ([VERIFICATION](VERIFICATION.md) §4h). That first run found a real defect — focus mode
+> never restored the desktop-notification default, so every session left notifications
+> blocked permanently. Fixed.
 
 Browser work deliberately scheduled after v1.0. Still browser features — patches in
 `browser/patches/`, no servers, no accounts. Built ahead of its slot because none of it

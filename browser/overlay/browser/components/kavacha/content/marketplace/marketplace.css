@@ -1,0 +1,188 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* Component Marketplace (about:marketplace). Shares about:studio's visual
+ * language (patch 0024) — same Kavacha theme tokens, so the page follows the
+ * active theme. ADR 0010.
+ *
+ * Patch 0062: those tokens now actually arrive — see studio.css for the same
+ * note. content-theme.js stamps the live values and owns color-scheme, which
+ * used to be pinned to dark here. Fallbacks below are Kavacha Midnight and are
+ * reached only if that script fails to run. */
+
+:root {
+  --market-surface: var(--kavacha-surface, #0b0912);
+  --market-elevated: var(--kavacha-surface-elevated, #16131f);
+  --market-sunken: var(--kavacha-surface-sunken, #060409);
+  --market-border: var(--kavacha-border, #322b4a);
+  --market-text: var(--kavacha-text-primary, #f6f4fc);
+  --market-text-dim: var(--kavacha-text-secondary, #cabfe6);
+  /* Canonical definition and rationale: kavacha-midnight.inc.css. Repeated
+     here because this is a content document -- the chrome token floor is not
+     in its cascade -- not because the value is local. */
+  --kavacha-accent-fallback: #8b7bd8;
+  --market-accent: var(
+    --kavacha-accent,
+    var(--kavacha-accent, var(--kavacha-accent-fallback))
+  );
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0 0 64px;
+  font: message-box;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--market-text);
+  background: var(--market-surface);
+  min-height: 100vh;
+}
+
+.market-header {
+  padding: 40px max(24px, 50% - 460px) 24px;
+  background: linear-gradient(
+    180deg,
+    var(--market-elevated),
+    var(--market-surface)
+  );
+  border-bottom: 1px solid var(--market-border);
+}
+
+.market-title h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.market-subtitle {
+  margin: 6px 0 0;
+  color: var(--market-text-dim);
+  max-width: 58ch;
+}
+
+.market-note {
+  margin: 18px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--market-border);
+  border-radius: 10px;
+  background: var(--market-sunken);
+  color: var(--market-text-dim);
+  font-size: 13px;
+  max-width: 66ch;
+}
+
+.market-body {
+  padding: 28px max(24px, 50% - 460px) 0;
+  max-width: 920px;
+  margin: 0 auto;
+}
+
+.market-section {
+  margin: 26px 0 12px;
+  font-size: 15px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--market-text-dim);
+}
+
+.market-section:first-child {
+  margin-top: 4px;
+}
+
+.market-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.market-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--market-elevated);
+  border: 1px solid var(--market-border);
+  border-radius: 14px;
+  padding: 18px 20px;
+}
+
+.market-name {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.market-desc {
+  margin: 6px 0 0;
+  color: var(--market-text-dim);
+  font-size: 13px;
+  flex: 1;
+}
+
+.market-meta {
+  margin: 12px 0 0;
+  color: var(--market-text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.market-installed-badge {
+  align-self: flex-start;
+  margin: 10px 0 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--market-accent) 22%, transparent);
+  color: var(--market-accent);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.market-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.market-button {
+  appearance: none;
+  font: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  border-radius: 10px;
+  padding: 8px 16px;
+  cursor: pointer;
+  border: 1px solid var(--market-border);
+}
+
+.market-button.ghost {
+  background: transparent;
+  color: var(--market-text-dim);
+}
+
+.market-button.ghost:hover {
+  color: var(--market-text);
+  background: var(--market-sunken);
+}
+
+.market-button.primary {
+  background: var(--market-accent);
+  color: #fff;
+  border-color: transparent;
+}
+
+.market-button.primary:hover {
+  filter: brightness(1.08);
+}
+
+.market-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+  filter: none;
+}

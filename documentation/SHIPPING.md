@@ -90,16 +90,16 @@ eyeballing; the 0030 → 0036 saga is the argument for that.
   resolves to real text rather than a raw Fluent id. Same gap: operating a control has not
   been shown to change anything.
 
-**Added 2026-08-17 — Phase 7 (patches 0082–0087).** Six features, four new `about:`
-pages, two new SQLite stores and a second sidebar landed ahead of their post-v1.0 slot.
-They **gate nothing** — no release requirement names them — but they enlarge the surface
-that the Dev Preview's L4 requirement covers, and **none of it has been compiled to
-completion, let alone driven at runtime**: the build was attempted twice and stopped
-both times, the second for lack of memory on the development machine. The arm list is
-[VERIFICATION.md](VERIFICATION.md) §4d. The attempt did catch one real defect (an
-unsorted `EXTRA_JS_MODULES` list that fails the `moz.build` read outright), which is
-the argument for not treating "the patch applies" as progress — and the unfinished
-build is the argument for not treating "it started compiling" as progress either.
+**Phase 7 (0082–0087): built, ported and TESTED 2026-09-20.** Six features, four new
+`about:` pages, two new SQLite stores and a second sidebar. They **gate nothing** — no
+release requirement names them — but they enlarge the surface the Dev Preview's L4
+requirement covers. Written 2026-08-17 and never executed until the port to the
+Firefox ESR base: `marionette-phase7.py` now runs 77 checks with 0 failures on a fresh
+profile ([VERIFICATION.md](VERIFICATION.md) §4h). The first run found a real defect —
+focus mode never restored the desktop-notification default, leaving notifications
+blocked permanently after every session — in a file whose own header claimed that bug
+had been pre-empted. Still unproven for Phase 7: the capture paths needing a real
+http(s) page (clip/highlight capture, citation metadata from live markup).
 
 **Remaining open arms:**
 

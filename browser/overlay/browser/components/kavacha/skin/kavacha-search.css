@@ -1,0 +1,124 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/* Kavacha universal search panel (ADR 0004). */
+
+#kavacha-search-panel {
+  --panel-padding: 0;
+  border-radius: 12px;
+}
+
+#kavacha-search-box {
+  width: var(--kavacha-search-width, 640px);
+  max-height: min(60vh, 520px);
+  padding: 10px;
+  gap: 8px;
+}
+
+#kavacha-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 1.15em;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  color: inherit;
+  outline: none;
+}
+
+#kavacha-search-results {
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#kavacha-search-results[empty] {
+  display: none;
+}
+
+#kavacha-search-hint {
+  font-size: 0.8em;
+  opacity: 0.6;
+  padding: 0 4px 2px;
+}
+
+.kavacha-search-group {
+  font-size: 0.75em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.55;
+  padding: 8px 6px 3px;
+}
+
+.kavacha-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: default;
+  min-width: 0;
+}
+
+.kavacha-search-row:hover,
+.kavacha-search-row[selected] {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.kavacha-search-title {
+  flex: 0 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kavacha-search-badge {
+  flex: 0 0 auto;
+  font-size: 0.72em;
+  padding: 1px 7px;
+  border-radius: 8px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  opacity: 0.8;
+}
+
+.kavacha-search-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.55;
+  font-size: 0.9em;
+  text-align: right;
+}
+
+/* ==========================================================================
+   Kavacha patch 0055 — "Only <Space>" scope toggle.
+
+   Sits between the hint and the results so it reads as a qualifier on the
+   query rather than as a result row.
+   ========================================================================== */
+#kavacha-search-scope {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 18px 10px;
+  font-size: 12px;
+  opacity: 0.8;
+  cursor: pointer;
+  user-select: none;
+}
+
+#kavacha-search-scope[hidden] {
+  display: none;
+}
+
+#kavacha-search-scope-toggle {
+  accent-color: var(--kavacha-accent, currentColor);
+  margin: 0;
+}

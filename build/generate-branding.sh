@@ -16,7 +16,10 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC_DIR="${SRC_DIR:-$REPO_ROOT/browser/firefox-source}"
 TEMPLATE="$SRC_DIR/browser/branding/unofficial"
-DST="$SRC_DIR/browser/branding/kavacha"
+# Where the rendered branding lands. bootstrap.sh's apply_branding points this
+# at a staging directory and then copies over only the files that actually
+# differ, so an unchanged rebrand does not hand every file a new mtime.
+DST="${KV_BRAND_DST:-$SRC_DIR/browser/branding/kavacha}"
 BRAND_DIR="$REPO_ROOT/browser/branding/kavacha"
 LOGO="$BRAND_DIR/assets/logo.png"
 BRAND_JSON="$BRAND_DIR/branding.json"
@@ -43,7 +46,7 @@ URL_SUPPORT="$(readjson "['urls']['support']")"
 URL_RELEASES="$(readjson "['urls']['releaseNotes']")"
 SURFACE="$(readjson "['identity']['colors']['brandSurface']")"
 
-log "Generating $APP_NAME branding at browser/branding/kavacha (template: unofficial)..."
+log "Generating $APP_NAME branding at $DST (template: unofficial)..."
 # Windows can hold a freshly written file open (indexer/AV) for a moment;
 # retry the removal rather than let a half-removed directory poison the copy.
 for _ in 1 2 3 4 5; do

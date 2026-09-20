@@ -706,6 +706,52 @@ Getting there took four fixes, and the first-ever run is what found all of them:
 http/https only and this probe runs on `about:` pages; its modules are packaged at
 `resource:///actors/` and parse. Those are L4 arms for a session with a real page load.
 
+## 4i. Build loop and probe runner (2026-09-20)
+
+Not a claim about the browser — a claim about the machinery that produces the evidence
+above, recorded here because two of these were costing the evidence itself.
+
+**`update` no longer forces a rebuild.** It detached the checkout to the pin and laid the
+overlay, patches and branding down again on every run, handing ~125 files a fresh mtime
+whether or not their bytes had changed; mach's build backend keys off mtimes, so each
+iteration bought a near-full C++ rebuild. It now writes only what differs, keeps the
+checkout on the pin when it is already there, restores the patched files' mtimes when the
+re-applied result is byte-identical, and stages branding through a temp directory.
+**Observed on this host, nothing changed between runs: `update` 46 s, `mach build` 24 s**
+(`Overlay: 120 files, 0 changed` / `Patched files: 5 unchanged (mtime kept)` /
+`Branding: 0 file(s) changed`). The same no-op cycle previously took about 30 minutes.
+
+`overlay_prune` — the new path that removes a file from the checkout after it leaves
+`browser/overlay/` — was exercised deliberately rather than shipped unrun: a throwaway
+overlay file was added (`Overlay: 121 files, 1 changed`, commit amended), then deleted
+(`pruned browser/components/kavacha/content/kavacha-prune-probe.js`), with
+`git rev-parse HEAD^` still the pin on both sides. `overlay-check` agrees and `roundtrip`
+is byte-identical (sha256 `b28395b2…`, 4 patches).
+
+**`build/marionette-ci.py`** runs every probe in one command, each on its own `mkdtemp`
+profile, launching and killing the browser itself. Observed: **3/3 probes, 188 checks,
+0 failures, 23 s, headless** — substrate 104, Phase 7 77, restart 3 (phase 1) + 7
+(phase 2) — against build `20260920093413`. No browser processes were left behind
+afterwards, checked: Firefox's content processes do exit with the parent, so terminating
+the parent is enough. This is also the first evidence that the probes pass **headless**,
+which is how CI will run them.
+
+Two failures worth keeping, both self-inflicted and both of a kind that reads as success:
+
+- A build reported `EXIT=0` while having failed. The command was `... build | tail -40`,
+  and `$?` after a pipeline is the *last* element's status. The build had actually died
+  at `"…mozglue.dll": Access is denied` — eleven `kavacha.exe` processes left over from
+  hand-driven probe runs were holding `dist/bin` open. `build`, `fast`, `package` and
+  `start` now refuse up front with that count instead of failing five minutes in.
+- The first version of the mtime fix snapshotted the patched files *after* the reset that
+  reverts them, so it compared an unpatched file against a patched one, never matched,
+  and restored nothing — while still printing a plausible-looking log. It was caught by
+  checking `stat -c %Y` against the previous run's recorded values rather than by reading
+  the log.
+
+**Not claimed here:** anything about CI. The workflow has still never run; see
+REMAINING_WORK's M4 note.
+
 ## 7. Release-gate verification still unbuilt
 
 From ROADMAP Phase 4 and the release-gate table — verification work that does
@@ -750,6 +796,13 @@ single most common cause of a "corrupt patch" rejection.
 **L4 — requires the built app:**
 
 ```
+python3 build/marionette-ci.py            # every probe, each on its own fresh profile
+```
+
+That is the whole gate in one command, and it is what CI runs. By hand, to drive a
+single probe, launch the browser in one shell and attach from another:
+
+```
 ./build/marionette-verify.py --launch     # shell 1
 ./build/marionette-verify.py              # shell 2
 ```
@@ -758,6 +811,11 @@ It speaks length-prefixed JSON over TCP to port 2828 — no third-party deps —
 reports hard facts (loaded modules, element existence, geometry) rather than
 screenshots. Extend it per feature rather than eyeballing; the 0030 → 0036 saga
 is the argument for that.
+
+**A probe run is only valid from a clean profile.** Chained through one profile on
+2026-09-20 the restart probe read 4/7; from clean it reads 7/7 — the earlier number
+was the previous probe's leftovers, not a defect. `marionette-ci.py` launches and
+kills a browser per probe against a fresh `mkdtemp` profile for exactly this reason.
 
 ---
 

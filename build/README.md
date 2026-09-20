@@ -31,7 +31,7 @@ Kavacha repo (this)                      browser/firefox-source/          binary
 | `./build/bootstrap.sh start` | `./mach run -- -purgecaches` |
 | `./build/bootstrap.sh package` | `./mach package` — zip/tar/DMG plus, on Windows, the NSIS `…installer.exe` (its `make-package` rule runs NSIS itself), all in `obj-*/dist/` |
 | `./build/bootstrap.sh brand` | Regenerate branding only |
-| `./build/bootstrap.sh update` | Reset the checkout to the pin (keeps the objdir), re-copy overlay, re-apply patches, re-brand |
+| `./build/bootstrap.sh update` | Bring the checkout back in line with this repo (keeps the objdir): revert, re-copy overlay, re-apply patches, re-brand. Writes only files whose bytes actually changed — see *Why `update` is cheap* below |
 | `./build/bootstrap.sh overlay-export` | Copy overlay-path files edited in the checkout back into `browser/overlay/` |
 | `./build/bootstrap.sh overlay-check` | Non-zero if `browser/overlay/` and the checkout differ |
 | `./build/bootstrap.sh patch-export NNNN-name` | `git diff HEAD -- <files>` in the checkout → `browser/patches/NNNN-name.patch`, with the required header |
@@ -48,6 +48,41 @@ does not. All three were real — see the script's header.
 Run `mach` commands as `env -u CLAUDECODE -u CLAUDE_CODE ./build/bootstrap.sh build` when an
 agent is driving: `mach` detects one and suppresses the real error, leaving `*** Fix above
 errors` with nothing above it.
+
+## Why `update` is cheap
+
+`update` used to detach the checkout to the pin and lay everything down again, which
+handed all ~120 overlay files, all 5 patched files and every generated branding file a
+fresh mtime whether or not their bytes had changed. `make` and mach's build backend key
+off mtimes, so that bought a long C++ rebuild on every iteration — most of a working day
+on 2026-09-20, roughly 30 minutes a cycle where an incremental build should be minutes.
+
+It now writes only what differs:
+
+- the checkout stays on the pin when it is already there, so the overlay is never deleted
+  and restored wholesale (`copy_overlay` compares each file and skips the identical ones,
+  and prunes any path the overlay commit still holds that `browser/overlay/` has dropped);
+- the patched files are snapshotted before the revert and given their old mtimes back when
+  the re-applied result is byte-identical — which it normally is. Two of the five are
+  `moz.build` files, and a new mtime on those alone regenerates the build backend;
+- branding renders into a staging directory and is copied over file by file, so an
+  unchanged rebrand touches nothing (`generate-branding.sh` honours `KV_BRAND_DST`).
+
+Each step reports what it changed (`Overlay: 120 files, 0 changed` / `Patched files: 5
+unchanged (mtime kept)` / `Branding: 0 file(s) changed`), so a surprising rebuild has a
+visible cause. Bumping `FIREFOX_COMMIT` still means a real checkout move and a long
+rebuild; `update` says so when it takes that path.
+
+> **Observed 2026-09-20, same host, nothing changed between runs:** `update` 46 s,
+> `./mach build` **24 s**. The same no-op cycle before this change was ~30 minutes.
+> Measure with the build's own last line, not a pipeline's exit status — `cmd | tail`
+> reports `tail`'s status, which is how a failed build first read as EXIT=0 here.
+
+> **Close the browser before building.** A running `kavacha` holds `dist/bin/*.dll` open
+> and the Windows linker fails with `"…mozglue.dll": Access is denied` — five minutes in,
+> with nothing in the message to say why (observed 2026-09-20: eleven `kavacha.exe`
+> processes left behind by hand-driven probe runs). `build`, `fast`, `package` and `start`
+> now refuse up front instead. `build/marionette-ci.py` kills the browsers it starts.
 
 ## How the pieces attach
 
@@ -110,12 +145,21 @@ errors` with nothing above it.
    copies them back into `browser/overlay/`; commit them like any file. Tracked Firefox files:
    `./build/bootstrap.sh patch-export NNNN-name`, then `roundtrip` must pass.
 2. Rebuild with `fast` (overlay-only changes; note `update` first if the overlay gained files)
-   or `build` (moz.build/jar.mn changes), then re-run the relevant probe:
+   or `build` (moz.build/jar.mn changes), then re-run the probes. The whole set, each on its
+   own fresh profile, is one command — this is also what CI runs:
+
+   ```
+   python3 build/marionette-ci.py            # substrate 104 + Phase 7 77 + restart 7
+   ```
+
+   To drive one probe by hand instead, launch the browser yourself and attach:
    `build/marionette-verify.py --launch --purge-cache`, then `build/marionette-verify.py`
-   (chrome facts), `marionette-substrate.py` (the M2 substrate, 43 checks),
-   `marionette-restart.py 1` / relaunch / `marionette-restart.py 2` (a space surviving a
-   restart), `marionette-phase7.py` (M5). Purge `<profile>/startupCache` after a rebuild
-   (`--purge-cache`) or `ChromeUtils.importESModule` keeps returning the stale module.
+   (chrome facts), `marionette-substrate.py`, `marionette-phase7.py`, or
+   `marionette-restart.py 1` / relaunch / `marionette-restart.py 2`. Two rules that cost
+   real time when ignored: purge `<profile>/startupCache` after a rebuild (`--purge-cache`)
+   or `ChromeUtils.importESModule` keeps returning the stale module; and **give every probe
+   run its own profile** — chained through one profile the restart probe read 4/7, and 7/7
+   from clean. `marionette-ci.py` does both for you.
 3. Never check whether a build is current by looking at files in `dist/bin` that may be
    symlinks into the source tree; check a genuinely preprocessed artifact such as the packaged
    `browser/defaults/preferences/firefox-branding.js`.

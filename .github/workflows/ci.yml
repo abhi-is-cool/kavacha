@@ -62,12 +62,13 @@ jobs:
           for f in "${files[@]}"; do node --check "$f"; done
           echo "${#files[@]} overlay script(s) parse"
 
-      # Two silent failures a build cannot catch: a Fluent id defined in two
-      # Kavacha .ftl files (they share one bundle, so the second is dropped),
-      # and a top-level const/let/class in a window script (it shares
-      # browser.js's scope, so it aborts that whole file). Both were real —
-      # see the script's header.
-      - name: Overlay static checks (Fluent ids, window-script scope)
+      # Three silent failures a build cannot catch: a Fluent id defined in two
+      # Kavacha .ftl files (they share one bundle, so the second is dropped);
+      # a top-level const/let/class in a window script (it shares browser.js's
+      # scope, so it aborts that whole file); and an unsorted EXTRA_JS_MODULES,
+      # which fails the moz.build read because mozbuild sorts case-insensitively
+      # and Python does not. All three were real — see the script's header.
+      - name: Overlay static checks (Fluent ids, window-script scope, list order)
         run: python3 build/check-overlay.py
 
       - name: Kavacha patches apply cleanly to Firefox ESR
@@ -192,7 +193,10 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          python3 -m pip install --quiet pillow
+          # `python3` is not reliably on PATH in Git Bash on a windows runner,
+          # and `python` is not always on PATH on ubuntu. Resolve one here.
+          PY=python3; command -v $PY >/dev/null 2>&1 || PY=python
+          $PY -m pip install --quiet pillow
         shell: bash
 
       # mach needs MozillaBuild's shell; bootstrap.sh re-executes itself under
@@ -224,8 +228,11 @@ jobs:
         shell: bash
 
       # `mach package` produces the distributables (DMG / tar / zip + update
-      # MAR) in obj-*/dist/; on Windows `mach build installer` adds the NSIS
-      # .exe under dist/install/sea/.
+      # MAR) in obj-*/dist/. On Windows it runs NSIS itself (the make-package
+      # rule in toolkit/mozapps/installer/packager.mk) and drops
+      # kavacha-<version>.<locale>.win64.installer.exe next to the zip — there
+      # is no separate `mach build installer` step, and asking for one fails
+      # with "No rule to make target" (observed 2026-09-19).
       - name: Package
         run: |
           if [ "${{ matrix.platform }}" = "windows" ]; then cd /c/k; fi
@@ -265,18 +272,28 @@ jobs:
             echo "could not find the built binary under $objbin"; ls -la "$objbin" || true; exit 1
           fi
           echo "testing $app"
-          python3 test/network-silence/network_silence_test.py --app "$app" --headless --idle 40
+          PY=python3; command -v $PY >/dev/null 2>&1 || PY=python
+          $PY test/network-silence/network_silence_test.py --app "$app" --headless --idle 40
         shell: bash
 
-      # L4 probe over Marionette on the real artifact: launches headless,
-      # prints the chrome facts (loaded Kavacha modules, menu button, layout).
-      # Informational until the substrate lands (port milestone M2), when the
-      # probe starts asserting and this step becomes load-bearing.
-      - name: Marionette probe (informational)
-        continue-on-error: true
+      # L4 probes over Marionette on the real artifact: the M2 substrate (104
+      # checks), Phase 7 (77) and the workspace restart round-trip (3 + 7
+      # across a real relaunch) — 188 in total. This is load-bearing, not
+      # informational: the substrate landed at port milestone M2 and these are
+      # the gates VERIFICATION.md §4f-§4i record. marionette-ci.py launches and
+      # kills a browser per probe on its own fresh profile; sharing one profile
+      # lets probes change each other's answers (the restart probe read 4/7
+      # chained and 7/7 clean, 2026-09-20).
+      - name: Marionette probes (substrate, Phase 7, restart)
         run: |
-          python3 build/marionette-verify.py --launch --headless --purge-cache
-          python3 build/marionette-verify.py
+          if [ "${{ matrix.platform }}" = "windows" ]; then cd /c/k; fi
+          PY=python3; command -v $PY >/dev/null 2>&1 || PY=python
+          # The indexer actor's content-process paths need the sandbox off on
+          # macOS (see REMAINING_WORK's harness notes).
+          extra=""
+          if [ "${{ matrix.platform }}" = "macos" ]; then extra="--no-sandbox"; fi
+          # shellcheck disable=SC2086
+          $PY build/marionette-ci.py --headless $extra
         shell: bash
 
   # Rolling "nightly" prerelease: Actions artifacts require a GitHub login to

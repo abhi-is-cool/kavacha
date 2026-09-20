@@ -231,10 +231,61 @@ write_mozconfig() {
 # Overlay: Kavacha-authored files, copied onto the checkout and committed
 # locally on top of the pin so `git diff HEAD` is exactly the patch series.
 # ---------------------------------------------------------------------------
+# Copy $1 over $2, writing only files whose bytes differ and removing files $2
+# has that $1 does not. Unchanged files keep their mtime — which is the whole
+# point: `make` and mach's build backend key off mtimes, so rewriting a file
+# with identical content still buys a rebuild of everything downstream of it.
+# Sets SYNC_CHANGED to the number of files written or removed.
+SYNC_CHANGED=0
+sync_tree() {
+    local src="$1" dst="$2" f list
+    SYNC_CHANGED=0
+    mkdir -p "$dst"
+    list="$(cd "$src" && find . -type f | sed 's#^\./##')"
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        if ! cmp -s "$src/$f" "$dst/$f" 2>/dev/null; then
+            mkdir -p "$dst/$(dirname "$f")"
+            cp "$src/$f" "$dst/$f"
+            SYNC_CHANGED=$((SYNC_CHANGED+1))
+        fi
+    done <<< "$list"
+    list="$(cd "$dst" && find . -type f | sed 's#^\./##')"
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        if [ ! -e "$src/$f" ]; then
+            rm -f "$dst/$f"
+            SYNC_CHANGED=$((SYNC_CHANGED+1))
+        fi
+    done <<< "$list"
+}
+
 overlay_files() {
     # Relative paths of every file in the overlay (empty if none).
     [ -d "$OVERLAY_DIR" ] || return 0
     (cd "$OVERLAY_DIR" && find . -type f ! -name 'README.md' -o -type f -name 'README.md' ! -path './README.md' | sed 's#^\./##' | sort)
+}
+
+# Paths the local overlay commit touches that browser/overlay/ no longer has:
+# an overlay file deleted in this repo must also leave the checkout, or it
+# lingers there and keeps being built.
+overlay_prune() {
+    local touched want p
+    [ "$(git -C "$SRC_DIR" rev-parse HEAD)" != "$FIREFOX_COMMIT" ] || return 0
+    touched="$(git -C "$SRC_DIR" diff --name-only "$FIREFOX_COMMIT" HEAD)"
+    [ -n "$touched" ] || return 0
+    want="$(overlay_files)"
+    while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        printf '%s\n' "$want" | grep -Fxq "$p" && continue
+        if git -C "$SRC_DIR" cat-file -e "$FIREFOX_COMMIT:$p" 2>/dev/null; then
+            # The overlay had been shadowing a file Firefox tracks: restore it.
+            git -C "$SRC_DIR" checkout -q "$FIREFOX_COMMIT" -- "$p"
+        else
+            git -C "$SRC_DIR" rm -q --ignore-unmatch -- "$p" >/dev/null
+        fi
+        log "  pruned $p (no longer in browser/overlay/)"
+    done <<< "$touched"
 }
 
 copy_overlay() {
@@ -244,25 +295,35 @@ copy_overlay() {
         log "Overlay is empty — checkout stays at the pin."
         return 0
     fi
-    log "Copying overlay ($(printf '%s\n' "$files" | wc -l | tr -d ' ') files) onto the checkout..."
-    local f
+    overlay_prune
+    local f n=0
     while IFS= read -r f; do
+        # Only write files that actually differ (see sync_tree's comment).
+        cmp -s "$OVERLAY_DIR/$f" "$SRC_DIR/$f" 2>/dev/null && continue
         mkdir -p "$SRC_DIR/$(dirname "$f")"
         cp "$OVERLAY_DIR/$f" "$SRC_DIR/$f"
+        n=$((n+1))
     done <<< "$files"
+    log "Overlay: $(printf '%s\n' "$files" | wc -l | tr -d ' ') files, $n changed."
     # Stage by top-level overlay directory (no xargs: MSYS2 under MozillaBuild
-    # can fail to fork it). The checkout was just reset, so -A here only adds
-    # the overlay files.
-    local topdirs
+    # can fail to fork it). Callers run this on a tree that has just been reset
+    # to HEAD, so -A here sees the overlay and nothing else — in particular the
+    # patch series is not yet applied and cannot be folded into the commit.
+    local topdirs dir
     topdirs="$(cd "$OVERLAY_DIR" && find . -mindepth 1 -maxdepth 1 -type d | sed 's#^\./##')"
     while IFS= read -r dir; do
         [ -n "$dir" ] && git -C "$SRC_DIR" add -A -- "$dir"
     done <<< "$topdirs"
-    if ! git -C "$SRC_DIR" diff --cached --quiet; then
+    if git -C "$SRC_DIR" diff --cached --quiet; then
+        log "Overlay already committed and unchanged."
+    elif [ "$(git -C "$SRC_DIR" rev-parse HEAD)" = "$FIREFOX_COMMIT" ]; then
         git -C "$SRC_DIR" commit -q -m "kavacha overlay"
         log "Overlay committed locally on top of the pin."
     else
-        log "Overlay already committed and unchanged."
+        # HEAD is already the overlay commit; amend so check_pin's invariant
+        # (exactly one commit on top of the pin) survives.
+        git -C "$SRC_DIR" commit -q --amend --no-edit
+        log "Overlay commit amended."
     fi
 }
 
@@ -306,6 +367,15 @@ overlay_export() {
 # ---------------------------------------------------------------------------
 # Patches: only hunks to files Firefox tracks, applied as uncommitted changes.
 # ---------------------------------------------------------------------------
+# Every file the patch series touches, one per line.
+patch_paths() {
+    shopt -s nullglob
+    local patches=("$PATCHES_DIR"/*.patch)
+    shopt -u nullglob
+    [ ${#patches[@]} -gt 0 ] || return 0
+    grep -h '^+++ b/' "${patches[@]}" | sed 's#^+++ b/##' | sort -u
+}
+
 apply_patches() {
     shopt -s nullglob
     local patches=("$PATCHES_DIR"/*.patch)
@@ -380,8 +450,25 @@ roundtrip() {
 # Branding + mach
 # ---------------------------------------------------------------------------
 apply_branding() {
-    log "Generating Kavacha branding..."
-    SRC_DIR="$SRC_DIR" "$REPO_ROOT/build/generate-branding.sh"
+    local dst="$SRC_DIR/browser/branding/kavacha"
+    if [ ! -d "$dst" ]; then
+        log "Generating Kavacha branding..."
+        SRC_DIR="$SRC_DIR" "$REPO_ROOT/build/generate-branding.sh"
+        return 0
+    fi
+    # Branding already exists: render into a staging directory and copy over
+    # only what differs. Regenerating in place rewrites every file, including
+    # configure.sh and moz.build, and a new mtime on those is a rebuild.
+    local stage
+    stage="$(mktemp -d "${TMPDIR:-/tmp}/kavacha-brand.XXXXXX")"
+    if SRC_DIR="$SRC_DIR" KV_BRAND_DST="$stage" "$REPO_ROOT/build/generate-branding.sh"; then
+        sync_tree "$stage" "$dst"
+        rm -rf "$stage"
+        log "Branding: $SYNC_CHANGED file(s) changed."
+    else
+        rm -rf "$stage"
+        fail "Branding generation failed."
+    fi
 }
 
 mach() {
@@ -413,29 +500,77 @@ cmd_setup() {
 
 cmd_update() {
     [ -d "$SRC_DIR/.git" ] || fail "browser/firefox-source missing. Run: ./build/bootstrap.sh setup"
-    log "Resetting checkout to the pin (objdir kept)..."
-    git -C "$SRC_DIR" reset -q --hard
-    git -C "$SRC_DIR" clean -fdq -e obj-* -e mozconfig
-    git -C "$SRC_DIR" cat-file -e "$FIREFOX_COMMIT^{commit}" 2>/dev/null || git -C "$SRC_DIR" fetch --depth 1 origin "$FIREFOX_COMMIT"
-    git -C "$SRC_DIR" checkout -q --detach "$FIREFOX_COMMIT"
+    git -C "$SRC_DIR" cat-file -e "$FIREFOX_COMMIT^{commit}" 2>/dev/null         || git -C "$SRC_DIR" fetch --depth 1 origin "$FIREFOX_COMMIT"
+    local head base
+    head="$(git -C "$SRC_DIR" rev-parse HEAD)"
+    base="$(git -C "$SRC_DIR" rev-parse HEAD^ 2>/dev/null || true)"
+    # Snapshot the patched files BEFORE the reset reverts them: the reset and
+    # the re-apply below together usually reproduce them byte for byte, and
+    # then they should keep their old mtimes. Two of the five are moz.build
+    # files, and a new mtime on those regenerates the build backend and
+    # recompiles C++ that did not change (~5 min per update, 2026-09-20).
+    local snap f
+    snap="$(mktemp -d "${TMPDIR:-/tmp}/kavacha-patched.XXXXXX")"
+    while IFS= read -r f; do
+        [ -n "$f" ] && [ -f "$SRC_DIR/$f" ] || continue
+        mkdir -p "$snap/$(dirname "$f")"
+        cp -p "$SRC_DIR/$f" "$snap/$f"
+    done <<< "$(patch_paths)"
+    if [ "$head" = "$FIREFOX_COMMIT" ] || [ "$base" = "$FIREFOX_COMMIT" ]; then
+        # Already on the pin. Reverting to HEAD rewrites only the files the
+        # patch series touched; every other file keeps its mtime, so the next
+        # build is incremental. Detaching to the pin instead would delete and
+        # restore all ~120 overlay files and cost a near-full rebuild.
+        log "Checkout is at the pin — reverting patched files only (objdir kept)."
+        git -C "$SRC_DIR" reset -q --hard
+    else
+        log "Moving checkout to the pin ${FIREFOX_COMMIT:0:12} (expect a long rebuild)..."
+        git -C "$SRC_DIR" reset -q --hard
+        git -C "$SRC_DIR" clean -fdq -e obj-* -e mozconfig
+        git -C "$SRC_DIR" checkout -q --detach "$FIREFOX_COMMIT"
+    fi
     write_mozconfig
     copy_overlay
     apply_patches
+    local kept=0
+    while IFS= read -r f; do
+        [ -n "$f" ] && [ -f "$snap/$f" ] && [ -f "$SRC_DIR/$f" ] || continue
+        if cmp -s "$snap/$f" "$SRC_DIR/$f"; then
+            touch -r "$snap/$f" "$SRC_DIR/$f"
+            kept=$((kept+1))
+        fi
+    done <<< "$(patch_paths)"
+    rm -rf "$snap"
+    log "Patched files: $kept unchanged (mtime kept)."
     apply_branding
     log "Update complete."
 }
 
+# A running build holds dist/bin/*.dll open, and on Windows the linker fails
+# with "Access is denied" — five minutes into the build, at mozglue.dll, with
+# nothing in the message to say why (observed 2026-09-20: eleven kavacha.exe
+# processes left behind by earlier probe runs). Refuse up front instead.
+require_not_running() {
+    local n
+    if [ "$KV_OS" = "windows" ]; then
+        n="$(tasklist 2>/dev/null | grep -ci "^kavacha.exe" || true)"
+    else
+        n="$(pgrep -cf "obj-.*/dist/.*/kavacha" 2>/dev/null || true)"
+    fi
+    [ "${n:-0}" -gt 0 ] || return 0
+    fail "$n Kavacha process(es) are running and hold dist/bin open — close them first.
+       Probes launched by hand leave the browser behind; build/marionette-ci.py
+       kills what it starts."
+}
+
 cmd_start() {
     check_pin
-    if [ "$KV_OS" = "windows" ]; then
-        tasklist 2>/dev/null | grep -qi "^kavacha.exe" && fail "Kavacha is already running — close it first."
-    else
-        pgrep -f "obj-.*/dist/.*/kavacha" >/dev/null 2>&1 && fail "Kavacha is already running — quit it first."
-    fi
+    require_not_running
     mach run -- -purgecaches "$@"
 }
 
 cmd_package() {
+    require_not_running
     # On Windows `mach package` also runs the NSIS installer rule (make-package
     # in toolkit/mozapps/installer/packager.mk) and writes
     # dist/<app>-<version>.<locale>.win64.installer.exe next to the zip.
@@ -446,8 +581,8 @@ cmd_package() {
 
 case "${1:-setup}" in
     setup)          reexec_under_mozillabuild "$@"; cmd_setup ;;
-    build)          reexec_under_mozillabuild "$@"; check_pin; mach build ;;
-    fast)           reexec_under_mozillabuild "$@"; check_pin; mach build faster ;;
+    build)          reexec_under_mozillabuild "$@"; check_pin; require_not_running; mach build ;;
+    fast)           reexec_under_mozillabuild "$@"; check_pin; require_not_running; mach build faster ;;
     start)          reexec_under_mozillabuild "$@"; shift; cmd_start "$@" ;;
     package)        reexec_under_mozillabuild "$@"; cmd_package ;;
     brand)          apply_branding ;;

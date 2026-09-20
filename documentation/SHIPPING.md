@@ -72,13 +72,17 @@ The gate names L4 verification explicitly, so these are ship items, not nice-to-
 Evidence and per-patch test recipes in [VERIFICATION.md](VERIFICATION.md) §3. Run with:
 
 ```bash
-./build/marionette-verify.py --launch
+python3 build/marionette-ci.py      # every probe, each on its own fresh profile
 ```
 
-Then `./build/marionette-verify.py` in a second shell. It speaks length-prefixed JSON
-over TCP port 2828, no third-party deps, and reports hard facts — loaded modules,
-element existence, geometry — rather than screenshots. Extend it per feature rather than
-eyeballing; the 0030 → 0036 saga is the argument for that.
+That runs the substrate, Phase 7 and restart probes back to back and is what CI runs.
+To drive one by hand, launch the browser in one shell (`./build/marionette-verify.py
+--launch`) and attach from another (`./build/marionette-verify.py`). It speaks
+length-prefixed JSON over TCP port 2828, no third-party deps, and reports hard facts —
+loaded modules, element existence, geometry — rather than screenshots. Extend it per
+feature rather than eyeballing; the 0030 → 0036 saga is the argument for that. Give
+every probe run a fresh profile: chained through one, the restart probe reads 4/7 and
+from clean 7/7.
 
 **The two that matter most — where "renders" may have been mistaken for "works":**
 

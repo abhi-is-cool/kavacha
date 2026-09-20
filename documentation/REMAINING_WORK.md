@@ -15,8 +15,25 @@
 > | M1 | Firefox ESR 153 + Kavacha branding builds and launches on the Windows host | `kavacha.exe` launches; network-silence test passes | **done 2026-09-19** ([VERIFICATION](VERIFICATION.md) §4e; patches 0001/0002 came out of it) |
 > | M2 | Substrate: startup, workspaces model, palette, welcome, theme tokens, Settings panes | `build/marionette-substrate.py` + `marionette-restart.py` | **done 2026-09-19** (43/43 + 7/7, [VERIFICATION](VERIFICATION.md) §4f; patches 0003/0004) |
 > | M3 | Port every Zen-era feature into `browser/overlay/` | substrate probe 104/104 on a fresh profile | **done 2026-09-20** ([VERIFICATION](VERIFICATION.md) §4g) |
-> | M4 | Three-platform CI incl. Windows installer + Marionette step | one green scheduled run, three assets | **open — the only milestone left** |
+> | M4 | Three-platform CI incl. Windows installer + Marionette step | one green scheduled run, three assets | **open — the only milestone left** (workflow written and locally pre-flighted; see below) |
 > | M5 | **Phase 7's first-ever probe** | `marionette-phase7.py` 77/77 on a fresh profile | **done 2026-09-20** ([VERIFICATION](VERIFICATION.md) §4h) |
+>
+> **M4 status, 2026-09-20.** `.github/workflows/ci.yml` has had a `windows-latest` leg,
+> a `check-overlay.py` step and a Marionette step for some time; **none of it has ever
+> run**, and that — not the writing — is the milestone. What has been done since is to
+> remove the failures that were predictable from this host: the probe step now runs
+> `build/marionette-ci.py` and asserts (it was `continue-on-error` and informational);
+> `python3` is resolved per-runner because Git Bash on `windows-latest` does not reliably
+> have it; the Package step's comment claimed a `mach build installer` call that does not
+> exist. Five of `validate`'s six steps were run on this host and pass (JSON, schemas,
+> shellcheck, `node --check` over 66 overlay scripts, `check-overlay.py`); the sixth
+> applies the series to a sparse checkout of the pin, which `roundtrip` covers locally.
+> **None of that closes M4.** The gate is one green scheduled run publishing three
+> assets, which needs a push and a `workflow_dispatch` with `full_build: true`, and
+> until that transcript exists the row above stays open and SHIPPING R8 stays open.
+> Two questions only a real run answers: whether MozillaBuild drives non-interactively
+> on a runner, and whether macOS and Linux still build on the Firefox base at all —
+> neither has been built on it.
 >
 > Phase 7 ran for the first time on 2026-09-20 and passes 77/77; the marker above is
 > flipped on that transcript, not on a hope. Its first execution found a real defect

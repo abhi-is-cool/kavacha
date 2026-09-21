@@ -96,6 +96,28 @@ rebuild; `update` says so when it takes that path.
 > processes left behind by hand-driven probe runs). `build`, `fast`, `package` and `start`
 > now refuse up front instead. `build/marionette-ci.py` kills the browsers it starts.
 
+## `KV_OBJDIR` — when the objdir has to be somewhere short
+
+Set `KV_OBJDIR` and `bootstrap.sh` writes it into the mozconfig verbatim instead of the
+default `@TOPSRCDIR@/obj-@CONFIG_GUESS@`; `objdir()` and `marionette-verify.py` both honour
+it. Windows CI sets it to `D:/o`, and the reason is arithmetic, not taste.
+
+When make links `xul.dll` it names each prerequisite relative to `toolkit/library/build`
+with three parent hops and hands that string to the Win32 API **without normalising the
+`..`** — so MAX_PATH applies to the un-normalised form. Measured over all 4,668 objects in
+a real objdir, worst case:
+
+| objdir | longest path | headroom |
+|---|---|---|
+| `…/browser/firefox-source/obj-x86_64-pc-windows-msvc` (runner) | 262 | **−2** |
+| `…/browser/firefox-source/obj-win` | 243 | 17 |
+| `D:/o` | 196 | **64** |
+
+At −2 exactly one object is unreachable and the build dies with `No rule to make target`
+for a file that is on disk, with its rule, in a directory make entered successfully. That
+cost three CI runs to find (VERIFICATION §4j). The development host survives on 256 only
+because its prefix is six characters shorter — it is two characters from the same failure.
+
 ## How the pieces attach
 
 - **Overlay** (`browser/overlay/`) mirrors Firefox's tree: `browser/components/kavacha/`

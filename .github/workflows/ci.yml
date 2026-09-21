@@ -168,6 +168,15 @@ jobs:
       # mozconfig when sccache is on PATH; the GHA backend needs these.
       SCCACHE_GHA_ENABLED: "true"
       MACH_HIDE_DEV_DRIVE_SUGGESTION: "1"
+      # Windows only: put the objdir somewhere SHORT. When make links xul.dll
+      # it names the prerequisite relative to toolkit/library/build, with three
+      # parent hops, and hands that to the Win32 API WITHOUT normalising them -
+      # so MAX_PATH applies to the un-normalised string. With the default objdir
+      # the longest libwebrtc object measured 262 characters on this runner, two
+      # over, and make reported 'No rule to make target' for a file that was on
+      # disk. D:/o leaves 64 characters of headroom; an in-tree obj-win would
+      # leave 17. See VERIFICATION 4j.
+      KV_OBJDIR: ${{ matrix.platform == 'windows' && 'D:/o' || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -283,30 +292,20 @@ jobs:
       # with no retained output, which is exactly what made the 2026-09-20
       # Windows failure undiagnosable. pipefail so tee cannot mask a failed
       # build the way `cmd | tail` masked one locally the same day.
-      # One retry, Windows only, and it is a WORKAROUND rather than a fix.
-      # The 2026-09-21 diagnostics showed the failing object present on disk,
-      # 26 KB, written six minutes before make declared "No rule to make
-      # target" for it — with its backend.mk, its rule and the root-deps.mk
-      # ordering edge all correct and matching the dev host exactly. The
-      # remaining explanation is that make's cached directory listing predates
-      # the object, which is timing-dependent on -j (the host builds at -j24,
-      # this runner is capped at -j3 for rustc OOM). A second pass re-reads the
-      # directory. If this retry is what makes Windows green, that is a real
-      # upstream build-system quirk being worked around, and it is annotated so
-      # no run can be mistaken for a clean first-pass build. VERIFICATION §4j.
+      # tee the build: on failure the job otherwise ends on a single make line
+      # with no retained output, which is what made the first Windows failure
+      # undiagnosable. pipefail so tee cannot mask a failed build.
+      #
+      # There is deliberately NO retry here. One was added on 2026-09-21 to test
+      # whether make's cached directory listing explained the failure; the retry
+      # log refuted it (a fresh make process, correct ordering, same failure) and
+      # the real cause turned out to be MAX_PATH. Retrying a path that is too
+      # long just fails twice.
       - name: Build
         run: |
           set -o pipefail
           if [ "${{ matrix.platform }}" = "windows" ]; then cd /c/k; fi
-          if ./build/bootstrap.sh build 2>&1 | tee "$RUNNER_TEMP/mach-build.log"; then
-            exit 0
-          fi
-          if [ "${{ matrix.platform }}" != "windows" ]; then
-            echo "build failed"
-            exit 1
-          fi
-          echo "::warning title=Windows build needed a retry::The first mach build failed; retrying once. A green result here is NOT a clean first-pass build - see VERIFICATION 4j."
-          ./build/bootstrap.sh build 2>&1 | tee "$RUNNER_TEMP/mach-build-retry.log"
+          ./build/bootstrap.sh build 2>&1 | tee "$RUNNER_TEMP/mach-build.log"
         shell: bash
 
       # Runs whether or not the build succeeded. The 2026-09-20 failure was
@@ -319,7 +318,15 @@ jobs:
         if: always() && matrix.platform == 'windows'
         run: |
           cd /c/k || exit 0
-          obj="$(find browser/firefox-source -maxdepth 1 -type d -name 'obj-*' 2>/dev/null | head -1)"
+          # MAX_PATH is the whole story here (VERIFICATION 4j): record what the
+          # runner's long-path setting actually is rather than assuming it.
+          echo "=== LongPathsEnabled on this runner ==="
+          reg query "HKLM\SYSTEM\CurrentControlSet\Control\FileSystem" //v LongPathsEnabled 2>/dev/null || echo "  not set (default 0)"
+          if [ -n "${KV_OBJDIR:-}" ]; then
+            obj="$(cygpath -u "$KV_OBJDIR" 2>/dev/null || echo "$KV_OBJDIR")"
+          else
+            obj="$(find browser/firefox-source -maxdepth 1 -type d -name 'obj-*' 2>/dev/null | head -1)"
+          fi
           echo "=== disk now ==="
           df -h 2>/dev/null || true
           echo "=== objdir: ${obj:-<none>} ==="
@@ -386,12 +393,19 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kavacha-nightly-${{ matrix.platform }}
+          # Both locations: the in-tree objdir for macOS/Linux, and KV_OBJDIR
+          # for Windows, which builds at D:/o to stay under MAX_PATH. A pattern
+          # that matches nothing is ignored; if-no-files-found still catches a
+          # run that produced no artifact at all.
           path: |
             browser/firefox-source/obj-*/dist/*.dmg
             browser/firefox-source/obj-*/dist/*.tar.*
             browser/firefox-source/obj-*/dist/*.zip
             browser/firefox-source/obj-*/dist/*.installer.exe
             browser/firefox-source/obj-*/dist/update/*.mar
+            ${{ env.KV_OBJDIR }}/dist/*.zip
+            ${{ env.KV_OBJDIR }}/dist/*.installer.exe
+            ${{ env.KV_OBJDIR }}/dist/update/*.mar
           if-no-files-found: error
           retention-days: 14
 
@@ -406,7 +420,11 @@ jobs:
       - name: Network-silence test (R3)
         if: matrix.platform == 'linux' || matrix.platform == 'windows'
         run: |
-          objbin="$(ls -d browser/firefox-source/obj-*/dist/bin 2>/dev/null | head -1)"
+          if [ -n "${KV_OBJDIR:-}" ]; then
+            objbin="$KV_OBJDIR/dist/bin"
+          else
+            objbin="$(find browser/firefox-source -maxdepth 3 -type d -path '*/obj-*/dist/bin' 2>/dev/null | head -1)"
+          fi
           app=""
           for cand in "$objbin/kavacha" "$objbin/kavacha.exe"; do
             [ -f "$cand" ] && app="$cand" && break

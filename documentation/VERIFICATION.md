@@ -881,6 +881,49 @@ Both were verified locally before pushing: platform selection across all six inp
 (empty/all/windows/linux/macos/bogus, the last failing loudly), and the retry across all
 four outcomes — including that a failed retry still fails the step rather than masking it.
 
+### Third Windows run — the retry is refuted, and the cause is MAX_PATH
+
+The one-shot retry (added to test whether make's cached directory listing explained the
+failure) **failed identically**, and its log refutes the mechanism outright: a *fresh* make
+process entered `…/goog_cc_scream_network_controller_gn` at 0:28.93, entered
+`toolkit/library` at 0:42.94, and failed at 0:43.58 on the same target. Ordering honoured,
+no cache to be stale, file on disk. So make genuinely could not `stat` that path.
+
+**It is a path-length limit, and the arithmetic has no free parameters.** When make links
+`xul.dll` it names each prerequisite relative to `toolkit/library/build` with three parent
+hops, and hands that to the Win32 API **without normalising the `..`** — so MAX_PATH
+applies to the string as given:
+
+| | longest path of any object | over 260? |
+|---|---|---|
+| Runner, default objdir | **262** | yes, by 2 |
+| This host, default objdir | **256** | no, by 4 |
+
+Measured across all 4,668 objects in a real objdir: **exactly one** exceeds the limit on
+the runner's prefix, and it is precisely the object that failed; **zero** exceed it here.
+Six characters of prefix are the entire difference between the two machines. It accounts
+for every observation at once — the file exists (the compile step reaches it by a short
+relative path from inside its own directory), the rule exists, the ordering edge exists,
+and a fresh process fails the same way, because the failure is in `stat`.
+
+**Fix:** `KV_OBJDIR`, honoured by `bootstrap.sh`'s `write_mozconfig` and `objdir()` and by
+`marionette-verify.py`'s `find_binary()`. Windows CI sets `D:/o` — worst case 196, **64
+characters of headroom**. An in-tree `obj-win` would have given 17, one libwebrtc directory
+level from recurrence. The retry is **removed**: retrying a path that is too long fails
+twice. The diagnostics now also record the runner's `LongPathsEnabled`.
+
+**One link not verified here:** this development host has `LongPathsEnabled=1`, so a
+267-character path resolves fine in a local test and the runner's classic behaviour cannot
+be reproduced without a machine-wide registry change. The arithmetic and the
+present-file/no-rule behaviour both point one way; the next run settles it.
+
+Verified locally before pushing, in a sandbox that could not touch the real mozconfig:
+`write_mozconfig` emits exactly one `MOZ_OBJDIR` line in both modes (default unchanged,
+`D:/o` when set); `find_binary()` resolves with and without `KV_OBJDIR`; the rewritten
+network-silence and diagnostics fragments resolve the objdir both ways under the runner's
+`bash -eo pipefail`. Shellcheck **0.9.0** — the version CI runs — caught an SC2015 in the
+new `objdir()` guard, the same class that failed CI on 2026-09-20.
+
 **Not claimed:** any Windows CI success, R8, or M4. The gate is a green run with three
 assets and no carried-forward warning. This run produced two assets, and because it was the
 first nightly there was no prior Windows binary to carry forward — so the release shows

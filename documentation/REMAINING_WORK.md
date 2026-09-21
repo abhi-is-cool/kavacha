@@ -124,43 +124,35 @@ Everything below is ordered by evidence per runner-hour. Each Windows-only itera
 ~40 min with a warm sccache; use `platform: windows` on dispatch, which also skips
 publishing.
 
-### 0.1 Immediately — the evidence already exists, read it before running anything
+### 0.1 Diagnosed 2026-09-21 — MAX_PATH. Fix pushed, awaiting a run
 
-- [ ] **Read run 3's failure.** Did the retry run at all (look for the `::warning::` and
-      `mach-build-retry.log`)? Did it fail at the identical target? A different failure
-      is a different problem.
-- [ ] **Read the per-directory timestamps in `mach-build-log-windows`.** The log prints
-      `MM:SS.ss <directory>` on entry. Two lines settle ordering directly: when
-      `…/goog_cc_scream_network_controller_gn` was entered and when
-      `toolkit/library/build` was. Link-before-compile means the ordering edge is not
-      honoured; link-after means make's view of the filesystem is wrong. This should have
-      been read before the retry was proposed.
-- [ ] **Confirm the Marionette step passed on macOS and Linux, then record it.** Those legs
-      went green and the step has no `continue-on-error`, so unless it was skipped, 192
-      checks passed headless on both — the first L4 evidence for either platform on this
-      base. Not written into VERIFICATION until the step logs show it ran.
-- [ ] **Move `~/.mozbuild` off the runner's `C:`.** 12.9 GB with 15.5 GB free; one toolchain
-      bump exhausts it silently mid-build. `MOZBUILD_STATE_PATH` exists for this; point it
-      at `D:` in CI.
+The retry failed identically and its log refuted the directory-cache mechanism. The cause
+is a path-length limit: make hands the `xul.dll` link prerequisite to the Win32 API with
+its `..` hops un-normalised, and on the runner that string is **262** characters against a
+260 limit (**256** on this host). Exactly one object in the tree exceeds it on the runner,
+and it is the one that failed. See [VERIFICATION](VERIFICATION.md) §4j and
+[ADR 0020](decisions/0020-firefox-esr-direct-overlay.md) reason 2, second amendment.
 
-### 0.2 Single-variable experiments, one per run, cheapest first
+**Fixed** by `KV_OBJDIR=D:/o` on the Windows leg — 64 characters of headroom. The retry is
+removed; `~/.mozbuild` staying on `C:` is no longer urgent but remains worth doing.
 
-1. [ ] **`KV_NO_SCCACHE=1`.** sccache is the only anomaly the diagnostics found (22 cache
-       errors, 12 write errors, GHA backend), and a cache that returns before the object
-       is fully visible produces exactly "file exists, make did not see it". Ranked first.
-2. [ ] **`-j4`** (from 3). If the first pass goes green the timing story holds and the fix
-       is parallelism within the rustc OOM limit.
-3. [ ] **Print `mozmake --version`** on the runner and compare with this host
-       (MozillaBuild 4.2.1 both, but the runner installs `Latest`). A make version
-       difference would be a clean explanation and a one-line fix.
-4. [ ] **Build the `.obj`'s directory explicitly first**: `mach build
-       third_party/libwebrtc/modules/congestion_controller` then `mach build`. Ugly, but
-       it separates "make cannot see it" from "make never waited for it" without guessing.
+- [ ] **Run `platform: windows` and confirm a clean first pass.** ~40 min. This is the
+      only open item in §0.
+- [ ] **Confirm the Marionette step ran and passed on macOS and Linux, then record it.**
+      Look for `=== 3/3 probes passed ===` in that step. If it ran, that is 192 checks on
+      each and the first L4 evidence for either platform on this base. Not written into
+      VERIFICATION until the step log shows it.
+- [ ] **Move `~/.mozbuild` off the runner's `C:`** (12.9 GB free 15.5) before a toolchain
+      bump exhausts it silently mid-build. `MOZBUILD_STATE_PATH` exists for this.
 
-If all four fail: **file upstream** with §4j's evidence table and the full log. A "no rule"
-for a present object with an intact rule is a Firefox build-system bug whatever we do
-about it; Mozilla's own Windows CI likely avoids it only by building at high `-j` on
-large machines. Do not start a fifth local hypothesis.
+### 0.2 If the clean run still fails
+
+Then the arithmetic is right but something else is also wrong, and the ladder is
+unchanged, cheapest first: `KV_NO_SCCACHE=1` (22 cache errors, 12 write errors were the
+only other anomaly), then `-j4`, then `mozmake --version` against this host. If all three
+fail, **file upstream** with §4j's evidence rather than starting a fifth hypothesis — a
+`stat` that silently fails past MAX_PATH is a Firefox build-system bug whatever we do
+about it locally.
 
 ### 0.3 Closing M4 — a decision for the owner, not the agent
 

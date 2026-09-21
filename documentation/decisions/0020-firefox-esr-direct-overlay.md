@@ -33,10 +33,31 @@ Firefox **152.0.6**. Three facts, established 2026-09-19, made the base untenabl
    > neither the source, the pin, the patches, nor the configure options, and is specific to
    > the runner environment. It is not yet diagnosed.
    >
+   > **SECOND AMENDMENT, 2026-09-21 — the cause is MAX_PATH, and it was never about
+   > Zen at all.** Three instrumented runs narrowed it to arithmetic. When make links
+   > `xul.dll` it names each prerequisite relative to `toolkit/library/build` with three
+   > parent hops, and hands that string to the Win32 API **without normalising the
+   > `..`** — so the 260-character limit applies to the un-normalised form. On the
+   > GitHub runner the longest libwebrtc object came to **262 characters**; on this
+   > development host, whose objdir prefix is six characters shorter, **256**. Exactly
+   > one object in the tree exceeds the limit on the runner and it is precisely the one
+   > that failed; zero exceed it here. That is the whole difference between the two
+   > machines, and it accounts for every observation: the file exists (the compile step
+   > reaches it by a short relative path), the rule exists, the ordering edge is
+   > honoured, and a fresh `make` process fails identically — because the failure is in
+   > `stat`, not in make's logic.
+   >
+   > So reason 2's diagnosis was wrong twice over: not Zen's build config, and not
+   > anything peculiar to Firefox either. Zen's recorded failure was almost certainly
+   > the same arithmetic on a longer prefix. **Fixed** by `KV_OBJDIR`, which puts the
+   > Windows CI objdir at `D:/o`: 64 characters of headroom where the default left
+   > −2. An in-tree `obj-win` would have left 17, which is one libwebrtc directory
+   > level away from this recurring.
+   >
    > **The decision stands on reasons 1 and 3**, which are untouched, and macOS and Linux
    > have since been observed building on this base in CI — something never true on the Zen
-   > base. But the honest reading is that this reason was a guess that happened to point the
-   > right way, and the original Zen failure may well have had the same undiagnosed cause.
+   > base. But the honest reading is that reason 2 was a guess that happened to point the
+   > right way for the wrong reason.
 3. **The coupling is shallow where it matters.** An audit of the series (39,924 lines) found
    that **84.4 %** of changed lines (25,008 lines, 118 files) are Kavacha-authored files that
    only *live* inside Zen's tree; **15.6 %** (4,636 lines, 37 files) edit Zen source, and half

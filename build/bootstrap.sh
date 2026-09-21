@@ -192,7 +192,19 @@ write_mozconfig() {
         echo "ac_add_options --disable-tests"
         echo "ac_add_options --disable-crashreporter"
         echo "ac_add_options --enable-update-channel=$KV_CHANNEL"
-        echo "mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj-@CONFIG_GUESS@"
+        # KV_OBJDIR moves the objdir somewhere short. Windows needs this: make
+        # hands the linker's prerequisite to the Win32 API as
+        # <objdir>\toolkit\library\build\..\..\..\<rel> WITHOUT normalising the
+        # "..", and the classic API applies MAX_PATH to that string as given. On
+        # a GitHub runner the default objdir made one libwebrtc object 262
+        # characters and make reported "No rule to make target" for a file that
+        # was on disk (VERIFICATION §4j). D:/o leaves 64 characters of headroom
+        # where the default leaves -2.
+        if [ -n "${KV_OBJDIR:-}" ]; then
+            echo "mk_add_options MOZ_OBJDIR=$KV_OBJDIR"
+        else
+            echo "mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj-@CONFIG_GUESS@"
+        fi
         echo "export MOZ_TELEMETRY_REPORTING="
         echo "export MOZ_REQUIRE_SIGNING="
         case "$KV_OS" in
@@ -478,8 +490,16 @@ mach() {
 
 objdir() {
     local d
-    d="$(find "$SRC_DIR" -maxdepth 1 -type d -name 'obj-*' 2>/dev/null | head -1)"
-    [ -n "$d" ] || fail "No objdir yet — run: ./build/bootstrap.sh build"
+    if [ -n "${KV_OBJDIR:-}" ]; then
+        # KV_OBJDIR is written into the mozconfig verbatim, so it is in the
+        # form mach wants (D:/o on Windows). Convert for the shell.
+        if [ "$KV_OS" = "windows" ]; then d="$(cygpath -u "$KV_OBJDIR")"; else d="$KV_OBJDIR"; fi
+    else
+        d="$(find "$SRC_DIR" -maxdepth 1 -type d -name 'obj-*' 2>/dev/null | head -1)"
+    fi
+    if [ -z "$d" ] || [ ! -d "$d" ]; then
+        fail "No objdir yet — run: ./build/bootstrap.sh build"
+    fi
     echo "$d"
 }
 

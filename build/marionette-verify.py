@@ -45,11 +45,23 @@ DEFAULT_PROFILE = os.path.join(tempfile.gettempdir(), "kavacha-mn-profile")
 
 
 def find_binary():
-    """Locate the built browser in any objdir; None if no build exists."""
+    """Locate the built browser in any objdir; None if no build exists.
+
+    KV_OBJDIR relocates the objdir out of the source tree (Windows CI keeps it
+    short for MAX_PATH; see VERIFICATION 4j), so honour it before globbing.
+    """
+    roots = [os.path.join(SRC_DIR, "obj-*")]
+    kv = os.environ.get("KV_OBJDIR", "").strip()
+    if kv:
+        roots.insert(0, kv)
     patterns = [
-        os.path.join(SRC_DIR, "obj-*", "dist", "bin", "kavacha.exe"),
-        os.path.join(SRC_DIR, "obj-*", "dist", "Kavacha.app", "Contents", "MacOS", "kavacha"),
-        os.path.join(SRC_DIR, "obj-*", "dist", "bin", "kavacha"),
+        os.path.join(r, *rest)
+        for r in roots
+        for rest in (
+            ("dist", "bin", "kavacha.exe"),
+            ("dist", "Kavacha.app", "Contents", "MacOS", "kavacha"),
+            ("dist", "bin", "kavacha"),
+        )
     ]
     for pat in patterns:
         hits = sorted(glob.glob(pat))

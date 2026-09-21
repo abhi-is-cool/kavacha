@@ -837,6 +837,50 @@ counts with a missing `.obj` localises it to the compile step. The script was ru
 against both a populated and an empty objdir under `bash -eo pipefail` (the runner's flags)
 and exits 0 in both — a diagnostic step that fails is worse than none.
 
+### Second Windows run — the diagnostics answered, and ruled out every hypothesis
+
+The instrumented re-run (2026-09-21) failed at the **identical target** after 41 minutes
+rather than 179, the difference being an sccache at 95.7% hits. Deterministic, not flaky.
+Everything the diagnostics checked came back correct and matching this host:
+
+| Check | CI | This host |
+|---|---|---|
+| `backend.mk` present and naming the object | yes | yes |
+| libwebrtc dirs / `backend.mk` / `Makefile` / `.obj` | 1020 / 540 / 540 / 427 | **identical** |
+| Ordering edge | `root-deps.mk` line 364: `toolkit/library/build/target` depends on that dir's `target-objects` | same file |
+| Link prerequisite spelling | backslashes | **backslashes too** |
+| Backend regenerated mid-build | no — only the initial `config.status` at 1:32 | — |
+| Disk | D: 214 GB free, C: 15.5 GB, no disk-full signature | — |
+
+**And the object exists.** 26,704 bytes, mtime 04:14; the build began 03:38:48 and failed at
+elapsed 41:37 — 04:20. Make declared *"No rule to make target"* for a file that had been on
+disk for six minutes, in a directory holding the rule for it.
+
+So all four hypotheses are dead, including the leading one: this was never "the object was
+not built". It is **make not seeing a file that exists**. The remaining explanation that fits
+every observation is make's cached directory listing predating the object — timing-dependent
+on `-j`, and this host builds at `-j24` while the runner is capped at `-j3` for rustc OOM,
+which is why it is deterministic per environment rather than flaky.
+
+**That is a hypothesis, not a finding.** What makes it worth acting on is that the test and
+the candidate fix are the same thing: the Build step now retries once on Windows, which
+re-reads the directory. If the retry goes green the mechanism is supported and Windows
+builds; if it fails identically the mechanism is wrong, at a cost of minutes.
+
+**A retry-green Windows build is a workaround, not a fix**, and must never be recorded as a
+clean build. The step emits a `::warning::` saying so, and a second log artifact
+(`mach-build-retry.log`) exists only on runs that needed it.
+
+Two supporting changes: a `platform` dispatch input builds one platform at a time, because
+iterating Windows cost ~3 h of macOS and Linux runner time per attempt to re-prove what
+§4j already records; and `publish-nightly` is now skipped for single-platform runs, which
+would otherwise move the `nightly` tag and carry the other platforms forward from an older
+build — the exact shape of result this file exists to stop being read as success.
+
+Both were verified locally before pushing: platform selection across all six inputs
+(empty/all/windows/linux/macos/bogus, the last failing loudly), and the retry across all
+four outcomes — including that a failed retry still fails the step rather than masking it.
+
 **Not claimed:** any Windows CI success, R8, or M4. The gate is a green run with three
 assets and no carried-forward warning. This run produced two assets, and because it was the
 first nightly there was no prior Windows binary to carry forward — so the release shows

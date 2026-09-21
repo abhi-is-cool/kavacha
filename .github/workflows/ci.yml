@@ -18,6 +18,11 @@ on:
         description: "Run full browser builds (1-3h per platform)"
         type: boolean
         default: false
+      platform:
+        description: "Which platforms to build (iterating one platform avoids ~3h of runner time per other platform)"
+        type: choice
+        default: all
+        options: [all, windows, linux, macos]
   schedule:
     - cron: "0 8 * * *" # daily Nightly, 08:00 UTC
 
@@ -110,28 +115,51 @@ jobs:
             git -C /tmp/ff apply "$GITHUB_WORKSPACE/$p"
           done
 
+  # Which platforms this run builds. A static matrix cannot be filtered by a
+  # dispatch input (job-level `if` has no `matrix` context), so the matrix is
+  # emitted here and consumed with fromJSON. Iterating one platform matters:
+  # each of the others costs ~3h of runner time to tell us nothing.
+  select-platforms:
+    name: Select platforms
+    needs: validate
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_build)
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        # Python rather than jq: jq is on the runner but not on the dev host,
+        # and a step that cannot be run locally is a step that gets debugged in
+        # CI. The selection arrives by env, not by ${{ }} interpolation into
+        # the script, so the input cannot reach the shell as code.
+        env:
+          SEL: ${{ inputs.platform }}
+        run: |
+          set -euo pipefail
+          python3 - >> "$GITHUB_OUTPUT" <<'EOF'
+          import json, os, sys
+          ALL = [
+              {"os": "ubuntu-latest",  "platform": "linux"},
+              {"os": "macos-latest",   "platform": "macos"},
+              {"os": "windows-latest", "platform": "windows"},
+          ]
+          # Empty on a schedule, where `inputs` does not exist: build everything.
+          sel = os.environ.get("SEL", "").strip()
+          inc = ALL if sel in ("", "all") else [e for e in ALL if e["platform"] == sel]
+          if not inc:
+              sys.exit("no platform matched %r" % sel)
+          print("building: " + ", ".join(e["platform"] for e in inc), file=sys.stderr)
+          print("matrix=" + json.dumps({"include": inc}))
+          EOF
+        shell: bash
   nightly-build:
     name: Nightly build (${{ matrix.os }})
     # Full builds only on schedule or when explicitly requested.
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_build)
-    needs: validate
+    needs: [validate, select-platforms]
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            platform: linux
-          - os: macos-latest
-            platform: macos
-          # Native Windows builds on a real host (VERIFICATION §4e) but has NOT
-          # yet built here: the first run of this leg failed after 179 min with
-          # `no rule to make target <libwebrtc obj>, needed by xul.dll` — the
-          # same failure ADR 0020 blamed on Zen, reproduced on vanilla Firefox
-          # ESR 153. That attribution is amended; the cause is undiagnosed and
-          # specific to the runner. The diagnostics steps below exist to settle
-          # it. See VERIFICATION §4j.
-          - os: windows-latest
-            platform: windows
+      matrix: ${{ fromJSON(needs.select-platforms.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     # Cold builds on 3-4 core hosted runners take ~4h; 360 is GitHub's job max.
     timeout-minutes: 360
@@ -255,11 +283,30 @@ jobs:
       # with no retained output, which is exactly what made the 2026-09-20
       # Windows failure undiagnosable. pipefail so tee cannot mask a failed
       # build the way `cmd | tail` masked one locally the same day.
+      # One retry, Windows only, and it is a WORKAROUND rather than a fix.
+      # The 2026-09-21 diagnostics showed the failing object present on disk,
+      # 26 KB, written six minutes before make declared "No rule to make
+      # target" for it — with its backend.mk, its rule and the root-deps.mk
+      # ordering edge all correct and matching the dev host exactly. The
+      # remaining explanation is that make's cached directory listing predates
+      # the object, which is timing-dependent on -j (the host builds at -j24,
+      # this runner is capped at -j3 for rustc OOM). A second pass re-reads the
+      # directory. If this retry is what makes Windows green, that is a real
+      # upstream build-system quirk being worked around, and it is annotated so
+      # no run can be mistaken for a clean first-pass build. VERIFICATION §4j.
       - name: Build
         run: |
           set -o pipefail
           if [ "${{ matrix.platform }}" = "windows" ]; then cd /c/k; fi
-          ./build/bootstrap.sh build 2>&1 | tee "$RUNNER_TEMP/mach-build.log"
+          if ./build/bootstrap.sh build 2>&1 | tee "$RUNNER_TEMP/mach-build.log"; then
+            exit 0
+          fi
+          if [ "${{ matrix.platform }}" != "windows" ]; then
+            echo "build failed"
+            exit 1
+          fi
+          echo "::warning title=Windows build needed a retry::The first mach build failed; retrying once. A green result here is NOT a clean first-pass build - see VERIFICATION 4j."
+          ./build/bootstrap.sh build 2>&1 | tee "$RUNNER_TEMP/mach-build-retry.log"
         shell: bash
 
       # Runs whether or not the build succeeded. The 2026-09-20 failure was
@@ -319,7 +366,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mach-build-log-${{ matrix.platform }}
-          path: ${{ runner.temp }}/mach-build.log
+          path: ${{ runner.temp }}/mach-build*.log
           if-no-files-found: warn
           retention-days: 14
 
@@ -400,7 +447,10 @@ jobs:
     needs: nightly-build
     # always(): publish whatever platforms succeeded even if one failed; the
     # carry-forward step below keeps a failed platform's last good binary.
-    if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_build))
+    # Never publish a single-platform iteration run: it would move the nightly
+    # tag and carry the other platforms forward from an older build, which is
+    # exactly the shape of result this project keeps mistaking for success.
+    if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_build && (inputs.platform == 'all' || inputs.platform == '')))
     runs-on: ubuntu-latest
     # Serialize publishes: a manual full_build dispatch can overlap the 08:00
     # scheduled run (builds take hours). Two interleaved publish jobs can each

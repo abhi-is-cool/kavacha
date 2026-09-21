@@ -35,6 +35,18 @@
 > on a runner, and whether macOS and Linux still build on the Firefox base at all —
 > neither has been built on it.
 >
+> **M4, 2026-09-21.** `validate` is green. **macOS and Linux build on the Firefox ESR
+> base** — the first time either has, retiring a real risk the port carried. **Windows has
+> failed twice**, both times at the same libwebrtc object needed by `xul.dll`: the same
+> failure ADR 0020 attributed to Zen, reproduced on vanilla Firefox
+> ([VERIFICATION](VERIFICATION.md) §4j; the ADR is amended). Instrumented diagnostics ruled
+> out backend generation, disk, the ordering edge and "the object was never built" — the
+> object is on disk six minutes before make says it has no rule for it. A one-shot retry on
+> the Windows leg tests the one remaining mechanism. **If that retry is what makes Windows
+> green it is a workaround, not a fix, and the run will carry a `::warning::` saying so.**
+> Use the new `platform` dispatch input to iterate one platform instead of paying ~3 h of
+> runner time per other platform; single-platform runs deliberately do not publish.
+>
 > **Phase 7 on the Firefox ESR base passes 78/78** (2026-09-20); the marker above is
 > flipped on that transcript, not on a hope. **This was not Phase 7's first run** — an
 > earlier version of this block said it was, which was false. Phase 7 was first built and

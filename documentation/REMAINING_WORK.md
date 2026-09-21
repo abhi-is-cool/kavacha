@@ -46,6 +46,7 @@
 > green it is a workaround, not a fix, and the run will carry a `::warning::` saying so.**
 > Use the new `platform` dispatch input to iterate one platform instead of paying ~3 h of
 > runner time per other platform; single-platform runs deliberately do not publish.
+> **Run 3 (with the retry) also failed; the plan of record is [§0](#0-m4--windows-ci-plan-of-record-2026-09-21).**
 >
 > **Phase 7 on the Firefox ESR base passes 78/78** (2026-09-20); the marker above is
 > flipped on that transcript, not on a hope. **This was not Phase 7's first run** — an
@@ -106,6 +107,98 @@ all Marionette-verified; a handful of non-critical audit items remain open (see 
 settings).
 
 ---
+
+## 0. M4 — Windows CI: plan of record (2026-09-21)
+
+**Where this stands.** `validate` is green. macOS and Linux build on the Firefox ESR base.
+**Windows has now failed three times** at the same libwebrtc object needed by `xul.dll`
+(runs 1–2 confirmed from logs; run 3 — the one with the one-shot retry — reported failed,
+log not yet read). The second run's diagnostics ruled out backend generation, disk, the
+ordering edge and "the object was never built": the object was on disk, with its rule, six
+minutes before make declared it had no rule ([VERIFICATION](VERIFICATION.md) §4j). The
+third run tested whether a second `mach build` pass would see it. It did not go green, so
+the directory-cache mechanism is **not supported** — and the run's log is what says
+whether it is refuted (retry failed identically) or the run failed some other way.
+
+Everything below is ordered by evidence per runner-hour. Each Windows-only iteration costs
+~40 min with a warm sccache; use `platform: windows` on dispatch, which also skips
+publishing.
+
+### 0.1 Immediately — the evidence already exists, read it before running anything
+
+- [ ] **Read run 3's failure.** Did the retry run at all (look for the `::warning::` and
+      `mach-build-retry.log`)? Did it fail at the identical target? A different failure
+      is a different problem.
+- [ ] **Read the per-directory timestamps in `mach-build-log-windows`.** The log prints
+      `MM:SS.ss <directory>` on entry. Two lines settle ordering directly: when
+      `…/goog_cc_scream_network_controller_gn` was entered and when
+      `toolkit/library/build` was. Link-before-compile means the ordering edge is not
+      honoured; link-after means make's view of the filesystem is wrong. This should have
+      been read before the retry was proposed.
+- [ ] **Confirm the Marionette step passed on macOS and Linux, then record it.** Those legs
+      went green and the step has no `continue-on-error`, so unless it was skipped, 192
+      checks passed headless on both — the first L4 evidence for either platform on this
+      base. Not written into VERIFICATION until the step logs show it ran.
+- [ ] **Move `~/.mozbuild` off the runner's `C:`.** 12.9 GB with 15.5 GB free; one toolchain
+      bump exhausts it silently mid-build. `MOZBUILD_STATE_PATH` exists for this; point it
+      at `D:` in CI.
+
+### 0.2 Single-variable experiments, one per run, cheapest first
+
+1. [ ] **`KV_NO_SCCACHE=1`.** sccache is the only anomaly the diagnostics found (22 cache
+       errors, 12 write errors, GHA backend), and a cache that returns before the object
+       is fully visible produces exactly "file exists, make did not see it". Ranked first.
+2. [ ] **`-j4`** (from 3). If the first pass goes green the timing story holds and the fix
+       is parallelism within the rustc OOM limit.
+3. [ ] **Print `mozmake --version`** on the runner and compare with this host
+       (MozillaBuild 4.2.1 both, but the runner installs `Latest`). A make version
+       difference would be a clean explanation and a one-line fix.
+4. [ ] **Build the `.obj`'s directory explicitly first**: `mach build
+       third_party/libwebrtc/modules/congestion_controller` then `mach build`. Ugly, but
+       it separates "make cannot see it" from "make never waited for it" without guessing.
+
+If all four fail: **file upstream** with §4j's evidence table and the full log. A "no rule"
+for a present object with an intact rule is a Firefox build-system bug whatever we do
+about it; Mozilla's own Windows CI likely avoids it only by building at high `-j` on
+large machines. Do not start a fifth local hypothesis.
+
+### 0.3 Closing M4 — a decision for the owner, not the agent
+
+The gate reads *one green scheduled run, three assets, no carried-forward warning*. If
+Windows only ever goes green through a workaround (a retry, or a two-step build), that
+satisfies the letter and not the spirit. **Decide now whether M4 and R8 close on a
+workaround with a recorded `::warning::`, or only on a clean first-pass build.**
+Recommendation: close on the workaround *if* §0.2 fails to remove it — a shipped
+installer with an honest annotation beats an open milestone — and say so in SHIPPING R8.
+Nothing flips until a full three-platform run is read.
+
+### 0.4 After M4, in order
+
+1. [ ] **Phase 7's unproven arms** (§4h "still not claimed"): capture, highlights and
+       citation metadata need a real `http(s)` page. `marionette-ci.py` can start a
+       `python -m http.server` on localhost and kill it like the browser. No
+       infrastructure; a day.
+2. [ ] **Per-space bookmarks** — the one deliberate regression from Zen (ADR 0021).
+       Design against `PlacesUtils` with a Kavacha side table; the Zen table is gone.
+3. [ ] **`patches-zen/` retention.** The plan said delete at M3 parity; M3 is done; it
+       still holds 87 patches, now including the 2026-08-27 findings. Keep it as the
+       historical record and amend the plan, or delete it. Recommendation: keep, amend.
+4. [ ] **The nightly cron** (08:00 UTC, three platforms) is ~9 runner-hours a day cold.
+       Confirm sccache actually persists across runs — it is showing errors — before the
+       schedule spends freely.
+
+### 0.5 Release gates that are the owner's
+
+Unchanged, restated so CI does not hide them: **R2 signing** and **R1 update service** need
+credentials and infrastructure the agent must not handle (BLOCKED B2/B3); **R9 crypto
+review** needs a third party (B9). Once M4 closes these are the critical path.
+
+### 0.6 Two rules from this week
+
+**No hypothesis without the log.** Twice wrong on CI failures diagnosed from local
+reproduction; each time the log settled it in one step. **No silent green.** A two-asset
+release with no warning, `EXIT=0` on a failed build, a probe rewritten to agree with the
+bug — all read as success. Every CI signal added from here fails loudly or annotates.
 
 ## 1. Open defects
 

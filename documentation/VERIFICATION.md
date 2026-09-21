@@ -819,9 +819,23 @@ What has been ruled out, and how:
 
 So the cause is specific to the runner environment and is **not yet diagnosed**. Candidates
 still open: disk exhaustion on the runner, a backend regeneration racing `-j3`, or runner
-filesystem behaviour. Guessing further is what the next run should settle, and it cannot —
-the job currently ends with one line and no retained build log, which is why the honest
-next step is to make the Windows leg diagnosable before spending another three hours on it.
+filesystem behaviour.
+
+**Diagnostics were added rather than a hypothesis chased** (2026-09-20). The job ended on a
+single make line with no retained output, so a re-run would have been equally opaque. The
+Windows leg now records disk on both drives and the size of `~/.mozbuild` and the checkout
+after setup; `tee`s the build to an artifact uploaded `if: always()` on every platform; and,
+on failure, reports whether that one directory has its `backend.mk`, `Makefile`, generated
+`.cpp` and `.obj`, the backend coverage of the whole libwebrtc tree, whether the backend was
+regenerated mid-build, any disk-full signature in the log, and `sccache --show-stats`.
+
+**Baseline from this host, for comparison** (the same script, run against the local objdir):
+`third_party/libwebrtc` has **1020 directories, 540 `backend.mk`, 540 `Makefile`, 427
+`.obj`**, and the failing directory has all four of its files including the 167 KB object. A
+different backend/Makefile count in CI localises the fault to backend generation; the same
+counts with a missing `.obj` localises it to the compile step. The script was run here
+against both a populated and an empty objdir under `bash -eo pipefail` (the runner's flags)
+and exits 0 in both — a diagnostic step that fails is worse than none.
 
 **Not claimed:** any Windows CI success, R8, or M4. The gate is a green run with three
 assets and no carried-forward warning. This run produced two assets, and because it was the

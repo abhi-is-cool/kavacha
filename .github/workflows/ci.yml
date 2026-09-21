@@ -123,9 +123,13 @@ jobs:
             platform: linux
           - os: macos-latest
             platform: macos
-          # Native Windows returned with the move to a direct Firefox ESR
-          # overlay (ADR 0020): the xul.dll link failure that removed this leg
-          # was Zen's native-Windows libwebrtc config, not Firefox's.
+          # Native Windows builds on a real host (VERIFICATION §4e) but has NOT
+          # yet built here: the first run of this leg failed after 179 min with
+          # `no rule to make target <libwebrtc obj>, needed by xul.dll` — the
+          # same failure ADR 0020 blamed on Zen, reproduced on vanilla Firefox
+          # ESR 153. That attribution is amended; the cause is undiagnosed and
+          # specific to the runner. The diagnostics steps below exist to settle
+          # it. See VERIFICATION §4j.
           - os: windows-latest
             platform: windows
     runs-on: ${{ matrix.os }}
@@ -226,11 +230,98 @@ jobs:
           ./build/bootstrap.sh setup
         shell: bash
 
+      # Disk before the build, so the failure diagnostics below have a baseline
+      # to subtract from. ~/.mozbuild lands on C: ($HOME is the runner's profile)
+      # and holds the packaged MSVC sysroot (~6.5 GB) plus the toolchains, while
+      # the source and objdir sit on D: via the C:\k junction — the two drives
+      # fill for different reasons and both have to be watched.
+      - name: Disk and toolchain state after setup (Windows)
+        if: matrix.platform == 'windows'
+        run: |
+          Get-CimInstance Win32_LogicalDisk |
+            Select-Object DeviceID,
+              @{n='FreeGB';e={[math]::Round($_.FreeSpace/1GB,1)}},
+              @{n='SizeGB';e={[math]::Round($_.Size/1GB,1)}} | Format-Table -AutoSize
+          foreach ($d in @("$env:USERPROFILE\.mozbuild", "C:\k\browser\firefox-source")) {
+            if (Test-Path $d) {
+              $gb = [math]::Round(((Get-ChildItem $d -Recurse -File -ErrorAction SilentlyContinue |
+                     Measure-Object Length -Sum).Sum / 1GB), 2)
+              Write-Output "$d = $gb GB"
+            }
+          }
+        shell: pwsh
+
+      # tee the build: on failure the job otherwise ends on a single make line
+      # with no retained output, which is exactly what made the 2026-09-20
+      # Windows failure undiagnosable. pipefail so tee cannot mask a failed
+      # build the way `cmd | tail` masked one locally the same day.
       - name: Build
         run: |
+          set -o pipefail
           if [ "${{ matrix.platform }}" = "windows" ]; then cd /c/k; fi
-          ./build/bootstrap.sh build
+          ./build/bootstrap.sh build 2>&1 | tee "$RUNNER_TEMP/mach-build.log"
         shell: bash
+
+      # Runs whether or not the build succeeded. The 2026-09-20 failure was
+      # `No rule to make target <libwebrtc obj>, needed by xul.dll`, which means
+      # either that object was never built or its directory's backend was never
+      # generated. This separates those two from each other and both from "the
+      # disk filled up", without another blind three-hour run.
+      # ADR 0020 reason 2 (amended) / VERIFICATION §4j.
+      - name: Windows build diagnostics
+        if: always() && matrix.platform == 'windows'
+        run: |
+          cd /c/k || exit 0
+          obj="$(find browser/firefox-source -maxdepth 1 -type d -name 'obj-*' 2>/dev/null | head -1)"
+          echo "=== disk now ==="
+          df -h 2>/dev/null || true
+          echo "=== objdir: ${obj:-<none>} ==="
+          if [ -z "$obj" ]; then echo "no objdir at all"; exit 0; fi
+
+          gn="$obj/third_party/libwebrtc/modules/congestion_controller/goog_cc_scream_network_controller/goog_cc_scream_network_controller_gn"
+          echo "=== the directory that had no rule ==="
+          if [ -d "$gn" ]; then
+            ls -la "$gn"
+            for f in backend.mk Makefile Unified_cpp_etwork_controller_gn0.cpp Unified_cpp_etwork_controller_gn0.obj; do
+              if [ -e "$gn/$f" ]; then echo "  present: $f"; else echo "  MISSING: $f"; fi
+            done
+            echo "--- does backend.mk name the object? ---"
+            grep -c "Unified_cpp_etwork_controller_gn0" "$gn/backend.mk" 2>/dev/null || echo "  no backend.mk to grep"
+          else
+            echo "  DIRECTORY ABSENT - the backend never generated it"
+          fi
+
+          # Partial backend generation shows up as a count mismatch across the
+          # whole libwebrtc tree, not only in the directory that happened to fail.
+          echo "=== libwebrtc backend coverage ==="
+          lw="$obj/third_party/libwebrtc"
+          echo "  dirs:        $(find "$lw" -type d 2>/dev/null | wc -l)"
+          echo "  backend.mk:  $(find "$lw" -name backend.mk 2>/dev/null | wc -l)"
+          echo "  Makefile:    $(find "$lw" -name Makefile 2>/dev/null | wc -l)"
+          echo "  .obj:        $(find "$lw" -name '*.obj' 2>/dev/null | wc -l)"
+
+          # A backend regenerated mid-build is a live hypothesis: it happened on
+          # the dev host when a moz.build mtime changed.
+          echo "=== backend regenerated during the build? ==="
+          grep -n "Regenerating backend\|Build configuration changed\|config\.status" \
+            "$RUNNER_TEMP/mach-build.log" 2>/dev/null | head -20 || echo "  no such lines"
+
+          echo "=== disk-full signatures in the log ==="
+          grep -niE "no space left|not enough space|disk full|insufficient" \
+            "$RUNNER_TEMP/mach-build.log" 2>/dev/null | head -10 || echo "  none"
+
+          echo "=== sccache ==="
+          sccache --show-stats 2>&1 | head -20 || echo "  sccache unavailable"
+        shell: bash
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mach-build-log-${{ matrix.platform }}
+          path: ${{ runner.temp }}/mach-build.log
+          if-no-files-found: warn
+          retention-days: 14
 
       # `mach package` produces the distributables (DMG / tar / zip + update
       # MAR) in obj-*/dist/. On Windows it runs NSIS itself (the make-package

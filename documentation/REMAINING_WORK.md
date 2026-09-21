@@ -146,6 +146,10 @@ removed; `~/.mozbuild` staying on `C:` is no longer urgent but remains worth doi
       substrate 104, Phase 7 78, restart 3 + 7, headless, fresh profiles. First L4
       evidence off the Windows dev host; recorded in [VERIFICATION](VERIFICATION.md) §4j.
 - [x] **macOS Marionette step: 3/3 probes, 192 checks, 0 failures** (2026-09-21) — identical counts to Linux, on Apple Silicon (`obj-aarch64-apple-darwin25.6.0`).
+- [ ] **Node 20 deprecation on runners** — informational so far: the workflow already runs
+      on Node 24 and every pinned action works. Watch for an action that has not
+      migrated; the escape hatch is `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true`, which
+      is a stopgap, not a fix.
 - [ ] **Move `~/.mozbuild` off the runner's `C:`** (12.9 GB free 15.5) before a toolchain
       bump exhausts it silently mid-build. `MOZBUILD_STATE_PATH` exists for this.
 

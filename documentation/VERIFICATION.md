@@ -928,14 +928,35 @@ and the 130 MB zip, excludes `xpt_artifacts.zip`, and on an empty `dist/` exits 
 `::error::mach package succeeded but no distributable was found`. Both the `KV_OBJDIR` and
 the in-tree branch were exercised.
 
-**This is a fix for a definite defect plus a simplification — not a diagnosis.** The
-upload step's actual error text has not been read. If the cause was something else, the
-next run says so.
+**Confirmed by the step's own error**, read afterwards:
+
+```
+Multiple search paths detected. Calculating the least common ancestor of all paths
+The least common ancestor is D:. This will be the root directory of the artifact
+With the provided path, there will be 2 files uploaded
+Error: The rootDirectory: D:\a\kavacha\kavacha is not a parent directory of the
+file: D:\o\dist\kavacha-153.4.0.en-US.win64.installer.exe
+```
+
+`upload-artifact` computes a least-common-ancestor across the search paths, then validates
+every file against the **workspace** root and refuses anything outside it. With the objdir
+at `D:/o` and the workspace at `D:\a\kavacha\kavacha`, no arrangement of globs could have
+worked; staging into the workspace is the fix, not a workaround.
+
+**Two facts that line carries, which nothing else had established:**
+
+- **The Windows installer exists in CI.** "there will be 2 files uploaded" — the zip and
+  `kavacha-153.4.0.en-US.win64.installer.exe`. `mach package` does run NSIS to completion
+  on the runner, which until now was only known on the development host.
+- **The `xpt_artifacts.zip` exclusion works.** `dist/` holds three matching files; the
+  step found **two**. Had the exclusion not applied it would have found three, and the
+  262 KB archive was a candidate to be published as the browser.
+
+The four stray `#` lines were, as suspected, inert — the step reached file-matching and
+counted correctly. They are still removed.
 
 **Windows still does NOT claim:** an uploaded artifact, network silence (R3) on this
-platform, or its Marionette run. The installer **does** now exist on the development
-host's `dist/` next to the zip (85 MB), which is what the staging test staged, so the
-packaging path is right; CI has yet to publish one.
+platform, or its Marionette run. It now *does* claim a built installer, on the runner.
 
 ### Linux — L4 verified in CI (2026-09-21)
 

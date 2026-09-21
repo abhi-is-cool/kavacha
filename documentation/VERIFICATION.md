@@ -881,6 +881,37 @@ Both were verified locally before pushing: platform selection across all six inp
 (empty/all/windows/linux/macos/bogus, the last failing loudly), and the retry across all
 four outcomes — including that a failed retry still fails the step rather than masking it.
 
+### Windows — the MAX_PATH diagnosis is confirmed (2026-09-21)
+
+**The build succeeded.** First pass, no retry, `xul.dll` linked, and `mach package` wrote
+`kavacha-153.4.0.en-US.win64.zip` after running NSIS (setup.exe, UPX, the 342 MB app.7z).
+The failing object had been the *only* one over the limit, `KV_OBJDIR=D:/o` removed 66
+characters, and the build cleared it. Three runs of "No rule to make target" for a file
+that was on disk were a path-length limit, and nothing else.
+
+**Then my own code failed the step.** `cmd_package` ended with a cosmetic
+`find … -exec ls -la {} \;` that forks once per file, and MSYS2's fork aborted:
+`child_info_fork::abort: msys-iconv-2.dll: Loaded to different address`. So a *listing*
+failed a package step whose real work had already succeeded — and because the later steps
+are not `if: always()`, it also cost the artifact upload, the network-silence test and the
+Windows Marionette run. Replaced with globs (no fork), one `ls`, and `return 0`: the
+listing is now incapable of failing the verb. This repo had already recorded MSYS2 fork
+failures once (`xargs` in `copy_overlay`); the lesson did not generalise the first time.
+
+**A latent publish bug, found while testing the fix.** `dist/` holds two zips: the 130 MB
+browser and a 262 KB `…win64.xpt_artifacts.zip`. Both matched the upload's `*.zip` and the
+publish job's `for f in …/*.zip; do cp "$f" out/…-windows-x86_64.zip; done`, which
+overwrites the same name per file — so which one shipped depended on glob order. It
+happened to be correct because "xpt" sorts before "zip"; a third zip or a different version
+string would have published a 262 KB file as the Windows browser, with a green run and no
+warning. Now excluded explicitly at upload, and the publish step selects by name and
+**fails loudly** if it ever finds more than one candidate (verified for zero, one and two).
+
+**Windows does NOT yet claim:** an uploaded artifact, network silence (R3) on this
+platform, its Marionette run, or the installer — NSIS ran, but the `.installer.exe` is not
+named in the log and the listing that would have shown it is what crashed. All of those
+need the re-run.
+
 ### Linux — L4 verified in CI (2026-09-21)
 
 **`marionette-ci.py` on the Linux artifact: 3/3 probes, 192 checks, 0 failures**, headless,

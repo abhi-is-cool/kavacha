@@ -136,8 +136,12 @@ and it is the one that failed. See [VERIFICATION](VERIFICATION.md) §4j and
 **Fixed** by `KV_OBJDIR=D:/o` on the Windows leg — 64 characters of headroom. The retry is
 removed; `~/.mozbuild` staying on `C:` is no longer urgent but remains worth doing.
 
-- [ ] **Run `platform: windows` and confirm a clean first pass.** ~40 min. This is the
-      only open item in §0.
+- [x] **Windows builds.** 2026-09-21: first pass, no retry, `xul.dll` linked, zip
+      packaged. The MAX_PATH diagnosis is confirmed and `KV_OBJDIR=D:/o` is the fix.
+- [ ] **Re-run `platform: windows`.** The package step then failed on a cosmetic
+      `find -exec` of mine that hit an MSYS2 fork abort, which also skipped the artifact
+      upload, network-silence and the Windows Marionette run. Fixed; needs one run to
+      show the artifact, R3 and 192 checks on Windows.
 - [x] **Linux Marionette step: 3/3 probes, 192 checks, 0 failures** (2026-09-21) —
       substrate 104, Phase 7 78, restart 3 + 7, headless, fresh profiles. First L4
       evidence off the Windows dev host; recorded in [VERIFICATION](VERIFICATION.md) §4j.

@@ -406,6 +406,12 @@ jobs:
             ${{ env.KV_OBJDIR }}/dist/*.zip
             ${{ env.KV_OBJDIR }}/dist/*.installer.exe
             ${{ env.KV_OBJDIR }}/dist/update/*.mar
+            # dist/ also holds kavacha-<ver>.<locale>.win64.xpt_artifacts.zip,
+            # a 262 KB build artifact that is NOT the browser. It matched *.zip
+            # and only lost to the real 130 MB zip because "xpt" sorts before
+            # "zip" - publish order, not intent. Exclude it explicitly.
+            !browser/firefox-source/obj-*/dist/*xpt_artifacts.zip
+            !${{ env.KV_OBJDIR }}/dist/*xpt_artifacts.zip
           if-no-files-found: error
           retention-days: 14
 
@@ -500,9 +506,20 @@ jobs:
           for f in artifacts/kavacha-nightly-windows/*.exe artifacts/kavacha-nightly-windows/**/*.exe; do
             cp "$f" "out/kavacha-nightly-windows-x86_64.exe"
           done
+          # Exactly one browser zip, chosen by name rather than by whichever
+          # the glob happens to visit last. See the upload step's note on
+          # xpt_artifacts.zip.
+          zips=()
           for f in artifacts/kavacha-nightly-windows/*.zip; do
-            cp "$f" "out/kavacha-nightly-windows-x86_64.zip"
+            case "$f" in *xpt_artifacts.zip) continue ;; esac
+            zips+=("$f")
           done
+          if [ ${#zips[@]} -eq 1 ]; then
+            cp "${zips[0]}" "out/kavacha-nightly-windows-x86_64.zip"
+          elif [ ${#zips[@]} -gt 1 ]; then
+            echo "::error::expected one Windows browser zip, found ${#zips[@]}: ${zips[*]}"
+            exit 1
+          fi
           ls -la out
           [ -n "$(ls -A out)" ] || { echo "no release files found"; exit 1; }
 

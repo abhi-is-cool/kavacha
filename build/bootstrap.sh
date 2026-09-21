@@ -599,8 +599,26 @@ cmd_package() {
     # in toolkit/mozapps/installer/packager.mk) and writes
     # dist/<app>-<version>.<locale>.win64.installer.exe next to the zip.
     mach package
-    log "Packages in $(objdir)/dist/"
-    find "$(objdir)/dist" -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.tar.*' -o -name '*.zip' -o -name '*.installer.exe' \) -exec ls -la {} \;
+    # Listing what was produced is a convenience, and it MUST NOT be able to
+    # fail the verb. A `find -exec ls` here forked once per file and died on
+    # MSYS2's fork (`child_info_fork::abort: msys-iconv-2.dll: Loaded to a
+    # different address`), which failed the CI package step on 2026-09-21
+    # *after* mach had successfully written the zip and run NSIS. Globs need no
+    # fork, `ls` is called once, and the whole block is best-effort.
+    local dist
+    dist="$(objdir)/dist"
+    log "Packages in $dist/"
+    local found=()
+    shopt -s nullglob
+    found=( "$dist"/*.dmg "$dist"/*.tar.* "$dist"/*.zip "$dist"/*.installer.exe
+            "$dist"/install/sea/*.installer.exe "$dist"/update/*.mar )
+    shopt -u nullglob
+    if [ ${#found[@]} -gt 0 ]; then
+        ls -la "${found[@]}" || true
+    else
+        warn "mach package reported success but no distributable was found in $dist"
+    fi
+    return 0
 }
 
 case "${1:-setup}" in

@@ -955,8 +955,32 @@ worked; staging into the workspace is the fix, not a workaround.
 The four stray `#` lines were, as suspected, inert — the step reached file-matching and
 counted correctly. They are still removed.
 
-**Windows still does NOT claim:** an uploaded artifact, network silence (R3) on this
-platform, or its Marionette run. It now *does* claim a built installer, on the runner.
+**Next failure: R3, on a binary that was fine.** With the artifact uploading, the
+network-silence step died with `ERROR: browser binary not found at D:\o\dist\bin\kavacha`. The step probed
+`"$objbin/kavacha"` before `"$objbin/kavacha.exe"` using `[ -f ]`, and **MSYS bash answers
+TRUE for the extensionless name when only `kavacha.exe` exists**:
+
+```
+[ -f kavacha ]                      -> TRUE      (MSYS .exe magic)
+python os.path.isfile('kavacha')    -> False     (the native truth)
+```
+
+So the shell handed Python a path only the shell believed in. Fixed by deleting the
+duplicate resolver rather than reordering it: the step now calls `marionette-verify.py`'s
+`find_binary()`, which is Python, already honours `KV_OBJDIR`, and returns a path the
+consumer can actually open. Verified to return `kavacha.exe` both with and without
+`KV_OBJDIR`. No other shell test for an extensionless binary remains in the repo, and
+`network_silence_test.py` already probes `.exe` first when handed a directory.
+
+**This one had been seen and dismissed.** Testing the *previous* change locally, the same
+step resolved `dist/bin/kavacha` with no extension, and the note written at the time was
+"MSYS might resolve `kavacha` to `kavacha.exe` — that's an MSYS quirk, harmless." It was
+not harmless; it was this defect, visible two days early in a passing local test. An
+oddity noticed in passing and reasoned away is not the same as one checked — the check
+here was two commands and would have cost nothing.
+
+**Windows still does NOT claim:** network silence (R3) on this platform, or its Marionette
+run. It now claims a built installer and an uploaded artifact, on the runner.
 
 ### Linux — L4 verified in CI (2026-09-21)
 

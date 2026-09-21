@@ -446,20 +446,22 @@ jobs:
       - name: Network-silence test (R3)
         if: matrix.platform == 'linux' || matrix.platform == 'windows'
         run: |
-          if [ -n "${KV_OBJDIR:-}" ]; then
-            objbin="$KV_OBJDIR/dist/bin"
-          else
-            objbin="$(find browser/firefox-source -maxdepth 3 -type d -path '*/obj-*/dist/bin' 2>/dev/null | head -1)"
-          fi
-          app=""
-          for cand in "$objbin/kavacha" "$objbin/kavacha.exe"; do
-            [ -f "$cand" ] && app="$cand" && break
-          done
+          if [ "${{ matrix.platform }}" = "windows" ]; then cd /c/k; fi
+          PY=python3; command -v $PY >/dev/null 2>&1 || PY=python
+          # Resolve the binary with marionette-verify.py's own find_binary()
+          # instead of a second copy of the logic here. This step used to probe
+          # "$objbin/kavacha" before "$objbin/kavacha.exe" with `[ -f ]`, and
+          # MSYS bash answers TRUE for the extensionless name when only
+          # kavacha.exe exists -- so the shell handed Python a path only the
+          # shell believed in, and the step died with "browser binary not found"
+          # on a perfectly good build (2026-09-21). One resolver, in the
+          # language that opens the file, and it already honours KV_OBJDIR.
+          app="$($PY -c "import importlib.util,os;s=importlib.util.spec_from_file_location('mv',os.path.join('build','marionette-verify.py'));m=importlib.util.module_from_spec(s);s.loader.exec_module(m);print(m.find_binary() or '')")"
           if [ -z "$app" ]; then
-            echo "could not find the built binary under $objbin"; ls -la "$objbin" || true; exit 1
+            echo "::error::no built browser found (KV_OBJDIR=${KV_OBJDIR:-unset})"
+            exit 1
           fi
           echo "testing $app"
-          PY=python3; command -v $PY >/dev/null 2>&1 || PY=python
           $PY test/network-silence/network_silence_test.py --app "$app" --headless --idle 40
         shell: bash
 

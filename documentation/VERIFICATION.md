@@ -791,9 +791,46 @@ checks are added and removed across versions, and SC2015's heuristics were narro
 the failing log settled it in one step; reproducing all six steps locally had settled
 nothing, because every one of them passed.
 
-**Not claimed here:** anything about CI passing. As of this entry the `validate` job has
-failed once and been fixed; no job in the workflow has yet completed green, and
-`nightly-build` (which `needs: validate`) has never started. See REMAINING_WORK's M4 note.
+## 4j. First CI run of the port (2026-09-20)
+
+**macOS and Linux build on the Firefox ESR base.** Neither had ever been built on it; both
+came back green in the first `nightly-build` run, with artifacts. That retires a real risk
+the re-platform plan carried from the start.
+
+**Windows failed, and it failed in the way that was supposed to be impossible.** After 179
+minutes on `windows-latest`:
+
+```
+No rule to make target '..\..\..\third_party\libwebrtc\modules\congestion_controller\
+goog_cc_scream_network_controller\goog_cc_scream_network_controller_gn\
+Unified_cpp_etwork_controller_gn0.obj', needed by '../../../dist/bin/xul.dll'.  Stop.
+```
+
+That is the same failure string [ADR 0020](decisions/0020-firefox-esr-direct-overlay.md)
+recorded for Zen and used as reason 2 for leaving it — reproduced here on vanilla Firefox
+ESR 153 with no Zen in the tree. The ADR is amended; the diagnosis was wrong.
+
+What has been ruled out, and how:
+
+| Candidate | Ruled out by |
+|---|---|
+| The source, pin or patch series | This host builds it. Its objdir holds that directory's `backend.mk`, the rule for that object, and the compiled 167 KB `.obj` |
+| CI's mozconfig (`-j3`, `--disable-debug-symbols`) | Re-ran `mach configure` locally with CI's exact options into a scratch objdir: the backend and the rule are generated correctly |
+
+So the cause is specific to the runner environment and is **not yet diagnosed**. Candidates
+still open: disk exhaustion on the runner, a backend regeneration racing `-j3`, or runner
+filesystem behaviour. Guessing further is what the next run should settle, and it cannot —
+the job currently ends with one line and no retained build log, which is why the honest
+next step is to make the Windows leg diagnosable before spending another three hours on it.
+
+**Not claimed:** any Windows CI success, R8, or M4. The gate is a green run with three
+assets and no carried-forward warning. This run produced two assets, and because it was the
+first nightly there was no prior Windows binary to carry forward — so the release shows
+macOS and Linux with **no warning marking the gap**, which is exactly the reading error this
+file exists to prevent.
+
+**Superseded by the above:** the note that no job had completed green. `validate` passed
+after the SC2015 fix, and two of three `nightly-build` legs passed. See REMAINING_WORK's M4 note.
 
 ## 7. Release-gate verification still unbuilt
 

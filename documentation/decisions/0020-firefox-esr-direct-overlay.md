@@ -16,6 +16,27 @@ Firefox **152.0.6**. Three facts, established 2026-09-19, made the base untenabl
    `Unified_cpp_…gn0.obj`" when linking `xul.dll`) is Zen's native-Windows libwebrtc build
    config, which Zen does not maintain because it cross-compiles Windows from Ubuntu with wine
    and a VS2026 sysroot. Vanilla Firefox on Windows is Mozilla's tier-1 native path.
+
+   > **AMENDED 2026-09-20 — this reason is falsified as written.** The first CI run of the
+   > Windows leg produced the *same* failure on vanilla Firefox ESR 153, with no Zen in the
+   > tree: `No rule to make target '...\third_party\libwebrtc\modules\congestion_controller\`
+   > `goog_cc_scream_network_controller\goog_cc_scream_network_controller_gn\`
+   > `Unified_cpp_etwork_controller_gn0.obj', needed by '../../../dist/bin/xul.dll'`, after
+   > 179 minutes on `windows-latest`. So the failure is not a property of Zen's build config,
+   > and attributing it to Zen was wrong.
+   >
+   > What *is* established: native Windows builds **on a real host**. This box has built,
+   > packaged and launched Kavacha on this base repeatedly (§4e, §4i), and its objdir contains
+   > that exact directory's `backend.mk`, the rule for that object, and the compiled `.obj`.
+   > Re-running configure locally with CI's own mozconfig (`-j3`,
+   > `--disable-debug-symbols`) still generates that backend correctly — so the cause is
+   > neither the source, the pin, the patches, nor the configure options, and is specific to
+   > the runner environment. It is not yet diagnosed.
+   >
+   > **The decision stands on reasons 1 and 3**, which are untouched, and macOS and Linux
+   > have since been observed building on this base in CI — something never true on the Zen
+   > base. But the honest reading is that this reason was a guess that happened to point the
+   > right way, and the original Zen failure may well have had the same undiagnosed cause.
 3. **The coupling is shallow where it matters.** An audit of the series (39,924 lines) found
    that **84.4 %** of changed lines (25,008 lines, 118 files) are Kavacha-authored files that
    only *live* inside Zen's tree; **15.6 %** (4,636 lines, 37 files) edit Zen source, and half

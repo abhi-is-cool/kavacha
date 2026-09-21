@@ -138,10 +138,10 @@ removed; `~/.mozbuild` staying on `C:` is no longer urgent but remains worth doi
 
 - [ ] **Run `platform: windows` and confirm a clean first pass.** ~40 min. This is the
       only open item in §0.
-- [ ] **Confirm the Marionette step ran and passed on macOS and Linux, then record it.**
-      Look for `=== 3/3 probes passed ===` in that step. If it ran, that is 192 checks on
-      each and the first L4 evidence for either platform on this base. Not written into
-      VERIFICATION until the step log shows it.
+- [x] **Linux Marionette step: 3/3 probes, 192 checks, 0 failures** (2026-09-21) —
+      substrate 104, Phase 7 78, restart 3 + 7, headless, fresh profiles. First L4
+      evidence off the Windows dev host; recorded in [VERIFICATION](VERIFICATION.md) §4j.
+- [ ] **Same for macOS** once that leg finishes.
 - [ ] **Move `~/.mozbuild` off the runner's `C:`** (12.9 GB free 15.5) before a toolchain
       bump exhausts it silently mid-build. `MOZBUILD_STATE_PATH` exists for this.
 

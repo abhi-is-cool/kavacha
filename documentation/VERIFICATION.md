@@ -881,6 +881,39 @@ Both were verified locally before pushing: platform selection across all six inp
 (empty/all/windows/linux/macos/bogus, the last failing loudly), and the retry across all
 four outcomes — including that a failed retry still fails the step rather than masking it.
 
+### Linux — L4 verified in CI (2026-09-21)
+
+**`marionette-ci.py` on the Linux artifact: 3/3 probes, 192 checks, 0 failures**, headless,
+each probe on its own fresh profile — substrate **104**, Phase 7 **78**, restart **3 + 7**
+across a real relaunch, against `obj-x86_64-pc-linux-gnu/dist/bin/kavacha`. This is the
+first L4 evidence for any platform other than the Windows development host, and the first
+time the probes have run on a binary this machine did not build.
+
+Two fixes from 2026-09-20 are confirmed to hold off-Windows, by name in the transcript:
+
+- `entity parser: single-character names are KEPT` — the `parseEntities` guard first
+  diagnosed on the Zen base 2026-08-27 and re-fixed here (§4h).
+- `notification default restored exactly — {"before":0,"after":0}` — focus mode's park
+  pref, the `-1` sentinel resolution this port chose over the 2026-08-27 one.
+
+**Two runner artefacts, neither a product defect, both recorded rather than filtered:**
+
+- `Sandbox: CanCreateUserNamespace() unshare(CLONE_NEWPID): EPERM` on every launch. The
+  content sandbox cannot create user namespaces on a GitHub runner. The probes are
+  unaffected, but **nothing about sandboxing is proven by this run** — it ran degraded.
+- `RenderCompositorSWGL failed mapping default framebuffer` on every launch: headless with
+  no GPU. Expected, and every rendering-dependent assertion still passed.
+
+One error worth keeping an eye on, seen once between the restart probe's phases, at
+shutdown: `PrivateBrowsingUtils.sys.mjs:50 TypeError: can't access property
+"QueryInterface", aWindow.docShell is null`. It did not fail the probe — phase 2 passed
+7/7 — and it is on the quit path where the docshell is already torn down. Recorded as an
+observation, not a defect, because one sighting in a passing run is not a diagnosis.
+
+**Linux does NOT claim:** macOS (still running at the time of writing), Windows, R8, or
+M4. The gate is a green three-platform run with three assets and no carried-forward
+warning.
+
 ### Third Windows run — the retry is refuted, and the cause is MAX_PATH
 
 The one-shot retry (added to test whether make's cached directory listing explained the

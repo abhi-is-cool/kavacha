@@ -141,7 +141,7 @@ removed; `~/.mozbuild` staying on `C:` is no longer urgent but remains worth doi
 - [x] **Linux Marionette step: 3/3 probes, 192 checks, 0 failures** (2026-09-21) —
       substrate 104, Phase 7 78, restart 3 + 7, headless, fresh profiles. First L4
       evidence off the Windows dev host; recorded in [VERIFICATION](VERIFICATION.md) §4j.
-- [ ] **Same for macOS** once that leg finishes.
+- [x] **macOS Marionette step: 3/3 probes, 192 checks, 0 failures** (2026-09-21) — identical counts to Linux, on Apple Silicon (`obj-aarch64-apple-darwin25.6.0`).
 - [ ] **Move `~/.mozbuild` off the runner's `C:`** (12.9 GB free 15.5) before a toolchain
       bump exhausts it silently mid-build. `MOZBUILD_STATE_PATH` exists for this.
 
@@ -196,6 +196,7 @@ bug — all read as success. Every CI signal added from here fails loudly or ann
 
 | # | Defect | Next step |
 |---|---|---|
+| — | **`PrivateBrowsingUtils` TypeError on the quit path.** `PrivateBrowsingUtils.sys.mjs:50 — can't access property "QueryInterface", aWindow.docShell is null`, logged once per run as the browser quits between the restart probe's two phases. **Reproducible: seen on Linux and macOS in CI on 2026-09-21 at the identical point.** Non-fatal — restart phase 2 passes 7/7 on both, so session restore is unaffected. Undiagnosed. | Someone is asking `PrivateBrowsingUtils` about a window whose docshell is already torn down. Find the caller on the `quit-application-granted` path (a Kavacha observer is the likely candidate, since this appears on a Kavacha-quit, not a vanilla one) and either null-guard it or unregister earlier. Cheap to chase; do not let it pass as noise because the probe is green. |
 | — | **Patch 0034 residue.** The feature now works (0039 + 0044 resolved D0/D6: 2 pinned + 4 unpinned → exactly the 2 pinned, zombies 0, `sessionstore.jsonlz4` at 3021 bytes). Two test arms remain, tracked in [SHIPPING.md](SHIPPING.md) §3. | The pref stays `false` by default regardless of outcome — this is the only Kavacha behaviour that discards user data on an ordinary action, and *working* is not the same as *wanted on*. |
 
 Closed 2026-08-02:

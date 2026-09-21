@@ -910,9 +910,31 @@ shutdown: `PrivateBrowsingUtils.sys.mjs:50 TypeError: can't access property
 7/7 — and it is on the quit path where the docshell is already torn down. Recorded as an
 observation, not a defect, because one sighting in a passing run is not a diagnosis.
 
-**Linux does NOT claim:** macOS (still running at the time of writing), Windows, R8, or
-M4. The gate is a green three-platform run with three assets and no carried-forward
-warning.
+### macOS — L4 verified in CI (2026-09-21)
+
+**3/3 probes, 192 checks, 0 failures**, headless, fresh profiles, on Apple Silicon
+(`obj-aarch64-apple-darwin25.6.0/dist/Kavacha.app`). Counts identical to Linux: substrate
+104, Phase 7 78, restart 3 + 7. The same two re-derived fixes pass by name here as well.
+
+Two platform differences worth having on the record, neither a defect:
+
+- `search panel built and open :: showing` where Linux reports `open`. XUL's `showing` is
+  the transitional state — macOS is still animating at the probe's 400 ms mark. The
+  assertion allows exactly `open` or `showing` and nothing else, so it would still catch a
+  panel that failed to open; it is not a truthy check that accepts anything.
+- macOS runs with `--no-sandbox` (`MOZ_DISABLE_CONTENT_SANDBOX=1`) for the indexer actor's
+  content-process paths. So, as on Linux but for a different reason, **this run proves
+  nothing about sandboxing.**
+
+**The `PrivateBrowsingUtils` error is reproducible.** Recorded as a single observation on
+Linux; it appears on macOS too, at the identical point — as the browser quits between the
+restart probe's two phases. Two platforms, same place, so it is deterministic rather than
+noise, and it is now an open defect in REMAINING_WORK §1 rather than a footnote here. It
+remains non-fatal: phase 2 passes 7/7 on both.
+
+**Two of three platforms are L4-verified on the Firefox ESR base.** Neither claims
+Windows, R8, or M4. The gate is a green three-platform run with three assets and no
+carried-forward warning.
 
 ### Third Windows run — the retry is refuted, and the cause is MAX_PATH
 

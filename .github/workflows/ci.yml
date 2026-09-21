@@ -389,29 +389,49 @@ jobs:
           ./build/bootstrap.sh package
         shell: bash
 
+      # Copy the distributables into the workspace before uploading them. The
+      # previous version globbed them in place, which meant upload-artifact had
+      # to resolve an ABSOLUTE path (D:/o/dist/... on Windows, where KV_OBJDIR
+      # moves the objdir out of the tree for MAX_PATH) alongside relative ones,
+      # and the exclude pattern for xpt_artifacts.zip had to be repeated per
+      # platform. Staging makes the upload path one relative glob on every
+      # platform, and puts the "which files are distributables" decision in
+      # shell that can be run and tested locally.
+      - name: Stage distributables
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          if [ "${{ matrix.platform }}" = "windows" ]; then cd /c/k; fi
+          if [ -n "${KV_OBJDIR:-}" ]; then
+            dist="$(cygpath -u "$KV_OBJDIR" 2>/dev/null || echo "$KV_OBJDIR")/dist"
+          else
+            dist="$(echo browser/firefox-source/obj-*/dist)"
+          fi
+          echo "dist: $dist"
+          mkdir -p staging
+          n=0
+          for f in "$dist"/*.dmg "$dist"/*.tar.* "$dist"/*.zip \
+                   "$dist"/*.installer.exe "$dist"/install/sea/*.installer.exe \
+                   "$dist"/update/*.mar; do
+            [ -f "$f" ] || continue
+            # NOT the browser: a small build-artifact archive that also ends .zip.
+            case "$f" in *xpt_artifacts.zip) continue ;; esac
+            cp "$f" staging/
+            n=$((n+1))
+          done
+          ls -la staging || true
+          if [ "$n" -eq 0 ]; then
+            echo "::error::mach package succeeded but no distributable was found in $dist"
+            exit 1
+          fi
+          echo "staged $n file(s)"
+        shell: bash
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: kavacha-nightly-${{ matrix.platform }}
-          # Both locations: the in-tree objdir for macOS/Linux, and KV_OBJDIR
-          # for Windows, which builds at D:/o to stay under MAX_PATH. A pattern
-          # that matches nothing is ignored; if-no-files-found still catches a
-          # run that produced no artifact at all.
-          path: |
-            browser/firefox-source/obj-*/dist/*.dmg
-            browser/firefox-source/obj-*/dist/*.tar.*
-            browser/firefox-source/obj-*/dist/*.zip
-            browser/firefox-source/obj-*/dist/*.installer.exe
-            browser/firefox-source/obj-*/dist/update/*.mar
-            ${{ env.KV_OBJDIR }}/dist/*.zip
-            ${{ env.KV_OBJDIR }}/dist/*.installer.exe
-            ${{ env.KV_OBJDIR }}/dist/update/*.mar
-            # dist/ also holds kavacha-<ver>.<locale>.win64.xpt_artifacts.zip,
-            # a 262 KB build artifact that is NOT the browser. It matched *.zip
-            # and only lost to the real 130 MB zip because "xpt" sorts before
-            # "zip" - publish order, not intent. Exclude it explicitly.
-            !browser/firefox-source/obj-*/dist/*xpt_artifacts.zip
-            !${{ env.KV_OBJDIR }}/dist/*xpt_artifacts.zip
+          path: staging/*
           if-no-files-found: error
           retention-days: 14
 

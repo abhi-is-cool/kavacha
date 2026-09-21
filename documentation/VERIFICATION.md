@@ -907,10 +907,35 @@ string would have published a 262 KB file as the Windows browser, with a green r
 warning. Now excluded explicitly at upload, and the publish step selects by name and
 **fails loudly** if it ever finds more than one candidate (verified for zero, one and two).
 
-**Windows does NOT yet claim:** an uploaded artifact, network silence (R3) on this
-platform, its Marionette run, or the installer — NSIS ran, but the `.installer.exe` is not
-named in the log and the listing that would have shown it is what crashed. All of those
-need the re-run.
+**Re-run: build and package both succeeded; the upload step failed.** Two things were
+wrong with that step, one certain and one a removal of doubt:
+
+- **Certain, and mine:** the `path:` value is a `|` block scalar, and I had put four
+  explanatory lines beginning with `#` inside it. YAML does not strip comments from a
+  literal block, so they were parsed as four path patterns. (`@actions/glob` treats a
+  leading `#` as a comment, so they were probably inert — but they had no business being
+  patterns at all.)
+- **Doubt removed:** the step globbed the distributables *in place*, which on Windows
+  means an **absolute** path (`D:/o/dist/…`, since `KV_OBJDIR` moves the objdir out of the
+  tree) mixed with workspace-relative ones, and left the xpt exclusion duplicated per
+  platform. Rather than reason about how `upload-artifact` resolves that, a **Stage
+  distributables** step now copies them into `staging/` in the workspace and the upload is
+  one relative glob, `staging/*`, identical on every platform.
+
+The staging step also moves the "which files are distributables" decision into shell that
+can be run locally, and it was: against the real `dist/` it stages exactly the installer
+and the 130 MB zip, excludes `xpt_artifacts.zip`, and on an empty `dist/` exits 1 with
+`::error::mach package succeeded but no distributable was found`. Both the `KV_OBJDIR` and
+the in-tree branch were exercised.
+
+**This is a fix for a definite defect plus a simplification — not a diagnosis.** The
+upload step's actual error text has not been read. If the cause was something else, the
+next run says so.
+
+**Windows still does NOT claim:** an uploaded artifact, network silence (R3) on this
+platform, or its Marionette run. The installer **does** now exist on the development
+host's `dist/` next to the zip (85 MB), which is what the staging test staged, so the
+packaging path is right; CI has yet to publish one.
 
 ### Linux — L4 verified in CI (2026-09-21)
 

@@ -30,3 +30,6 @@ __pycache__/
 
 # Zen-era file reconstruction (build/reconstruct-zen-files.py) — derived, never committed
 browser/patches-zen/.recon/
+
+# CI stages distributables here before upload (build/README, VERIFICATION 4j).
+staging/

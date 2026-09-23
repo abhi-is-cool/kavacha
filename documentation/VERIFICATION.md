@@ -471,6 +471,57 @@ child scripts do not load on a local macOS build without `MOZ_DISABLE_CONTENT_SA
 which affects 0082's clip/highlight capture and 0087's citation metadata through the
 `KavachaIndexer` actor.
 
+## 4k. M4 — the three-platform nightly is green (2026-09-22)
+
+**Run 206, `event: schedule`, head `b2c7aac`, conclusion `success`.** Every job green, read
+from the Actions API rather than a summary:
+
+| Job | Conclusion |
+|---|---|
+| Validate (fast) | success — all 6 steps |
+| Select platforms | success |
+| Nightly build (windows-latest) | success — **including Network-silence (R3) and Marionette** |
+| Nightly build (ubuntu-latest) | success — including R3 and Marionette |
+| Nightly build (macos-latest) | success — including Marionette; R3 **skipped by design** |
+| Publish nightly release | success |
+
+**The `nightly` release, read from the API:**
+
+| Asset | Size |
+|---|---|
+| `kavacha-nightly-linux-x86_64.tar.xz` | 81,682,388 |
+| `kavacha-nightly-macos-arm64.dmg` | 98,649,568 |
+| `kavacha-nightly-windows-x86_64.exe` | 86,160,093 |
+| `kavacha-nightly-windows-x86_64.zip` | 130,578,275 |
+
+**No carried-forward warning in the release notes.** That was the load-bearing half of the
+gate: the publish job substitutes a previous run's binary for any platform that failed and
+annotates it, so three files is not the same as three platforms having built. The
+carry-forward step ran and found nothing to carry.
+
+Two details worth having on the record because they were live risks:
+
+- The Windows zip is **130 MB**, not the 262 KB `…win64.xpt_artifacts.zip` that also matched
+  `*.zip`. The exclusion added on 2026-09-21 held in production; without it the alphabetical
+  accident that made it work was one version string away from publishing a build artifact as
+  the browser.
+- Assets uploading does **not** by itself prove a green job — upload runs before R3 and the
+  probes. The per-job step list above is what proves those passed, and it was fetched for
+  that reason.
+
+**What this closes:** port milestone **M4**, and release gate **R8** (CI publishes a Windows
+installer to the `nightly` release). The re-platform from Zen to a direct Firefox ESR 153
+overlay, M0 through M5, is complete.
+
+**What it does not claim:**
+
+- **R3 on macOS.** The network-silence step is `linux || windows` by design; on macOS it is
+  `skipped`, not passed.
+- **Anything about sandboxing.** Linux cannot create user namespaces on a runner and macOS
+  runs the probes with `--no-sandbox`; both were recorded at the time.
+- **Signed builds (R2) or an update service (R1).** Unsigned nightlies are what shipped.
+- **Reproducibility**, which M4's own gate explicitly excluded.
+
 ## 5. Documentation reconciliation needed
 
 - **ROADMAP.md has zero references to patches 0033–0037.** Five patches of

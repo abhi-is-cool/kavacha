@@ -1,7 +1,7 @@
 # Kavacha — Remaining Work
 
 <!-- PHASE7-TEST-STATUS: TESTED aff0e3d (build 20260920090557) -->
-> ## READ FIRST — the re-platform: M0–M3 and M5 done, M4 (CI) open
+> ## READ FIRST — the re-platform is complete (M0–M5 done 2026-09-22)
 >
 > **2026-09-19:** Kavacha is moving off Zen onto a direct **Firefox ESR 153** overlay built
 > with `mach`, with native Windows first ([ADR 0020](decisions/0020-firefox-esr-direct-overlay.md),
@@ -15,38 +15,19 @@
 > | M1 | Firefox ESR 153 + Kavacha branding builds and launches on the Windows host | `kavacha.exe` launches; network-silence test passes | **done 2026-09-19** ([VERIFICATION](VERIFICATION.md) §4e; patches 0001/0002 came out of it) |
 > | M2 | Substrate: startup, workspaces model, palette, welcome, theme tokens, Settings panes | `build/marionette-substrate.py` + `marionette-restart.py` | **done 2026-09-19** (43/43 + 7/7, [VERIFICATION](VERIFICATION.md) §4f; patches 0003/0004) |
 > | M3 | Port every Zen-era feature into `browser/overlay/` | substrate probe 104/104 on a fresh profile | **done 2026-09-20** ([VERIFICATION](VERIFICATION.md) §4g) |
-> | M4 | Three-platform CI incl. Windows installer + Marionette step | one green scheduled run, three assets | **open — the only milestone left** (workflow written and locally pre-flighted; see below) |
+> | M4 | Three-platform CI incl. Windows installer + Marionette step | one green scheduled run, three assets, no carried-forward warning | **done 2026-09-22** (run 206, `b2c7aac`, every job green; [VERIFICATION](VERIFICATION.md) §4k) |
 > | M5 | **Phase 7 on the Firefox ESR base** | `marionette-phase7.py` 78/78 on a fresh profile | **done 2026-09-20** ([VERIFICATION](VERIFICATION.md) §4h) |
 >
-> **M4 status, 2026-09-20.** `.github/workflows/ci.yml` has had a `windows-latest` leg,
-> a `check-overlay.py` step and a Marionette step for some time; **none of it has ever
-> run**, and that — not the writing — is the milestone. What has been done since is to
-> remove the failures that were predictable from this host: the probe step now runs
-> `build/marionette-ci.py` and asserts (it was `continue-on-error` and informational);
-> `python3` is resolved per-runner because Git Bash on `windows-latest` does not reliably
-> have it; the Package step's comment claimed a `mach build installer` call that does not
-> exist. Five of `validate`'s six steps were run on this host and pass (JSON, schemas,
-> shellcheck, `node --check` over 66 overlay scripts, `check-overlay.py`); the sixth
-> applies the series to a sparse checkout of the pin, which `roundtrip` covers locally.
-> **None of that closes M4.** The gate is one green scheduled run publishing three
-> assets, which needs a push and a `workflow_dispatch` with `full_build: true`, and
-> until that transcript exists the row above stays open and SHIPPING R8 stays open.
-> Two questions only a real run answers: whether MozillaBuild drives non-interactively
-> on a runner, and whether macOS and Linux still build on the Firefox base at all —
-> neither has been built on it.
->
-> **M4, 2026-09-21.** `validate` is green. **macOS and Linux build on the Firefox ESR
-> base** — the first time either has, retiring a real risk the port carried. **Windows has
-> failed twice**, both times at the same libwebrtc object needed by `xul.dll`: the same
-> failure ADR 0020 attributed to Zen, reproduced on vanilla Firefox
-> ([VERIFICATION](VERIFICATION.md) §4j; the ADR is amended). Instrumented diagnostics ruled
-> out backend generation, disk, the ordering edge and "the object was never built" — the
-> object is on disk six minutes before make says it has no rule for it. A one-shot retry on
-> the Windows leg tests the one remaining mechanism. **If that retry is what makes Windows
-> green it is a workaround, not a fix, and the run will carry a `::warning::` saying so.**
-> Use the new `platform` dispatch input to iterate one platform instead of paying ~3 h of
-> runner time per other platform; single-platform runs deliberately do not publish.
-> **Run 3 (with the retry) also failed; the plan of record is [§0](#0-m4--windows-ci-plan-of-record-2026-09-21).**
+> **M4 closed 2026-09-22.** The scheduled run is green on all three platforms and the
+> `nightly` release carries a Linux tarball, a macOS DMG, and a Windows installer **and**
+> zip — with **no carried-forward warning**, which was the load-bearing half of the gate
+> (the publish job substitutes an older binary for any platform that failed, so three
+> files is not three platforms). Getting there took three Windows failures whose cause was
+> `MAX_PATH` arithmetic — not Zen and not Firefox
+> ([ADR 0020](decisions/0020-firefox-esr-direct-overlay.md) reason 2, amended twice).
+> **R8 closes with it.** Still not claimed: R3 on macOS (that step is `linux || windows`
+> by design), anything about sandboxing, signing (R2), or an update service (R1).
+> [VERIFICATION](VERIFICATION.md) §4k has the transcript.
 >
 > **Phase 7 on the Firefox ESR base passes 78/78** (2026-09-20); the marker above is
 > flipped on that transcript, not on a hope. **This was not Phase 7's first run** — an
@@ -108,97 +89,32 @@ settings).
 
 ---
 
-## 0. M4 — Windows CI: plan of record (2026-09-21)
+## 0. What's next, now that the re-platform is done (2026-09-22)
 
-**Where this stands.** `validate` is green. macOS and Linux build on the Firefox ESR base.
-**Windows has now failed three times** at the same libwebrtc object needed by `xul.dll`
-(runs 1–2 confirmed from logs; run 3 — the one with the one-shot retry — reported failed,
-log not yet read). The second run's diagnostics ruled out backend generation, disk, the
-ordering edge and "the object was never built": the object was on disk, with its rule, six
-minutes before make declared it had no rule ([VERIFICATION](VERIFICATION.md) §4j). The
-third run tested whether a second `mach build` pass would see it. It did not go green, so
-the directory-cache mechanism is **not supported** — and the run's log is what says
-whether it is refuted (retry failed identically) or the run failed some other way.
-
-Everything below is ordered by evidence per runner-hour. Each Windows-only iteration costs
-~40 min with a warm sccache; use `platform: windows` on dispatch, which also skips
-publishing.
-
-### 0.1 Diagnosed 2026-09-21 — MAX_PATH. Fix pushed, awaiting a run
-
-The retry failed identically and its log refuted the directory-cache mechanism. The cause
-is a path-length limit: make hands the `xul.dll` link prerequisite to the Win32 API with
-its `..` hops un-normalised, and on the runner that string is **262** characters against a
-260 limit (**256** on this host). Exactly one object in the tree exceeds it on the runner,
-and it is the one that failed. See [VERIFICATION](VERIFICATION.md) §4j and
-[ADR 0020](decisions/0020-firefox-esr-direct-overlay.md) reason 2, second amendment.
-
-**Fixed** by `KV_OBJDIR=D:/o` on the Windows leg — 64 characters of headroom. The retry is
-removed; `~/.mozbuild` staying on `C:` is no longer urgent but remains worth doing.
-
-- [x] **Windows builds.** 2026-09-21: first pass, no retry, `xul.dll` linked, zip
-      packaged. The MAX_PATH diagnosis is confirmed and `KV_OBJDIR=D:/o` is the fix.
-- [ ] **Re-run `platform: windows`.** The package step then failed on a cosmetic
-      `find -exec` of mine that hit an MSYS2 fork abort, which also skipped the artifact
-      upload, network-silence and the Windows Marionette run. Fixed; needs one run to
-      show the artifact, R3 and 192 checks on Windows.
-- [x] **Linux Marionette step: 3/3 probes, 192 checks, 0 failures** (2026-09-21) —
-      substrate 104, Phase 7 78, restart 3 + 7, headless, fresh profiles. First L4
-      evidence off the Windows dev host; recorded in [VERIFICATION](VERIFICATION.md) §4j.
-- [x] **macOS Marionette step: 3/3 probes, 192 checks, 0 failures** (2026-09-21) — identical counts to Linux, on Apple Silicon (`obj-aarch64-apple-darwin25.6.0`).
-- [ ] **Node 20 deprecation on runners** — informational so far: the workflow already runs
-      on Node 24 and every pinned action works. Watch for an action that has not
-      migrated; the escape hatch is `ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true`, which
-      is a stopgap, not a fix.
-- [ ] **Move `~/.mozbuild` off the runner's `C:`** (12.9 GB free 15.5) before a toolchain
-      bump exhausts it silently mid-build. `MOZBUILD_STATE_PATH` exists for this.
-
-### 0.2 If the clean run still fails
-
-Then the arithmetic is right but something else is also wrong, and the ladder is
-unchanged, cheapest first: `KV_NO_SCCACHE=1` (22 cache errors, 12 write errors were the
-only other anomaly), then `-j4`, then `mozmake --version` against this host. If all three
-fail, **file upstream** with §4j's evidence rather than starting a fifth hypothesis — a
-`stat` that silently fails past MAX_PATH is a Firefox build-system bug whatever we do
-about it locally.
-
-### 0.3 Closing M4 — a decision for the owner, not the agent
-
-The gate reads *one green scheduled run, three assets, no carried-forward warning*. If
-Windows only ever goes green through a workaround (a retry, or a two-step build), that
-satisfies the letter and not the spirit. **Decide now whether M4 and R8 close on a
-workaround with a recorded `::warning::`, or only on a clean first-pass build.**
-Recommendation: close on the workaround *if* §0.2 fails to remove it — a shipped
-installer with an honest annotation beats an open milestone — and say so in SHIPPING R8.
-Nothing flips until a full three-platform run is read.
-
-### 0.4 After M4, in order
+M0–M5 are complete and R8 is closed. The Windows CI plan that lived here is retired to
+[VERIFICATION](VERIFICATION.md) §4i–§4k, which hold the diagnosis and the transcripts.
+What is actually left, in the order worth doing it:
 
 1. [ ] **Phase 7's unproven arms** (§4h "still not claimed"): capture, highlights and
        citation metadata need a real `http(s)` page. `marionette-ci.py` can start a
-       `python -m http.server` on localhost and kill it like the browser. No
-       infrastructure; a day.
-2. [ ] **Per-space bookmarks** — the one deliberate regression from Zen (ADR 0021).
-       Design against `PlacesUtils` with a Kavacha side table; the Zen table is gone.
-3. [ ] **`patches-zen/` retention.** The plan said delete at M3 parity; M3 is done; it
-       still holds 87 patches, now including the 2026-08-27 findings. Keep it as the
-       historical record and amend the plan, or delete it. Recommendation: keep, amend.
-4. [ ] **The nightly cron** (08:00 UTC, three platforms) is ~9 runner-hours a day cold.
-       Confirm sccache actually persists across runs — it is showing errors — before the
-       schedule spends freely.
+       `python -m http.server` on localhost and kill it the way it kills the browser. No
+       new infrastructure; about a day.
+2. [ ] **The `PrivateBrowsingUtils` quit-path error** (§1) — reproducible on Linux and
+       macOS, non-fatal, undiagnosed. The only known defect the probes surface.
+3. [ ] **R3 on macOS.** The network-silence step skips macOS by design. Either extend it
+       or record in SHIPPING why macOS is exempt — right now it is neither.
+4. [ ] **Per-space bookmarks** — the one deliberate regression from Zen (ADR 0021).
+5. [ ] **`patches-zen/` retention.** The plan said delete at M3 parity; it still holds 87
+       patches, now including the 2026-08-27 findings. Keep and amend the plan, or delete.
+6. [ ] **Nightly cost.** The cron builds three platforms daily now. Confirm sccache
+       persists across runs before letting that spend freely.
+7. [ ] **Move `~/.mozbuild` off the runner's `C:`** (12.9 GB used of 15.5 free) before a
+       toolchain bump exhausts it mid-build.
+8. [ ] **Node 20 deprecation** — informational; every pinned action works on Node 24.
 
-### 0.5 Release gates that are the owner's
-
-Unchanged, restated so CI does not hide them: **R2 signing** and **R1 update service** need
-credentials and infrastructure the agent must not handle (BLOCKED B2/B3); **R9 crypto
-review** needs a third party (B9). Once M4 closes these are the critical path.
-
-### 0.6 Two rules from this week
-
-**No hypothesis without the log.** Twice wrong on CI failures diagnosed from local
-reproduction; each time the log settled it in one step. **No silent green.** A two-asset
-release with no warning, `EXIT=0` on a failed build, a probe rewritten to agree with the
-bug — all read as success. Every CI signal added from here fails loudly or annotates.
+**The critical path to a release is no longer engineering.** R1 (update service), R2
+(signing) and R9 (external crypto review) each need credentials, infrastructure or a third
+party the agent must not handle (BLOCKED B2/B3/B9).
 
 ## 1. Open defects
 

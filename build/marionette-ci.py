@@ -21,6 +21,8 @@ are printed as it runs.
 """
 
 import argparse
+import functools
+import http.server
 import importlib.util
 import os
 import shutil
@@ -28,6 +30,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -41,6 +44,42 @@ def _load(name, filename):
 
 
 _mv = _load("mv", "marionette-verify.py")
+
+
+class PageServer:
+    """A local http server, because one probe needs a page the actor will match.
+
+    The Kavacha indexer actor declares `matches: ["https://*/*", "http://*/*"]`,
+    so on an `about:` page it is never instantiated -- which is why Phase 7's
+    capture, highlight and citation paths sat unverified through every probe
+    run (VERIFICATION 4h). Serving test/pages over loopback is the smallest
+    thing that makes them reachable. Port 0 lets the OS pick, so parallel runs
+    and a developer's own server cannot collide.
+    """
+
+    def __init__(self, directory):
+        self.directory = directory
+        self.httpd = None
+        self.thread = None
+
+    def start(self):
+        handler = functools.partial(_QuietHandler, directory=self.directory)
+        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+        return "http://127.0.0.1:%d" % self.httpd.server_address[1]
+
+    def stop(self):
+        if self.httpd is not None:
+            self.httpd.shutdown()
+            self.httpd.server_close()
+            self.httpd = None
+
+
+class _QuietHandler(http.server.SimpleHTTPRequestHandler):
+    # One line per request would bury the probe's own output.
+    def log_message(self, fmt, *args):
+        pass
 
 
 class Browser:
@@ -112,11 +151,13 @@ class Browser:
         self.proc = None
 
 
-def run_probe(label, module_file, browser_args, phases=("",)):
+def run_probe(label, module_file, browser_args, phases=("",), env=None):
     """Launch, run each phase of one probe, then kill. Returns 0 on success."""
     profile = tempfile.mkdtemp(prefix="kavacha-ci-%s-" % label)
     browser = Browser(profile=profile, **browser_args)
     rc = 0
+    saved_env = {k: os.environ.get(k) for k in (env or {})}
+    os.environ.update(env or {})
     try:
         for i, phase in enumerate(phases):
             if i > 0:
@@ -136,6 +177,11 @@ def run_probe(label, module_file, browser_args, phases=("",)):
     finally:
         browser.stop()
         shutil.rmtree(profile, ignore_errors=True)
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
     return rc
 
 
@@ -157,21 +203,31 @@ def main():
     browser_args = {"binary": binary, "headless": args.headless,
                     "no_sandbox": args.no_sandbox}
 
+    pages = PageServer(os.path.join(os.path.dirname(HERE), "test", "pages"))
+    base = pages.start()
+    print("serving test/pages at %s" % base)
+
     probes = [
-        ("substrate", "marionette-substrate.py", ("",)),
-        ("phase7", "marionette-phase7.py", ("",)),
-        ("restart", "marionette-restart.py", ("1", "2")),
+        ("substrate", "marionette-substrate.py", ("",), None),
+        ("phase7", "marionette-phase7.py", ("",), None),
+        ("httppage", "marionette-httppage.py", ("",),
+         {"KAVACHA_TEST_PAGE": base + "/citation-sample.html"}),
+        ("restart", "marionette-restart.py", ("1", "2"), None),
     ]
 
     failed = []
-    for label, filename, phases in probes:
-        try:
-            rc = run_probe(label, os.path.join(HERE, filename), browser_args, phases)
-        except Exception as e:  # a launch failure is a probe failure, not a crash
-            print("  FAIL %s: %s" % (label, e))
-            rc = 1
-        if rc:
-            failed.append(label)
+    try:
+        for label, filename, phases, env in probes:
+            try:
+                rc = run_probe(label, os.path.join(HERE, filename),
+                               browser_args, phases, env)
+            except Exception as e:  # a launch failure is a probe failure, not a crash
+                print("  FAIL %s: %s" % (label, e))
+                rc = 1
+            if rc:
+                failed.append(label)
+    finally:
+        pages.stop()
 
     print("\n=== %d/%d probes passed ===" % (len(probes) - len(failed), len(probes)))
     if failed:

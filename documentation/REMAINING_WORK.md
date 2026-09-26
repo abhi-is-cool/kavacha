@@ -95,10 +95,11 @@ M0–M5 are complete and R8 is closed. The Windows CI plan that lived here is re
 [VERIFICATION](VERIFICATION.md) §4i–§4k, which hold the diagnosis and the transcripts.
 What is actually left, in the order worth doing it:
 
-1. [ ] **Phase 7's unproven arms** (§4h "still not claimed"): capture, highlights and
-       citation metadata need a real `http(s)` page. `marionette-ci.py` can start a
-       `python -m http.server` on localhost and kill it the way it kills the browser. No
-       new infrastructure; about a day.
+1. [x] **Phase 7's unproven arms** — **done 2026-09-25.** `marionette-ci.py` serves
+       `test/pages/` over loopback and `marionette-httppage.py` drives `CaptureMeta`,
+       `CaptureSelection` and `PageText` against it: 17 checks. Its first run found a real
+       defect in the citation metadata precedence ([VERIFICATION](VERIFICATION.md) §4m).
+       Suite totals: 4/4 probes, 209 checks.
 2. [ ] **The `PrivateBrowsingUtils` quit-path error** (§1) — reproducible on Linux and
        macOS, non-fatal, undiagnosed. The only known defect the probes surface.
 3. [ ] **R3 on macOS.** The network-silence step skips macOS by design. Either extend it
@@ -120,7 +121,8 @@ party the agent must not handle (BLOCKED B2/B3/B9).
 
 | # | Defect | Next step |
 |---|---|---|
-| — | **`PrivateBrowsingUtils` TypeError on the quit path.** `PrivateBrowsingUtils.sys.mjs:50 — can't access property "QueryInterface", aWindow.docShell is null`, logged once per run as the browser quits between the restart probe's two phases. **Reproducible: seen on Linux and macOS in CI on 2026-09-21 at the identical point.** Non-fatal — restart phase 2 passes 7/7 on both, so session restore is unaffected. Undiagnosed. | Someone is asking `PrivateBrowsingUtils` about a window whose docshell is already torn down. Find the caller on the `quit-application-granted` path (a Kavacha observer is the likely candidate, since this appears on a Kavacha-quit, not a vanilla one) and either null-guard it or unregister earlier. Cheap to chase; do not let it pass as noise because the probe is green. |
+| — | **Shipped binaries say Mozilla.** `application.ini` carries `Vendor=Mozilla` and the Windows executable's `CompanyName` is `Mozilla Corporation` (`browser/app/module.ver`, a Firefox-tracked file, hardcodes it). Found by installing the published nightly, 2026-09-25 ([VERIFICATION](VERIFICATION.md) §4l). | `generate-branding.sh` never emits `MOZ_APP_VENDOR`; add it. `CompanyName` needs a small patch 0005. **Decide first:** `Vendor` also sets the profile directory, so changing it orphans profiles from the nightlies already shipped — owner's call, and it wants a migration note. |
+| — | **`PrivateBrowsingUtils` TypeError on the quit path.** `PrivateBrowsingUtils.sys.mjs:50 — can't access property "QueryInterface", aWindow.docShell is null`, once per run as the browser quits between the restart probe's phases. Reproducible on **Linux and macOS**; **does not reproduce on Windows** (2026-09-25, full local run, zero error lines) — so it is platform-conditional teardown ordering. Non-fatal: restart phase 2 passes 7/7 everywhere. | **Mechanism found:** `isWindowPrivate`/`isBrowserPrivate` reach `privacyContextFromWindow`, which does `aWindow.docShell.QueryInterface(…)` — null once the docshell is torn down. **Call-site audit:** Kavacha has 7 callers; both on the quit path (`KavachaSpaceHistory.snapshotSpace` via its `quit-application-granted` observer, and `KavachaIndexerParent`) are already try/caught, and `KavachaTabHistory.record` is too. The one **unguarded** call is `KavachaPlacesAttribution._initWindow:88`, which is a window-init path rather than a quit path — worth guarding on its own merits, but do not claim it as this fix without evidence. Pinning the caller needs a **stack trace from a Linux or macOS run**, which is the next step; it cannot be got locally. |
 | — | **Patch 0034 residue.** The feature now works (0039 + 0044 resolved D0/D6: 2 pinned + 4 unpinned → exactly the 2 pinned, zombies 0, `sessionstore.jsonlz4` at 3021 bytes). Two test arms remain, tracked in [SHIPPING.md](SHIPPING.md) §3. | The pref stays `false` by default regardless of outcome — this is the only Kavacha behaviour that discards user data on an ordinary action, and *working* is not the same as *wanted on*. |
 
 Closed 2026-08-02:

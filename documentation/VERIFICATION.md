@@ -522,6 +522,87 @@ overlay, M0 through M5, is complete.
 - **Signed builds (R2) or an update service (R1).** Unsigned nightlies are what shipped.
 - **Reproducibility**, which M4's own gate explicitly excluded.
 
+## 4l. The published installer, installed and probed (2026-09-25)
+
+`kavacha-nightly-windows-x86_64.exe` was downloaded from the `nightly` release (86,165,889
+bytes, matching the API exactly), installed **per-user and silently** to
+`%LOCALAPPDATA%\Kavacha` with `/S /InstallDirectoryPath=`, exit code 0, 61 files. No
+elevation needed.
+
+**`build/marionette-ci.py --bin` against the installed binary: 3/3 probes, 192 checks, 0
+failures.** Not the objdir build — the artifact CI publishes, installed on a clean path.
+That is the first end-to-end check of the thing a user would actually download.
+
+Also observed: the nightly has published green on four consecutive days
+(2026-09-22 → 09-25), all four assets refreshed each time, no carried-forward warning. §4k
+recorded one run; this is four.
+
+### Identity leaks the install exposed
+
+Reading the installed `application.ini` and the executable's resources:
+
+| Field | Shipped value | |
+|---|---|---|
+| `Vendor` | **`Mozilla`** | wrong — see below |
+| Windows `CompanyName` | **`Mozilla Corporation`** | wrong — `browser/app/module.ver` hardcodes it |
+| `Name` | `Kavacha` | correct |
+| `RemotingName` | `kavacha-nightly` | correct |
+| `AppUpdate URL` | `updates.kavacha.app/…` | correct (patch 0001) |
+| macOS bundle id | `app.kavacha.kavacha` | fine — composed from `--with-distribution-id`, no Mozilla in it |
+| `ID` | `{ec8030f7-c20a-464f-9b0e-13a3a9e97384}` | **Firefox's own app ID** — see below |
+
+`MOZ_APP_VENDOR` is never set by `generate-branding.sh`; the generated `configure.sh`
+carries only `MOZ_APP_DISPLAYNAME` and `MOZ_MACBUNDLE_ID`. ADR 0020's plan flagged
+"`MOZ_APP_VENDOR` (verify where 153 expects it)" and that verification never happened. Its
+configure help says it "impacts profile location and user-visible fields", so Kavacha
+profiles currently live under a **Mozilla** directory.
+
+**Changing it is not obviously safe**, which is why it is recorded rather than fixed:
+moving `Vendor` from `Mozilla` to `Kavacha` relocates the profile directory and would
+orphan any profile created by the four nightlies already published. That is an owner's
+call, and it wants a migration note if taken.
+
+The app **ID is Firefox's, and that is probably deliberate rather than a leak** — forks
+keep `{ec8030f7…}` so that extensions targeting Firefox install. Recorded so the choice is
+explicit instead of accidental; it should not be changed without a reason.
+
+## 4m. Phase 7's http(s) capture paths — verified, and a defect found (2026-09-25)
+
+The indexer actor declares `matches: ["https://*/*", "http://*/*"]`, so on an `about:` page
+it is never instantiated. Every probe until now ran on `about:` pages, which is why §4h
+could say only that the actor's modules were packaged and parsed. `marionette-ci.py` now
+starts a `ThreadingHTTPServer` on `127.0.0.1:0` serving `test/pages/`, and
+`build/marionette-httppage.py` drives the three paths against it.
+
+**17 checks, and the first run found a real defect.** `KavachaIndexerChild` read
+
+```js
+site: meta("og:site_name") || meta("citation_journal_title"),
+```
+
+while `title`, `author` and `published` all put `citation_*` first. That ordering is wrong
+for exactly the pages the `citation_*` family exists for: a journal article on a publisher
+platform has `og:site_name = "ScienceDirect"` and
+`citation_journal_title = "Journal of Coastal Engineering"`, and a citation wants the
+journal. Fixed to match its three siblings. **No `about:` page could have exposed this** —
+the actor never runs there.
+
+The fixture (`test/pages/citation-sample.html`) is built so a fallback cannot pass for an
+extraction: `<title>`, `og:title` and `citation_title` are three different strings, as are
+`og:site_name` and `citation_journal_title`, and the assertions name which one must win.
+The page selects its own paragraph on load, because `CaptureSelection` reads
+`window.getSelection()` in the content process, which a chrome-context probe cannot reach.
+
+**Now covered:** citation metadata from live markup (title, author, site, published, url),
+APA rendering of extracted metadata, `CaptureSelection` returning a real selection (and
+being a fragment rather than the whole body), a highlight stored from it and retrievable,
+`PageText` reaching `KavachaPersonalIndex` over http and being findable by search, and
+cleanup.
+
+**Totals after this: 4/4 probes, 209 checks** — substrate 104, Phase 7 78, httppage 17,
+restart 3 + 7. Run against the objdir build after the fix; the 16/17 run before it was
+against the installed nightly, which still carries the defect until the next nightly.
+
 ## 5. Documentation reconciliation needed
 
 - **ROADMAP.md has zero references to patches 0033–0037.** Five patches of
@@ -777,10 +858,10 @@ re-derived them independently rather than inheriting them:
   Phase 7 goes 77 → **78 checks, 0 failures**, and both new assertions were confirmed
   individually in the transcript rather than inferred from the total.
 
-**Still not claimed for Phase 7:** the capture paths that need a real http(s) page
-(`CaptureSelection`, citation metadata from live page markup) — the indexer actor matches
-http/https only and this probe runs on `about:` pages; its modules are packaged at
-`resource:///actors/` and parse. Those are L4 arms for a session with a real page load.
+**Closed 2026-09-25:** the capture paths that needed a real http(s) page —
+`CaptureSelection`, `CaptureMeta` and `PageText` — are now driven by
+`build/marionette-httppage.py` against a page `marionette-ci.py` serves over loopback.
+See §4m. Nothing about Phase 7 is now claimed only from packaging.
 
 ## 4i. Build loop and probe runner (2026-09-20)
 

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<!--
+  Fixture for build/marionette-httppage.py, served over http by
+  build/marionette-ci.py.
+
+  Phase 7's capture paths were the last thing VERIFICATION 4h could not claim:
+  the indexer actor matches http/https only, and every probe until now ran on
+  about: pages, where the actor is never instantiated. This page exists to be
+  a real http(s) document with the markup those paths actually read.
+
+  The meta tags are the two families KavachaIndexerChild looks for -- the
+  scholarly `citation_*` set and OpenGraph -- with deliberately distinct values
+  so an assertion can tell which one was used, and so a fallback (tab label,
+  host) can never be mistaken for a real extraction.
+
+  The page selects its own paragraph on load. CaptureSelection reads
+  window.getSelection() in the content process, which a chrome-context probe
+  cannot reach; having the document do it keeps the thing under test (the
+  capture path) honest while removing the need for content-process scripting.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tab title that must NOT win</title>
+
+<!-- citation_* wins over og:*, which wins over <title>. All three differ. -->
+<meta name="citation_title" content="Levee Failure Modes in Coastal Deltas">
+<meta name="citation_author" content="Ramaswamy, Nila">
+<meta name="citation_publication_date" content="2023-11-04">
+<meta name="citation_journal_title" content="Journal of Coastal Engineering">
+<meta property="og:title" content="OG title that must NOT win">
+<meta property="og:site_name" content="OG site that must NOT win">
+</head>
+<body>
+<h1>Levee Failure Modes in Coastal Deltas</h1>
+
+<p id="quote">Overtopping accounts for the majority of observed levee breaches in
+deltaic settings, but seepage-driven internal erosion is the mode most often
+missed during inspection.</p>
+
+<p>Filler text so the indexed body is longer than the selection, which lets a
+probe tell a full-page capture apart from a selection capture: hydrology,
+sediment transport, freeboard, revetment, scour.</p>
+
+<script>
+  // Select #quote so CaptureSelection has something real to read.
+  const range = document.createRange();
+  range.selectNodeContents(document.getElementById("quote"));
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+</script>
+</body>
+</html>

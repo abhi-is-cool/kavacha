@@ -90,7 +90,14 @@ export class KavachaIndexerChild extends JSWindowActorChild {
           title: meta("citation_title") || meta("og:title") || doc.title || "",
           author:
             meta("citation_author") || meta("author") || meta("article:author"),
-          site: meta("og:site_name") || meta("citation_journal_title"),
+          // citation_* first, as for title/author/published above. This
+          // read og:site_name first until 2026-09-25, which is wrong for
+          // exactly the pages the citation_* family exists for: a journal
+          // article on a publisher platform has og:site_name="ScienceDirect"
+          // and citation_journal_title="Journal of Coastal Engineering", and
+          // a citation wants the journal. Found by marionette-httppage.py on
+          // its first run -- no `about:` page could have shown it.
+          site: meta("citation_journal_title") || meta("og:site_name"),
           published:
             meta("citation_publication_date") ||
             meta("article:published_time") ||

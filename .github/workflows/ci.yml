@@ -438,13 +438,18 @@ jobs:
       # R3 (SHIPPING.md): the network-silence gate. Runs the just-built binary
       # headless on a fresh profile and fails if it contacts any telemetry /
       # advertising / experimentation host — the load-bearing proof of Kavacha's
-      # privacy claim, on the real artifact. Linux and Windows: the behaviour
-      # is pref-driven, but Windows has its own phone-home surface (the
-      # default-browser agent, disabled at configure time) worth proving.
+      # privacy claim, on the real artifact. Windows additionally has its own
+      # phone-home surface (the default-browser agent, disabled at configure
+      # time) worth proving.
       # Placed after the upload so a regression marks the build red without
       # withholding the binary.
+      # R3 (SHIPPING): runs on ALL THREE platforms as of 2026-09-25. It used to
+      # skip macOS, which left the load-bearing proof of Kavacha's privacy claim
+      # missing a third of its surface for no stated reason -- the test script
+      # has resolved .app bundles since it was written (macos_binary()), so the
+      # exclusion was an omission rather than a limit. The prefs that produce
+      # the silence are packaged per platform, so each one has to be proven.
       - name: Network-silence test (R3)
-        if: matrix.platform == 'linux' || matrix.platform == 'windows'
         run: |
           if [ "${{ matrix.platform }}" = "windows" ]; then cd /c/k; fi
           PY=python3; command -v $PY >/dev/null 2>&1 || PY=python

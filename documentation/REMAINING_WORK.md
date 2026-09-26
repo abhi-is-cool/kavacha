@@ -102,8 +102,10 @@ What is actually left, in the order worth doing it:
        Suite totals: 4/4 probes, 209 checks.
 2. [ ] **The `PrivateBrowsingUtils` quit-path error** (§1) — reproducible on Linux and
        macOS, non-fatal, undiagnosed. The only known defect the probes surface.
-3. [ ] **R3 on macOS.** The network-silence step skips macOS by design. Either extend it
-       or record in SHIPPING why macOS is exempt — right now it is neither.
+3. [x] **R3 on macOS** — **extended 2026-09-25.** It was an omission, not a limit: the
+       test has resolved `.app` bundles since it was written. The `if:` is gone and R3 runs
+       on all three ([VERIFICATION](VERIFICATION.md) §4n). **Unproven until the next
+       nightly** — the change is to what CI attempts, not to what is known.
 4. [ ] **Per-space bookmarks** — the one deliberate regression from Zen (ADR 0021).
 5. [ ] **`patches-zen/` retention.** The plan said delete at M3 parity; it still holds 87
        patches, now including the 2026-08-27 findings. Keep and amend the plan, or delete.

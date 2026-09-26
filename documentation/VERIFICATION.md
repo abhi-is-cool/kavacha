@@ -603,6 +603,23 @@ cleanup.
 restart 3 + 7. Run against the objdir build after the fix; the 16/17 run before it was
 against the installed nightly, which still carries the defect until the next nightly.
 
+## 4n. R3 extended to macOS (2026-09-25)
+
+The network-silence step carried `if: matrix.platform == 'linux' || matrix.platform ==
+'windows'`. §4k recorded that honestly — macOS showed as `skipped`, not passed — but a gate
+described as "the load-bearing proof of Kavacha's privacy claim" was missing a third of its
+surface, and the workflow gave no reason for it.
+
+It is not a technical limit: `network_silence_test.py` has had `macos_binary()`, which
+resolves a `.app` bundle to `Contents/MacOS/<binary>`, since the test was written, and
+`find_binary()` (which the step now calls) already returns that path on macOS. The
+exclusion was an omission. The prefs that produce the silence are packaged per platform, so
+each platform has to be proven rather than inferred from another.
+
+**The `if:` is removed; R3 now runs on all three.** This is a change to what CI attempts,
+not a result: **macOS R3 is unproven until the next nightly**, and if it fails that is the
+gate doing its job rather than a regression.
+
 ## 5. Documentation reconciliation needed
 
 - **ROADMAP.md has zero references to patches 0033–0037.** Five patches of

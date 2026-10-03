@@ -177,6 +177,11 @@ jobs:
       # disk. D:/o leaves 64 characters of headroom; an in-tree obj-win would
       # leave 17. See VERIFICATION 4j.
       KV_OBJDIR: ${{ matrix.platform == 'windows' && 'D:/o' || '' }}
+      # Same drive problem, different directory: mach's state (toolchains plus
+      # the packaged MSVC sysroot) measured 12.9 GB against 15.5 GB free on the
+      # runner's C:. One toolchain bump fills it mid-build, and a disk-full in
+      # the middle of a 2-hour compile is a bad way to find that out.
+      KV_MOZBUILD_STATE: ${{ matrix.platform == 'windows' && 'D:/mozbuild' || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -261,7 +266,14 @@ jobs:
       # setup: fetch Firefox at the pin, mozconfig, overlay, patches, branding,
       # mach bootstrap (downloads the toolchains; on Windows that includes the
       # packaged MSVC toolchain — no Visual Studio is used).
+      # Scheduled run 212 (2026-09-27) sat in `mach bootstrap` for SIX HOURS on
+      # Windows before the job's own 360-minute ceiling cancelled it -- a hung
+      # toolchain download costing a full runner-day's budget in one night. The
+      # job timeout is the wrong instrument for that: it is sized for a cold
+      # build, so it lets a hung *setup* run just as long. Setup is minutes when
+      # it works, so give it its own ceiling and fail fast.
       - name: Setup (fetch Firefox + mach bootstrap)
+        timeout-minutes: 45
         run: |
           if [ "${{ matrix.platform }}" = "windows" ]; then cd /c/k; fi
           ./build/bootstrap.sh setup

@@ -76,7 +76,16 @@ reexec_under_mozillabuild() {
     local winmb winbash state sc="" argstr="" a
     winmb="$(cygpath -w "$mb")\\"
     winbash="$(cygpath -w "$mb/msys2/usr/bin/bash.exe")"
-    state="$(cygpath -m "$HOME/.mozbuild")"
+    # KV_MOZBUILD_STATE moves mach's state (toolchains, the packaged MSVC
+    # sysroot -- 12.9 GB measured on a runner) off the default drive. A
+    # GitHub windows-latest has ~15.5 GB free on C: and the workspace on a
+    # roomy D:, so the default is one toolchain bump away from filling C:
+    # mid-build. Takes a Windows-style path, as MOZBUILD_STATE_PATH does.
+    if [ -n "${KV_MOZBUILD_STATE:-}" ]; then
+        state="$KV_MOZBUILD_STATE"
+    else
+        state="$(cygpath -m "$HOME/.mozbuild")"
+    fi
     # Resolve sccache here, where the caller's PATH is known, and hand it over
     # explicitly: PATH inheritance into MozillaBuild's MSYS2 is not guaranteed.
     if command -v sccache >/dev/null 2>&1; then sc="$(cygpath -m "$(command -v sccache)")"; fi

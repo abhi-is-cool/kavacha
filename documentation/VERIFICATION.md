@@ -620,6 +620,45 @@ each platform has to be proven rather than inferred from another.
 not a result: **macOS R3 is unproven until the next nightly**, and if it fails that is the
 gate doing its job rather than a regression.
 
+## 4o. Nightly reliability and cost, measured (2026-10-02)
+
+Seven scheduled runs, 211–217, read from the Actions API. The nightly is **not reliably
+green: 5 success, 1 failure, 1 cancelled.** Recorded because "it runs nightly" had been
+standing in for "it works nightly".
+
+| Run | Date | Outcome | Note |
+|---|---|---|---|
+| 217 | 10-02 | success | |
+| 216 | 10-01 | success | |
+| 215 | 09-30 | **failure** | Windows **Marionette step** failed; build, package, upload and R3 all passed |
+| 214 | 09-29 | success | |
+| 213 | 09-28 | success | |
+| 212 | 09-27 | **cancelled** | Windows `mach bootstrap` hung **6 h 1 min** until the job ceiling killed it |
+| 211 | 09-26 | success | |
+
+**sccache persists** — this was the open question. Linux runs 23–33 minutes against a
+~4-hour cold build, which only a warm cache explains. macOS is the long pole at ~2 h 13 and
+appears to benefit least; Windows ~1 h. Cost per green night is therefore roughly
+2.5 runner-hours wall-clock across three parallel jobs, not the ~12 a cold matrix would
+cost.
+
+**Two reliability problems, one fixed here:**
+
+- **Run 212's hang is a cost bug as much as a correctness one.** `Setup` has no step
+  timeout, so a stuck toolchain download ran until the *job's* 360-minute ceiling — and
+  that ceiling is deliberately sized for a cold build, so it cannot catch a hung setup.
+  `Setup` now carries `timeout-minutes: 45`; it is minutes when it works.
+- **Run 215's Windows probe failure is not diagnosed.** The step log needs authentication
+  to fetch, and the probes pass locally and passed on 09-22 and 09-25, so it is
+  intermittent rather than a standing break. Not claimed as flaky either — one unexplained
+  failure is one unexplained failure.
+
+**A consequence worth stating plainly:** the artifact upload runs *before* R3 and the
+probes, so a run whose probes fail still publishes. 2026-09-30 published assets from a run
+whose Windows probes had failed. That is the designed behaviour (a regression marks the
+build red without withholding the binary) but it means **a green release is not evidence of
+a green run**, which is the same reading error §4k warned about from the other direction.
+
 ## 5. Documentation reconciliation needed
 
 - **ROADMAP.md has zero references to patches 0033–0037.** Five patches of

@@ -107,13 +107,30 @@ What is actually left, in the order worth doing it:
        on all three ([VERIFICATION](VERIFICATION.md) §4n). **Unproven until the next
        nightly** — the change is to what CI attempts, not to what is known.
 4. [ ] **Per-space bookmarks** — the one deliberate regression from Zen (ADR 0021).
-5. [ ] **`patches-zen/` retention.** The plan said delete at M3 parity; it still holds 87
-       patches, now including the 2026-08-27 findings. Keep and amend the plan, or delete.
-6. [ ] **Nightly cost.** The cron builds three platforms daily now. Confirm sccache
-       persists across runs before letting that spend freely.
-7. [ ] **Move `~/.mozbuild` off the runner's `C:`** (12.9 GB used of 15.5 free) before a
-       toolchain bump exhausts it mid-build.
-8. [ ] **Node 20 deprecation** — informational; every pinned action works on Node 24.
+5. [x] **`patches-zen/` retention** — **decided 2026-10-02: keep.** The merge put the
+       2026-08-27 diagnoses into `0083`/`0084`, VERIFICATION §4h and §4m cite them by path,
+       and two port scripts still read the directory. ADR 0020's "deleted at parity" clause
+       is amended rather than quietly ignored. Revisit only if it starts being treated as
+       live code.
+6. [x] **Nightly cost and reliability** — **measured 2026-10-02** over the last seven
+       scheduled runs (211–217). **sccache does persist**: Linux steady-state is 23–33
+       min against a ~4 h cold build. macOS is the long pole at ~2 h 13 and benefits least.
+       But the nightly is **5 green / 1 failed / 1 cancelled**, not reliably green:
+       • run 215 — Windows **Marionette step failed** (build, package, upload and R3 all
+       passed; needs the step log, which cannot be read unauthenticated).
+       • run 212 — Windows **`mach bootstrap` hung for 6 hours** until the job ceiling
+       cancelled it. Fixed here: `Setup` gets its own `timeout-minutes: 45`, because the
+       job timeout is sized for a cold build and so lets a hung *setup* run just as long.
+       **Note:** a probe failure does not stop publication — upload runs before the probes
+       — so 2026-09-30 published assets from a run whose Windows probes failed.
+7. [x] **Move mach's state off the runner's `C:`** — **done 2026-10-02.**
+       `KV_MOZBUILD_STATE` now overrides it and Windows CI points at `D:/mozbuild`
+       (12.9 GB measured against 15.5 GB free on `C:`). Unproven until the next nightly.
+8. [✓] **Node 20 deprecation** — **nothing to do, deliberately.** Runners default to
+       Node 24 and every pinned action works on it; seven scheduled runs since the warning
+       appeared show no action failing for it. Left as a watch item rather than "fixed":
+       the escape hatch (`ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION`) is a stopgap and should
+       not be the first move if an action does break.
 
 **The critical path to a release is no longer engineering.** R1 (update service), R2
 (signing) and R9 (external crypto review) each need credentials, infrastructure or a third

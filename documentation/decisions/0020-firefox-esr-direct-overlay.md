@@ -98,7 +98,24 @@ ESR directly (the patch/pref/overlay mechanisms are upstream-agnostic by design)
 ## Consequences
 
 - The 87-patch Zen series is moved to `browser/patches-zen/` as read-only reference and is
-  deleted at parity. Porting proceeds by milestone (M0–M5) with an observed gate at each; the
+  deleted at parity.
+
+  > **AMENDED 2026-10-02 — kept, not deleted.** Parity was reached at M3, so by the line
+  > above the directory should have gone. Three things changed the balance after it was
+  > written. The 2026-08-27 Zen-base work was merged in later, so `0083` and `0084` now
+  > carry the first diagnosis of two defects the port re-derived independently; VERIFICATION
+  > §4h and §4m cite those files by path as evidence; and `build/port-zen-file.py` and
+  > `build/reconstruct-zen-files.py` still read the directory.
+  >
+  > The honest counter-argument, recorded because it is a good one: git history preserves
+  > the series whether or not it sits in the tree, and the citations could point at a
+  > commit instead. The deciding factor is that evidence someone has to run `git show` to
+  > read is evidence that will not be read. 87 text files is a cheap price for the
+  > provenance of the entire product.
+  >
+  > This supersedes the "deleted at parity" clause above and the M0 row's expectation of
+  > it. **Revisit if the directory ever starts being treated as live code** rather than as
+  > a record — nothing should ever be ported *from* it again now that M3 is closed. Porting proceeds by milestone (M0–M5) with an observed gate at each; the
   standing rule that **no status marker flips without an execution transcript** applies to the
   port exactly as it did to patch 0059.
 - Windows support is *claimed* only when a native build has been observed to launch and pass the

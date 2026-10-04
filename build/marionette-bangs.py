@@ -25,7 +25,7 @@ _mv = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(_mv)
 
 SCRIPT = r"""
-const [resolve] = arguments;
+const [testPage, resolve] = arguments;
 (async () => {
   const out = { pass: [], fail: [] };
   const ok = (n, c, x) => (c ? out.pass : out.fail).push(n + (x ? " :: " + x : ""));
@@ -123,6 +123,66 @@ const [resolve] = arguments;
   // window. That needs a typed query in the real address bar; this does not
   // drive one.
 
+  /* ------------------------------- END TO END: typed, selected, Enter */
+  // Everything above tests the provider in isolation. This types into the REAL
+  // address bar, lets the full urlbar pipeline run, and presses Enter -- which
+  // is the only thing that proves a bang actually takes you somewhere.
+  //
+  // The bang points at the local test server rather than Wikipedia: a probe
+  // that depends on a third party measures the third party, and 2026-10-04's
+  // new-tab investigation already produced one false finding that way.
+  if (!testPage) {
+    out.fail.push("end-to-end skipped: KAVACHA_TEST_PAGE unset (run via marionette-ci.py)");
+  } else {
+    const target = testPage + "?q=kestrel";
+    await KavachaBangs.setUserBang("e2e", {
+      title: "E2E", template: testPage + "?q={q}" });
+
+    const typed = "!e2e kestrel";
+    gURLBar.focus();
+    gURLBar.value = typed;
+    gURLBar.userTypedValue = typed;
+    gURLBar.startQuery({ searchString: typed });
+
+    // Wait for the query to settle rather than guessing a delay.
+    let sel = null;
+    for (let i = 0; i < 60; i++) {
+      await new Promise(r => setTimeout(r, 100));
+      sel = gURLBar.view?.selectedResult;
+      if (sel) { break; }
+    }
+    ok("typing a bang selects a result in the urlbar view", !!sel,
+       sel ? sel.providerName : "none (view open: " + gURLBar.view?.isOpen + ")");
+    ok("the selected result is the bang provider's",
+       sel?.providerName === "KavachaBangs", sel?.providerName);
+    ok("the selected result is heuristic", sel?.heuristic === true);
+    ok("the selected result points at the resolved URL",
+       sel?.payload?.url === target, sel?.payload?.url);
+
+    // Enter.
+    const navigated = new Promise(res => {
+      const t = setTimeout(() => res("timeout"), 20000);
+      const l = {
+        onStateChange(wp, req, flags) {
+          if (wp.isTopLevel && flags & Ci.nsIWebProgressListener.STATE_STOP) {
+            gBrowser.removeProgressListener(l); clearTimeout(t);
+            res(gBrowser.selectedBrowser.currentURI.spec);
+          }
+        },
+        QueryInterface: ChromeUtils.generateQI(["nsIWebProgressListener",
+                                                "nsISupportsWeakReference"]),
+      };
+      gBrowser.addProgressListener(l);
+    });
+    gURLBar.handleCommand();
+    const landed = await navigated;
+    ok("Enter navigated to the bang's destination", landed === target, landed);
+    ok("the search engine was never involved",
+       !/duckduckgo|google|bing|search\?/i.test(String(landed)), landed);
+
+    await KavachaBangs.removeUserBang("e2e");
+  }
+
   await KavachaBangs.removeUserBang("probe");
   resolve(JSON.stringify(out));
 })().catch(e => resolve(JSON.stringify(
@@ -135,7 +195,7 @@ def main():
     m.call("WebDriver:NewSession", {})
     m.call("Marionette:SetContext", {"value": "chrome"})
     m.call("WebDriver:SetTimeouts", {"script": 120000})
-    raw = m.call("WebDriver:ExecuteAsyncScript", {"script": SCRIPT, "args": []})["value"]
+    raw = m.call("WebDriver:ExecuteAsyncScript", {"script": SCRIPT, "args": [os.environ.get("KAVACHA_TEST_PAGE", "")]})["value"]
     result = json.loads(raw)
     for p in result["pass"]:
         print("  PASS", p)

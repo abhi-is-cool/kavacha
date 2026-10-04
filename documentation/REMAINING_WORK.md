@@ -138,11 +138,32 @@ What is actually left, in the order worth doing it:
        Wikipedia's search URL; the default engine never sees the query, which is the
        whole point — DuckDuckGo's bangs work by sending the query to DuckDuckGo.
        **Done:** resolver + 31 built-in bangs, user-defined bangs in
-       `kavacha-bangs.json`, a urlbar heuristic provider, 27 probe checks.
+       `kavacha-bangs.json`, a urlbar heuristic provider, and **33 probe checks
+       including end to end** — typed into the real address bar, selected, Enter
+       navigates to the destination, search engine never involved.
        **Still to do:** a Settings pane to manage user bangs; an optional importer for a
        third-party list (fetched by the user, never redistributed — ADR 0022 decision 4);
        a palette command to add the current site as a bang; and deciding whether the
        built-in set should grow and by how much.
+
+10. [ ] **Tidy the Spaces strip** (requested 2026-10-04, with a screenshot). The strip
+       currently reads as three competing controls plus a pill: a `+`, a chevron, the
+       space itself, and a second `+` on the right. Specifically:
+       • **Double outline** — the active space has both a border/box and a coloured
+       underline. Keep one. The underline carries the "active" meaning more quietly and
+       survives a theme change better than a box does.
+       • **Drop the emoji.** Space icons are emoji (🏠) today, which never matches a theme
+       because emoji carry their own palette. Replace with the same monochrome icon set
+       the rest of the chrome uses, tinted by `--kavacha-accent`, so a space looks like
+       part of the browser rather than like text someone typed. ADR 0021 made the icon a
+       per-space field, so this is a rendering change plus a migration for existing
+       values.
+       • **Reduce the control count.** Two `+` buttons in one strip is one too many;
+       decide which creates a tab and which creates a space, and make that legible or
+       merge them.
+       Not started. Worth a before/after screenshot in VERIFICATION, since this is the one
+       class of change a probe cannot judge (BLOCKED B7: subjective visual judgement is
+       the owner's call, not the agent's).
 
 **The critical path to a release is no longer engineering.** R1 (update service), R2
 (signing) and R9 (external crypto review) each need credentials, infrastructure or a third

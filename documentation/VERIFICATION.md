@@ -728,10 +728,27 @@ is asserted as such.
   the heuristic result is the one Enter activates, getting this wrong means bangs render
   as a suggestion while Enter still searches — the feature would look like it worked.
 
-**What this does NOT claim:** that the live urlbar *selects* the bang result when someone
-types into the real address bar. The probe exercises `isActive`/`startQuery` directly and
-checks the provider sorts among the heuristic providers (index 11 of 30 registered), but
-driving a typed query through the full muxer is a different test and has not been written.
+**End to end, added the same day: 33 checks.** The caveat above is retired. The probe now
+types `!e2e kestrel` into the **real** address bar, lets the whole urlbar pipeline run, and
+presses Enter:
+
+```
+PASS typing a bang selects a result in the urlbar view :: KavachaBangs
+PASS the selected result is heuristic
+PASS the selected result points at the resolved URL
+PASS Enter navigated to the bang's destination
+PASS the search engine was never involved
+```
+
+The bang used for this points at the **local** test server rather than Wikipedia. A probe
+that depends on a third party measures the third party — §4p produced one false finding
+that way on the same day, and a flaky external dependency in CI would be worse than no
+test.
+
+**Still not claimed:** that the *built-in* catalog's templates are correct against the live
+sites. Those are 31 third-party URL shapes that will rot (ADR 0022 says so), and checking
+them means hitting 31 sites, which is exactly the dependency the paragraph above refuses.
+A periodic manual check is the honest answer, not a CI probe.
 
 ## 5. Documentation reconciliation needed
 

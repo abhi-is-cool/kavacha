@@ -51,6 +51,7 @@ const WINDOW_FTL = [
  */
 const PROCESS_MODULES = [
   { module: "KavachaWorkspaces" }, // ADR 0021: the Spaces store
+  { module: "KavachaBangProvider" }, // !bangs, resolved locally (ADR 0022)
   { module: "KavachaNewTab" }, // dashboard new tab (patch 0011)
   { module: "KavachaTabMemory" }, // sleep idle background tabs (patch 0013)
   { module: "KavachaSpaceHistory" }, // ADR 0006 snapshots substrate

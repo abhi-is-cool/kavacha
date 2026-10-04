@@ -173,3 +173,14 @@ pref("kavacha.tabhistory.max-nodes", 200);
 // and remembers the answer here, so the second citation is one keystroke.
 // apa | mla | bibtex.
 pref("kavacha.citation.style", "apa");
+
+// !bang shortcuts (ADR 0022). Resolution is LOCAL: a recognised bang is turned
+// into a destination URL in the parent process and navigated to directly, so the
+// default engine never sees the query. An unknown bang deliberately does not
+// resolve rather than falling back to a search, because that fallback would send
+// the very text the feature exists to keep local.
+pref("kavacha.bangs.enabled", true);
+// Private windows get bangs too: resolving locally leaks nothing, and silently
+// dropping the feature there would push the query to a search engine instead,
+// which is the worse outcome in exactly the window where it matters most.
+pref("kavacha.bangs.in-private-windows", true);

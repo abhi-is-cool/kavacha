@@ -132,6 +132,18 @@ What is actually left, in the order worth doing it:
        the escape hatch (`ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION`) is a stopgap and should
        not be the first move if an action does break.
 
+9. [~] **!bang shortcuts** — started 2026-10-04, core landed
+       ([ADR 0022](decisions/0022-local-bang-shortcuts.md),
+       [VERIFICATION](VERIFICATION.md) §4q). `!w kestrel` resolves **locally** to
+       Wikipedia's search URL; the default engine never sees the query, which is the
+       whole point — DuckDuckGo's bangs work by sending the query to DuckDuckGo.
+       **Done:** resolver + 31 built-in bangs, user-defined bangs in
+       `kavacha-bangs.json`, a urlbar heuristic provider, 27 probe checks.
+       **Still to do:** a Settings pane to manage user bangs; an optional importer for a
+       third-party list (fetched by the user, never redistributed — ADR 0022 decision 4);
+       a palette command to add the current site as a bang; and deciding whether the
+       built-in set should grow and by how much.
+
 **The critical path to a release is no longer engineering.** R1 (update service), R2
 (signing) and R9 (external crypto review) each need credentials, infrastructure or a third
 party the agent must not handle (BLOCKED B2/B3/B9).

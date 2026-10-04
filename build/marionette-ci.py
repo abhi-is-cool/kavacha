@@ -212,6 +212,7 @@ def main():
         ("phase7", "marionette-phase7.py", ("",), None),
         ("httppage", "marionette-httppage.py", ("",),
          {"KAVACHA_TEST_PAGE": base + "/citation-sample.html"}),
+        ("bangs", "marionette-bangs.py", ("",), None),
         ("restart", "marionette-restart.py", ("1", "2"), None),
     ]
 

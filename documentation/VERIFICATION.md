@@ -599,7 +599,7 @@ being a fragment rather than the whole body), a highlight stored from it and ret
 `PageText` reaching `KavachaPersonalIndex` over http and being findable by search, and
 cleanup.
 
-**Totals after this: 4/4 probes, 209 checks** — substrate 104, Phase 7 78, httppage 17,
+**Totals after this: 4/4 probes, 209 checks** (5/5 and 236 once bangs landed, §4q) — substrate 104, Phase 7 78, httppage 17,
 restart 3 + 7. Run against the objdir build after the fix; the 16/17 run before it was
 against the installed nightly, which still carries the defect until the next nightly.
 
@@ -702,6 +702,36 @@ reporter's end — and 429 is easy to provoke, as above. The discriminating ques
 whether the **photo credit** appears bottom-right: it is only ever shown by `show()`, so
 credit present means the image loaded, and credit absent means `setupPhoto()` returned
 early.
+
+## 4q. !bang shortcuts — first runtime drive (2026-10-04)
+
+**`build/marionette-bangs.py`: 27 checks, 0 failures**, against the dev build. Parsing
+(leading `!w kestrel`, trailing `kestrel !w`, bare `!w`, case-insensitivity, and three
+negative cases), resolution and encoding, user bangs including override/removal and the
+two refusals (`{q}`-less and non-http templates), and the urlbar provider.
+
+**The privacy-critical assertion is the negative one:** an *unknown* bang resolves to
+nothing. Falling back to a search would send `!notarealbang secret` to the engine — the
+exact leak the feature exists to prevent — so "does nothing" is the correct behaviour and
+is asserted as such.
+
+**Two defects found on the probe's first run, neither catchable statically:**
+
+- `UrlbarProvidersManager` does not exist as a global singleton in Firefox 153.
+  `ProvidersManager` is a **class with one instance per search access point**, reached
+  via `getInstanceForSap("urlbar")`, and it lives at `moz-src:///` rather than
+  `resource:///`. The first draft had both wrong. Worse, it would have failed **silently**:
+  `KavachaStartup`'s per-module try/catch swallows a module that throws during init, so
+  the feature would have been dead with every static gate green — the 0059 shape exactly.
+- `UrlbarResult.heuristic` is a **constructor parameter** backed by a private field with
+  a getter only. `result.heuristic = true` throws *"setting getter-only property"*. Since
+  the heuristic result is the one Enter activates, getting this wrong means bangs render
+  as a suggestion while Enter still searches — the feature would look like it worked.
+
+**What this does NOT claim:** that the live urlbar *selects* the bang result when someone
+types into the real address bar. The probe exercises `isActive`/`startQuery` directly and
+checks the provider sorts among the heuristic providers (index 11 of 30 registered), but
+driving a typed query through the full muxer is a different test and has not been written.
 
 ## 5. Documentation reconciliation needed
 

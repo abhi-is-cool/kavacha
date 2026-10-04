@@ -659,6 +659,50 @@ whose Windows probes had failed. That is the designed behaviour (a regression ma
 build red without withholding the binary) but it means **a green release is not evidence of
 a green run**, which is the same reading error §4k warned about from the other direction.
 
+## 4p. New tab photo — reported broken, not reproducible (2026-10-04)
+
+A report that "new tabs with the picture aren't working". **Not reproduced.** The featured
+photo loaded in all three configurations tried, today, with today's pick
+(*Llantwit Major Beach* — `photo loaded`, background set, credit shown):
+
+| Configuration | Result |
+|---|---|
+| Installed nightly + fresh profile | photo loads |
+| Installed nightly + **a copy of the reporter's real profile** | photo loads |
+| Dev objdir build + fresh profile | photo loads |
+
+Ruled out, each with evidence rather than reasoning:
+
+- **Configuration.** The active profile sets no `kavacha.newtab.*` prefs, so
+  `network-backgrounds` and `dashboard` are at their defaults (both on).
+- **Profile state.** Reproduced against a copy of the real profile, never the live one.
+- **Build.** Installed and dev builds behave identically.
+- **Routing.** `AboutNewTab.newTabURL` is the Kavacha dashboard and a UI-opened tab lands
+  on it. Note that navigating *directly* to `about:newtab` does **not** get the override
+  and renders Firefox's own page — which is a trap for anyone testing this by hand, and
+  cost one wrong turn here.
+- **A broken image for that day.** The pick is `hash(dateKey) % 2548`, so a given day
+  always draws the same photo and a dead entry would break that day for everyone.
+  Checked ±4 days: **all 200**.
+
+**A measurement error worth recording, because it nearly became a finding.** The first
+pass at that last check used eight concurrent threads and reported *18 of 21 days
+unavailable*. Those were **429 Too Many Requests** — self-inflicted rate limiting, not
+missing files. Re-run serially with backoff, every day returns 200. "Not 200" is not
+"missing", and a test that hammers a third party measures the test.
+
+**What the investigation did establish** is a real defect, now in REMAINING_WORK §1: every
+failure path ends in the same bare `return`, so the page falls back to its gradient with no
+credit line and no message. Offline, pref off, catalog fetch failure, 404 and 429 are
+indistinguishable from each other and from "working as intended". That is also why this
+report could not be narrowed from the outside.
+
+**Still open.** The most likely remaining explanation is a transient failure at the
+reporter's end — and 429 is easy to provoke, as above. The discriminating question is
+whether the **photo credit** appears bottom-right: it is only ever shown by `show()`, so
+credit present means the image loaded, and credit absent means `setupPhoto()` returned
+early.
+
 ## 5. Documentation reconciliation needed
 
 - **ROADMAP.md has zero references to patches 0033–0037.** Five patches of

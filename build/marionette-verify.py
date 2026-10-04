@@ -152,7 +152,15 @@ return JSON.stringify({
 
 
 def launch(args):
+    # Absolute, native: CreateProcess on Windows rejects a relative
+    # forward-slash path that os.path.exists() happily accepts, so an explicit
+    # --bin like "browser/firefox-source/obj-*/dist/bin/kavacha.exe" fails with
+    # a bare FileNotFoundError from Popen. find_binary() already returns
+    # absolute paths, which is why this only ever bit a hand-passed --bin.
+    # network_silence_test.py has guarded the same trap since it was written.
     binary = args.bin or find_binary()
+    if binary:
+        binary = os.path.abspath(binary)
     if not binary or not os.path.exists(binary):
         print("no built browser found under browser/firefox-source/obj-*/dist (pass --bin)", file=sys.stderr)
         return 1

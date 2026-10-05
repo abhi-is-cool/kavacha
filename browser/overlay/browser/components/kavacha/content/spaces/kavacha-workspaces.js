@@ -562,7 +562,9 @@
         const btn = doc.createXULElement("toolbarbutton");
         btn.className = "kavacha-space-button toolbarbutton-1";
         btn.dataset.spaceId = ws.id;
-        btn.setAttribute("label", `${ws.icon ? ws.icon + " " : ""}${ws.name}`);
+        // Name only. The icon is rendered as an accent dot by the stylesheet;
+        // baking an emoji into the label is what made the strip unthemeable.
+        btn.setAttribute("label", ws.name);
         btn.setAttribute("tooltiptext", ws.description || ws.name);
         if (ws.accent) {
           btn.style.setProperty("--kavacha-space-accent", ws.accent);

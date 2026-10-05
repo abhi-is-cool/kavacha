@@ -25,6 +25,30 @@
   color: inherit;
   font-size: 0.92em;
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+/* A space's identity is a dot in its own accent, not an emoji.
+ *
+ * The icon used to be prepended to the button's LABEL TEXT, which is why it
+ * could never match a theme: an emoji carries its own palette and ignores
+ * every colour the browser has. The icon is still stored per space (ADR 0021)
+ * and still shown where picking one is the point; the strip just stops
+ * rendering it. A 6px dot says "this space, that colour" and disappears into
+ * the chrome the way the rest of the toolbar does. */
+#kavacha-spaces-strip .kavacha-space-button::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(
+    --kavacha-space-accent,
+    var(--kavacha-accent, var(--kavacha-accent-fallback))
+  );
+  opacity: 0.5;
 }
 
 /* The tab strip is an icons-only toolbar; a space is its name, so show it. */
@@ -35,21 +59,68 @@
   display: none !important;
 }
 
+/* Inactive spaces recede; hover lifts them. Opacity rather than a background
+ * so hovering does not flash a second box next to the active one. */
+#kavacha-spaces-strip .kavacha-space-button {
+  opacity: 0.6;
+  transition: opacity 80ms ease;
+}
+
 #kavacha-spaces-strip .kavacha-space-button:hover,
 #kavacha-spaces-strip .kavacha-space-add:hover {
-  background: var(--kavacha-toolbar-element-bg-hover);
+  opacity: 0.9;
+  background: transparent;
 }
 
+/* ONE active indicator, not two. This carried both a filled background box and
+ * an accent underline, which read as a double outline in the tab strip. The
+ * underline wins: it states "active" more quietly, it cannot collide with the
+ * tab strip's own hover and selected backgrounds, and it survives a theme
+ * change because it is drawn in the space's accent rather than in a surface
+ * colour that has to be picked per theme. Full opacity does the rest of the
+ * work that bolding used to. */
 #kavacha-spaces-strip .kavacha-space-button[active] {
-  background: var(--kavacha-toolbar-element-bg);
-  font-weight: 600;
-  box-shadow: inset 0 -2px 0
-    var(--kavacha-space-accent, var(--kavacha-accent, var(--kavacha-accent-fallback)));
+  opacity: 1;
+  background: transparent;
+  font-weight: 500;
+  position: relative;
 }
 
+/* A straight bar, drawn as its own element.
+ *
+ * The obvious `box-shadow: inset 0 -2px 0` gets bent by the button's
+ * border-radius and renders as a curved bracket -- which is the box we just
+ * removed, wearing a different hat. An ::after with its own geometry stays a
+ * line. Inset by the horizontal padding so it tracks the label rather than the
+ * hit area. */
+#kavacha-spaces-strip .kavacha-space-button[active]::after {
+  content: "";
+  position: absolute;
+  inset-inline: 8px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(
+    --kavacha-space-accent,
+    var(--kavacha-accent, var(--kavacha-accent-fallback))
+  );
+}
+
+#kavacha-spaces-strip .kavacha-space-button[active]::before {
+  opacity: 1;
+}
+
+/* The new-space button sits beside Firefox's own new-tab "+" and the all-tabs
+ * chevron. Three controls competing for the same corner is the clutter; this
+ * one is the least often used, so it stays out of the way until wanted. */
 #kavacha-spaces-strip .kavacha-space-add {
-  opacity: 0.7;
+  opacity: 0.35;
   padding-inline: 6px;
+  transition: opacity 80ms ease;
+}
+
+#kavacha-spaces-strip:hover .kavacha-space-add {
+  opacity: 0.6;
 }
 
 /* Tabs carry their space for styling and for the probe. */

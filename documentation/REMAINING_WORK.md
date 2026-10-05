@@ -146,7 +146,9 @@ What is actually left, in the order worth doing it:
        a palette command to add the current site as a bang; and deciding whether the
        built-in set should grow and by how much.
 
-10. [ ] **Tidy the Spaces strip** (requested 2026-10-04, with a screenshot). The strip
+10. [~] **Tidy the Spaces strip** — first pass done 2026-10-04
+       ([VERIFICATION](VERIFICATION.md) §4r); **awaiting the owner's look (B7)**.
+       Requested 2026-10-04 with a screenshot. The strip
        currently reads as three competing controls plus a pill: a `+`, a chevron, the
        space itself, and a second `+` on the right. Specifically:
        • **Double outline** — the active space has both a border/box and a coloured

@@ -750,6 +750,46 @@ sites. Those are 31 third-party URL shapes that will rot (ADR 0022 says so), and
 them means hitting 31 sites, which is exactly the dependency the paragraph above refuses.
 A periodic manual check is the honest answer, not a CI probe.
 
+## 4r. Spaces strip — minimalist pass (2026-10-04)
+
+Requested with a screenshot: remove the double outline, drop the emoji, match the theme,
+reduce clutter. Captured before and after from the running build at the same size and
+zoom, with two spaces so the active/inactive contrast is visible.
+
+| | |
+|---|---|
+| before | ![before](images/spaces-strip-before.png) |
+| after | ![after](images/spaces-strip-after.png) |
+
+**The double outline was literal.** `.kavacha-space-button[active]` carried *both*
+`background: var(--kavacha-toolbar-element-bg)` and `box-shadow: inset 0 -2px 0 <accent>`
+— a filled box and an underline on the same element. The underline stays; the box is gone.
+It states "active" more quietly, cannot collide with the tab strip's own hover and selected
+backgrounds, and survives a theme change because it is drawn in the space's accent rather
+than a surface colour that has to be picked per theme.
+
+**The emoji could never have matched the theme**, because it was baked into the button's
+*label text* (`"🏠 Personal"`) and an emoji carries its own palette. The strip now draws
+a 6px dot in the space's accent. The icon is still stored per space (ADR 0021) and still
+shown where choosing one is the point; the strip just stops rendering it.
+
+**Clutter:** inactive spaces sit at 0.6 opacity and lift on hover, rather than every hover
+painting a second box beside the active one. The new-space `+` shares a corner with
+Firefox's own new-tab `+` and the all-tabs chevron, so it fades to 0.35 and returns on
+strip hover.
+
+**One bug introduced and caught in the same pass.** Removing the filled background exposed
+that `box-shadow: inset 0 -2px 0` is bent by the button's `border-radius` and renders as a
+curved *bracket* — the box again, wearing a different hat, visible in the first "after"
+capture. Replaced with an `::after` bar that owns its geometry, inset to track the label
+rather than the hit area. **A screenshot caught what no assertion would have**, which is
+the argument for taking one rather than declaring the change done.
+
+**Not claimed:** that this looks right. BLOCKED **B7** puts subjective visual judgement
+with the owner, and this is exactly that. The probes confirm only that nothing broke: 5/5,
+242 checks, including the strip assertions that read space labels — still passing now that
+labels carry no emoji.
+
 ## 5. Documentation reconciliation needed
 
 - **ROADMAP.md has zero references to patches 0033–0037.** Five patches of

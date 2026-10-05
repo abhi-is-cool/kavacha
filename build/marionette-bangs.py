@@ -119,10 +119,6 @@ const [testPage, resolve] = arguments;
        mgr.providers.indexOf(provider) + " of " + mgr.providers.length);
   }
 
-  // NOT claimed: that the full urlbar pipeline selects this result in a live
-  // window. That needs a typed query in the real address bar; this does not
-  // drive one.
-
   /* ------------------------------- END TO END: typed, selected, Enter */
   // Everything above tests the provider in isolation. This types into the REAL
   // address bar, lets the full urlbar pipeline run, and presses Enter -- which
